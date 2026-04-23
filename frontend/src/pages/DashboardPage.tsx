@@ -21,8 +21,9 @@ import {
   BugReport,
   RestartAlt,
   Refresh as RefreshIcon,
+  Security as SecurityIcon,
 } from '@mui/icons-material'
-import { fleetApi } from '../api/client'
+import { fleetApi, certsApi } from '../api/client'
 import type { FleetStatus } from '../types'
 
 // ── StatCard ─────────────────────────────────────────────────────────────────
@@ -84,12 +85,33 @@ export default function DashboardPage() {
     return () => clearInterval(t)
   }, [load])
 
+  // ── Download Root CA ──────────────────────────────────────────────────────
+  const handleDownloadRootCa = async () => {
+    try {
+      const res = await certsApi.downloadRootCa()
+      const url = URL.createObjectURL(res.data as Blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'ca.crt'
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      // silently ignore — user will see no download; no state change needed
+    }
+  }
+
+
   return (
     <Container maxWidth="xl" sx={{ mt: 3 }}>
       <Toolbar disableGutters sx={{ mb: 3 }}>
         <Typography variant="h5" fontWeight={700} sx={{ flexGrow: 1 }}>
           Dashboard
         </Typography>
+        <Tooltip title="Download Root CA">
+          <IconButton onClick={handleDownloadRootCa}>
+            <SecurityIcon />
+          </IconButton>
+        </Tooltip>
         <Tooltip title="Refresh">
           <span>
             <IconButton onClick={load} disabled={loading}>

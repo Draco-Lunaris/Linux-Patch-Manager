@@ -42,6 +42,8 @@ pub struct AppState {
     pub auth_config: Arc<AuthConfig>,
     /// In-memory store for single-use WebSocket authentication tickets.
     pub ws_tickets: Arc<DashMap<String, WsTicket>>,
+    /// Internal certificate authority for mTLS client cert issuance.
+    pub ca: Arc<pm_ca::CertAuthority>,
 }
 
 #[tokio::main]
@@ -77,6 +79,16 @@ async fn main() -> anyhow::Result<()> {
     let pool = db::init_pool(&config.database).await?;
     db::run_migrations(&pool).await?;
 
+    // Initialise the internal CA.  Panics in production if CA files are missing
+    // or corrupt — this is intentional; the service cannot operate without mTLS.
+    let ca_base = std::path::Path::new("/etc/patch-manager/ca");
+    let ca = pm_ca::CertAuthority::init(ca_base, &pool)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "CA init failed (dev mode)");
+            panic!("CA initialization failed: {}", e);
+        });
+
     let ws_tickets: Arc<DashMap<String, WsTicket>> = Arc::new(DashMap::new());
 
     // Background task: purge expired WS tickets every 30 seconds.
@@ -103,6 +115,7 @@ async fn main() -> anyhow::Result<()> {
         signing_key_pem,
         auth_config,
         ws_tickets,
+        ca: Arc::new(ca),
     };
 
     let app = build_router(state);
@@ -128,6 +141,8 @@ pub fn build_router(state: AppState) -> Router {
         .merge(routes::auth::protected_router())
         // Hosts
         .nest("/hosts", routes::hosts::router())
+        // Host-scoped certificate endpoints (merged separately to avoid conflict)
+        .nest("/hosts", routes::ca::host_cert_router())
         // Groups
         .nest("/groups", routes::groups::router())
         // Users
@@ -140,8 +155,14 @@ pub fn build_router(state: AppState) -> Router {
         .nest("/jobs", routes::jobs::router())
         // Maintenance windows (nested under hosts path param)
         .nest("/hosts/:host_id/maintenance-windows", routes::maintenance_windows::router())
+        // CA root certificate download
+        .nest("/ca", routes::ca::ca_router())
+        // Certificate list / renew / revoke
+        .nest("/certificates", routes::ca::certs_router())
         // WS ticket issuance (JWT-protected — ticket returned to browser, then used for WS upgrade)
         .merge(routes::ws::ticket_router())
+        // Reports
+        .nest("/reports", routes::reports::router())
         // Apply auth middleware to all the above
         .route_layer(middleware::from_fn(move |req, next| {
             let auth_config = auth_config.clone();

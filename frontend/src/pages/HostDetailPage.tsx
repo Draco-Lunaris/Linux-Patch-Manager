@@ -37,8 +37,9 @@ import {
   Delete as DeleteIcon,
   Edit as EditIcon,
   Schedule as ScheduleIcon,
+  VpnKey as VpnKeyIcon,
 } from '@mui/icons-material'
-import { apiClient, maintenanceWindowsApi } from '../api/client'
+import { apiClient, maintenanceWindowsApi, certsApi } from '../api/client'
 import type { MaintenanceWindow, WindowRecurrence } from '../types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -295,6 +296,22 @@ export default function HostDetailPage() {
     }
   }
 
+  // ── Download client cert ─────────────────────────────────────────────────
+  const handleDownloadClientCert = async () => {
+    if (!id) return
+    try {
+      const res = await certsApi.downloadClientCert(id)
+      const url = URL.createObjectURL(res.data as Blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'client.crt'
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      showSnack('No client certificate found for this host', 'error')
+    }
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
   if (loading) return <Box display="flex" justifyContent="center" mt={8}><CircularProgress /></Box>
   if (error) return <Container sx={{ mt: 4 }}><Alert severity="error">{error}</Alert></Container>
@@ -307,9 +324,16 @@ export default function HostDetailPage() {
 
       {/* ── Host details ─────────────────────────────────────────────────── */}
       <Paper sx={{ p: 3, mb: 3 }}>
-        <Typography variant="h5" fontWeight={700} mb={2}>
-          {String(host?.fqdn ?? '')}
-        </Typography>
+        <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
+          <Typography variant="h5" fontWeight={700}>
+            {String(host?.fqdn ?? '')}
+          </Typography>
+          <Tooltip title="Download mTLS Client Certificate">
+            <IconButton onClick={handleDownloadClientCert} color="primary">
+              <VpnKeyIcon />
+            </IconButton>
+          </Tooltip>
+        </Box>
         <Divider sx={{ mb: 2 }} />
         <Grid container spacing={2}>
           {host && Object.entries(host).map(([k, v]) =>

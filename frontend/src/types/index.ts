@@ -166,3 +166,30 @@ export interface JobWsEvent {
   error_message?: string
   agent_job_id?: string
 }
+
+// ── Certificates (M8) ────────────────────────────────────────────────────────
+
+export type CertStatus = 'active' | 'revoked' | 'expired'
+
+export interface Certificate {
+  id: string
+  host_id: string | null   // null = root CA cert
+  serial_number: string
+  common_name: string
+  status: CertStatus
+  issued_at: string
+  expires_at: string
+  revoked_at: string | null
+  cert_pem: string
+}
+
+export interface IssuedCert {
+  cert_pem: string
+  key_pem: string
+  serial_number: string
+  expires_at: string
+}
+
+// ── Reports (M9) ─────────────────────────────────────────────────────────────
+export type ReportType = 'compliance' | 'patch-history' | 'vulnerability' | 'audit'
+export type ReportFormat = 'csv' | 'pdf'

@@ -10,8 +10,10 @@ name = "pm-web"
 path = "src/main.rs"
 
 [dependencies]
+pm-ca = { path = "../pm-ca" }
 pm-core = { path = "../pm-core" }
 pm-auth = { path = "../pm-auth" }
+pm-reports = { path = "../pm-reports" }
 tokio = { workspace = true }
 axum = { workspace = true }
 axum-extra = { workspace = true }

@@ -14,3 +14,12 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
+sqlx = { workspace = true }
+uuid = { workspace = true }
+
+# Report generation
+csv = "1"
+printpdf = { version = "0.7", features = ["embedded_images"] }
+plotters = { version = "0.3", default-features = false, features = ["bitmap_backend", "bitmap_encoder", "line_series", "area_series"] }
+plotters-bitmap = { version = "0.3" }
+image = { version = "0.25", default-features = false, features = ["png"] }

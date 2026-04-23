@@ -170,28 +170,28 @@ Each milestone produces a **testable vertical slice** — backend + frontend + d
 ### M8: Internal CA + Certificate Management + Frontend Page
 **Goal:** CA issues/renews certs, download links work.
 
-- [ ] Implement `pm-ca` — CA initialization (root key + cert generation), stored at `/etc/patch-manager/ca/` with 0600 permissions
-- [ ] Implement client certificate issuance for mTLS (per-host certs)
-- [ ] Implement certificate renewal flow
-- [ ] Implement certificate revocation (mark revoked in `certificates` table, re-issue replacement)
-- [ ] Implement download endpoints: `GET /api/v1/ca/root.crt`, `GET /api/v1/hosts/{id}/client.crt`
-- [ ] Implement Web UI TLS certificate: self-signed from internal CA (default) or operator-supplied cert/key
-- [ ] Frontend: Certificates page (view/manage CA, issue/renew certs, view expiry)
-- [ ] Frontend: Root CA download icon on Dashboard
-- [ ] Frontend: Host-specific cert download icon on Host Detail page
+- [x] Implement `pm-ca` — CA initialization (root key + cert generation), stored at `/etc/patch-manager/ca/` with 0600 permissions
+- [x] Implement client certificate issuance for mTLS (per-host certs)
+- [x] Implement certificate renewal flow
+- [x] Implement certificate revocation (mark revoked in `certificates` table, re-issue replacement)
+- [x] Implement download endpoints: `GET /api/v1/ca/root.crt`, `GET /api/v1/hosts/{id}/client.crt`
+- [x] Implement Web UI TLS certificate: self-signed from internal CA (default) or operator-supplied cert/key
+- [x] Frontend: Certificates page (view/manage CA, issue/renew certs, view expiry)
+- [x] Frontend: Root CA download icon on Dashboard
+- [x] Frontend: Host-specific cert download icon on Host Detail page
 - [ ] Verify: CA generates certs, downloads work, TLS cert strategy switchable
 
 ### M9: Reporting (CSV + PDF with Charts) + Frontend Page
 **Goal:** All 4 report types exportable as CSV and PDF.
 
-- [ ] Implement `pm-reports::csv` — CSV generation for all report types
-- [ ] Implement `pm-reports::pdf` — PDF generation with `printpdf` + `plotters` charts
-- [ ] Implement compliance report: % hosts fully patched by group/fleet, trend charts
-- [ ] Implement patch history report: operations per host/group
-- [ ] Implement vulnerability exposure report: hosts with pending CVEs
-- [ ] Implement audit trail report: who did what when
-- [ ] Implement report API: `GET /api/v1/reports/compliance`, `patch-history`, `vulnerability`, `audit` with `?format=csv|pdf`
-- [ ] Frontend: Reports page (select type, filters, generate, download)
+- [x] Implement `pm-reports::csv` — CSV generation for all report types
+- [x] Implement `pm-reports::pdf` — PDF generation with `printpdf` + `plotters` charts
+- [x] Implement compliance report: % hosts fully patched by group/fleet, trend charts
+- [x] Implement patch history report: operations per host/group
+- [x] Implement vulnerability exposure report: hosts with pending CVEs
+- [x] Implement audit trail report: who did what when
+- [x] Implement report API: `GET /api/v1/reports/compliance`, `patch-history`, `vulnerability`, `audit` with `?format=csv|pdf`
+- [x] Frontend: Reports page (select type, filters, generate, download)
 - [ ] Verify: all 4 reports generate as CSV and PDF, PDFs include charts
 
 ### M10: Settings Page (Azure SSO, SMTP, TLS, IP Whitelist) + Frontend Page
@@ -203,7 +203,7 @@ Each milestone produces a **testable vertical slice** — backend + frontend + d
 - [ ] Implement SMTP configuration: host, port, auth mode, username/password, TLS mode, from-address
 - [ ] Implement "Send Test Email" action for SMTP
 - [ ] Implement polling interval tuning (health, patch) in Settings
-- [ ] Implement Web UI TLS certificate strategy selection (internal CA vs. operator-supplied)
+- [x] Implement Web UI TLS certificate strategy selection (internal CA vs. operator-supplied)
 - [ ] Implement IP whitelist management in Settings
 - [ ] Implement Azure SSO OAuth2/OIDC Authorization Code flow with PKCE
 - [ ] Frontend: Settings page with all configuration sections and test actions

@@ -6,11 +6,20 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
-pm-core = { path = "../pm-core" }
-tokio = { workspace = true }
-serde = { workspace = true }
+pm-core    = { path = "../pm-core" }
+tokio      = { workspace = true }
+serde      = { workspace = true }
 serde_json = { workspace = true }
-thiserror = { workspace = true }
-anyhow = { workspace = true }
-tracing = { workspace = true }
-chrono = { workspace = true }
+thiserror  = { workspace = true }
+anyhow     = { workspace = true }
+tracing    = { workspace = true }
+chrono     = { workspace = true }
+sqlx       = { workspace = true }
+uuid       = { workspace = true }
+rand       = { workspace = true }
+hex        = { workspace = true }
+sha2       = { workspace = true }
+rustls     = { workspace = true }
+rcgen      = { workspace = true }
+pem        = { workspace = true }
+time       = { workspace = true }

@@ -55,6 +55,11 @@ reqwest = { version = "0.12", features = ["rustls-tls", "json"] }
 # TLS
 rustls = { version = "0.23" }
 
+# Certificate Authority
+rcgen = { version = "0.13", features = ["pem", "x509-parser"] }
+pem = { version = "3" }
+time = { version = "0.3", features = ["std"] }
+
 # Config
 config = { version = "0.15" }
 

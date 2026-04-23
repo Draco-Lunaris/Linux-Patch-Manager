@@ -6,6 +6,8 @@ import type {
   CreateJobRequest,
   CreateMaintenanceWindowRequest,
   UpdateMaintenanceWindowRequest,
+  Certificate,
+  IssuedCert,
 } from '../types'
 
 const BASE_URL = '/api/v1'
@@ -146,4 +148,52 @@ export const wsApi = {
   /** POST /api/v1/ws/ticket — obtain a single-use WS auth ticket (60 s expiry). */
   createTicket: (): Promise<{ ticket: string }> =>
     apiClient.post<{ ticket: string }>('/ws/ticket').then((r) => r.data),
+}
+
+// ── Certificates API (M8) ────────────────────────────────────────────────────
+export const certsApi = {
+  // List all certs, optional filters
+  list: (params?: { host_id?: string; status?: string }) =>
+    apiClient.get<Certificate[]>('/certificates', { params }),
+
+  // Download root CA cert as blob
+  downloadRootCa: () =>
+    apiClient.get('/ca/root.crt', { responseType: 'blob' }),
+
+  // Issue client cert for a host — returns IssuedCert (key_pem only shown once!)
+  issue: (hostId: string, hostname: string) =>
+    apiClient.post<IssuedCert>(`/hosts/${hostId}/certificates`, { hostname }),
+
+  // Renew a cert
+  renew: (certId: string) =>
+    apiClient.post<IssuedCert>(`/certificates/${certId}/renew`),
+
+  // Revoke a cert
+  revoke: (certId: string) =>
+    apiClient.delete(`/certificates/${certId}`),
+
+  // Download host client cert as blob
+  downloadClientCert: (hostId: string) =>
+    apiClient.get(`/hosts/${hostId}/client.crt`, { responseType: 'blob' }),
+}
+
+// ── Reports API (M9) ─────────────────────────────────────────────────────────
+export type ReportType = 'compliance' | 'patch-history' | 'vulnerability' | 'audit'
+export type ReportFormat = 'csv' | 'pdf'
+
+export const reportsApi = {
+  download: (
+    reportType: ReportType,
+    format: ReportFormat,
+    params?: {
+      from?: string        // ISO 8601
+      to?: string          // ISO 8601
+      group_id?: string    // UUID
+    }
+  ) =>
+    apiClient.get(`/reports/${reportType}`, {
+      params: { format, ...params },
+      responseType: 'blob',
+      timeout: 120_000,   // reports can take a while
+    }),
 }
