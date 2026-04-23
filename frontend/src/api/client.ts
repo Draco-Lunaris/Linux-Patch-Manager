@@ -1,7 +1,12 @@
 import axios, { type AxiosError } from 'axios'
 import type { InternalAxiosRequestConfig } from 'axios'
 import { useAuthStore } from '../store/authStore'
-import type { FleetStatus, CreateJobRequest } from '../types'
+import type {
+  FleetStatus,
+  CreateJobRequest,
+  CreateMaintenanceWindowRequest,
+  UpdateMaintenanceWindowRequest,
+} from '../types'
 
 const BASE_URL = '/api/v1'
 
@@ -122,4 +127,23 @@ export const patchesApi = {
   // Returns patches available on a specific host via the manager's proxy
   // The backend reads from host_patch_data table (cached from agent poll)
   getHostPatches: (hostId: string) => apiClient.get(`/hosts/${hostId}/patches`),
+}
+
+// ── Maintenance Windows API ───────────────────────────────────────────────────
+export const maintenanceWindowsApi = {
+  list: (hostId: string) =>
+    apiClient.get(`/hosts/${hostId}/maintenance-windows`),
+  create: (hostId: string, body: CreateMaintenanceWindowRequest) =>
+    apiClient.post(`/hosts/${hostId}/maintenance-windows`, body),
+  update: (hostId: string, windowId: string, body: UpdateMaintenanceWindowRequest) =>
+    apiClient.put(`/hosts/${hostId}/maintenance-windows/${windowId}`, body),
+  remove: (hostId: string, windowId: string) =>
+    apiClient.delete(`/hosts/${hostId}/maintenance-windows/${windowId}`),
+}
+
+// ── WebSocket API (M7) ────────────────────────────────────────────────────────
+export const wsApi = {
+  /** POST /api/v1/ws/ticket — obtain a single-use WS auth ticket (60 s expiry). */
+  createTicket: (): Promise<{ ticket: string }> =>
+    apiClient.post<{ ticket: string }>('/ws/ticket').then((r) => r.data),
 }

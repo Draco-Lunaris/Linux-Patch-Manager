@@ -29,9 +29,12 @@ import {
   ExpandMore,
   Refresh as RefreshIcon,
   Replay as ReplayIcon,
+  Wifi as WifiIcon,
+  WifiOff as WifiOffIcon,
 } from '@mui/icons-material'
 import { jobsApi } from '../api/client'
-import type { JobStatus, JobKind, PatchJobSummary, PatchJob, PatchJobHost } from '../types'
+import { useJobWebSocket } from '../hooks/useJobWebSocket'
+import type { JobStatus, JobKind, PatchJobSummary, PatchJob, PatchJobHost, JobWsEvent } from '../types'
 
 // ── Status chip ───────────────────────────────────────────────────────────────
 type ChipColor = 'default' | 'info' | 'warning' | 'success' | 'error'
@@ -340,6 +343,44 @@ export default function JobsPage() {
     loadJobs(0)
   }, [loadJobs])
 
+  // ── WS event handler — surgical state updates ─────────────────────────────
+  const handleWsEvent = useCallback((event: JobWsEvent) => {
+    // Update matching job summary row status.
+    setJobs((prev) =>
+      prev.map((job) => {
+        if (job.id !== event.job_id) return job
+        const updated = { ...job, status: event.status }
+        // Increment counters when a host reaches a terminal state.
+        if (event.status === 'succeeded') {
+          updated.succeeded_count = job.succeeded_count + 1
+        } else if (event.status === 'failed') {
+          updated.failed_count = job.failed_count + 1
+        }
+        return updated
+      })
+    )
+
+    // Also update the host row in the expanded detail panel if loaded.
+    setDetails((prev) => {
+      const detail = prev[event.job_id]
+      if (!detail) return prev
+      const updatedHosts = detail.hosts.map((h) => {
+        if (h.host_id !== event.host_id) return h
+        return {
+          ...h,
+          status: event.status,
+          ...(event.error_message ? { error_message: event.error_message } : {}),
+          ...(event.agent_job_id  ? { agent_job_id:  event.agent_job_id  } : {}),
+        }
+      })
+      return { ...prev, [event.job_id]: { ...detail, hosts: updatedHosts } }
+    })
+  }, [])
+
+  // ── WebSocket connection ──────────────────────────────────────────────────
+  const { connected } = useJobWebSocket({ onEvent: handleWsEvent })
+
+  // ── Action handlers ───────────────────────────────────────────────────────
   const handleToggleExpand = useCallback(async (id: string) => {
     if (expandedId === id) {
       setExpandedId(null)
@@ -388,12 +429,31 @@ export default function JobsPage() {
     }
   }, [rollbackTargetId, loadJobs])
 
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <Container maxWidth="xl" sx={{ mt: 3 }}>
       <Toolbar disableGutters sx={{ mb: 2 }}>
         <Typography variant="h5" fontWeight={700} sx={{ flexGrow: 1 }}>
           Jobs
         </Typography>
+
+        {/* WS connection status indicator */}
+        <Tooltip title={connected ? 'Live updates connected' : 'Live updates disconnected'}>
+          <Box
+            display="flex"
+            alignItems="center"
+            gap={0.5}
+            sx={{ mr: 1, color: connected ? 'success.main' : 'text.disabled' }}
+          >
+            {connected
+              ? <WifiIcon fontSize="small" />
+              : <WifiOffIcon fontSize="small" />}
+            <Typography variant="caption">
+              {connected ? 'Live' : 'Offline'}
+            </Typography>
+          </Box>
+        </Tooltip>
+
         <Tooltip title="Refresh">
           <span>
             <IconButton onClick={() => loadJobs(0)} disabled={loading}>

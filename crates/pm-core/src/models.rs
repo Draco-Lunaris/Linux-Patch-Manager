@@ -298,3 +298,77 @@ pub struct PatchJobSummary {
     pub started_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
 }
+
+// ============================================================
+// Maintenance Windows
+// ============================================================
+
+/// Recurrence type for a maintenance window.
+/// Mirrors the `window_recurrence` PostgreSQL ENUM.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "window_recurrence", rename_all = "lowercase")]
+pub enum WindowRecurrence {
+    /// Single one-time window (at `start_at` for `duration_minutes` minutes).
+    Once,
+    /// Repeats every day at the time portion of `start_at`.
+    Daily,
+    /// Repeats on the day-of-week in `recurrence_day` (0 = Sunday).
+    Weekly,
+    /// Repeats on the day-of-month in `recurrence_day` (1-31).
+    Monthly,
+}
+
+impl std::fmt::Display for WindowRecurrence {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Once    => write!(f, "once"),
+            Self::Daily   => write!(f, "daily"),
+            Self::Weekly  => write!(f, "weekly"),
+            Self::Monthly => write!(f, "monthly"),
+        }
+    }
+}
+
+/// Full row from `maintenance_windows`.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct MaintenanceWindow {
+    pub id: Uuid,
+    pub host_id: Uuid,
+    pub label: String,
+    pub recurrence: WindowRecurrence,
+    /// Absolute start time (one-time) or time-of-day reference (recurring).
+    pub start_at: DateTime<Utc>,
+    /// Duration of the window in minutes.
+    pub duration_minutes: i32,
+    /// Day-of-week (0=Sun, weekly) or day-of-month (1-31, monthly); NULL for once/daily.
+    pub recurrence_day: Option<i32>,
+    pub enabled: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Payload for `POST /api/v1/hosts/{id}/maintenance-windows`.
+#[derive(Debug, Deserialize)]
+pub struct CreateMaintenanceWindowRequest {
+    pub label: String,
+    pub recurrence: WindowRecurrence,
+    /// RFC 3339 / ISO 8601 timestamp (UTC recommended).
+    pub start_at: DateTime<Utc>,
+    /// How many minutes the window is open (default 60).
+    pub duration_minutes: Option<i32>,
+    /// Required for `weekly` (0-6) and `monthly` (1-31).
+    pub recurrence_day: Option<i32>,
+    /// Whether the window is active (default true).
+    pub enabled: Option<bool>,
+}
+
+/// Payload for `PUT /api/v1/hosts/{id}/maintenance-windows/{window_id}`.
+#[derive(Debug, Deserialize)]
+pub struct UpdateMaintenanceWindowRequest {
+    pub label: Option<String>,
+    pub recurrence: Option<WindowRecurrence>,
+    pub start_at: Option<DateTime<Utc>>,
+    pub duration_minutes: Option<i32>,
+    pub recurrence_day: Option<i32>,
+    pub enabled: Option<bool>,
+}

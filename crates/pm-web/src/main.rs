@@ -10,6 +10,7 @@ use axum::{
     routing::get,
     Router,
 };
+use dashmap::DashMap;
 use pm_core::{
     config::AppConfig,
     db,
@@ -20,8 +21,13 @@ use pm_auth::{
     jwt,
     rbac::{AuthConfig, require_auth},
 };
+use routes::ws::WsTicket;
 use serde_json::{json, Value};
-use std::{net::SocketAddr, sync::Arc};
+use std::{
+    net::SocketAddr,
+    sync::Arc,
+    time::Duration,
+};
 use tower_http::{
     services::ServeDir,
     trace::TraceLayer,
@@ -34,6 +40,8 @@ pub struct AppState {
     pub config: Arc<AppConfig>,
     pub signing_key_pem: String,
     pub auth_config: Arc<AuthConfig>,
+    /// In-memory store for single-use WebSocket authentication tickets.
+    pub ws_tickets: Arc<DashMap<String, WsTicket>>,
 }
 
 #[tokio::main]
@@ -69,11 +77,32 @@ async fn main() -> anyhow::Result<()> {
     let pool = db::init_pool(&config.database).await?;
     db::run_migrations(&pool).await?;
 
+    let ws_tickets: Arc<DashMap<String, WsTicket>> = Arc::new(DashMap::new());
+
+    // Background task: purge expired WS tickets every 30 seconds.
+    {
+        let tickets = ws_tickets.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(30));
+            loop {
+                interval.tick().await;
+                let now = chrono::Utc::now();
+                let before = tickets.len();
+                tickets.retain(|_, v| v.expires_at > now);
+                let removed = before.saturating_sub(tickets.len());
+                if removed > 0 {
+                    tracing::debug!(removed, "Purged expired WS tickets");
+                }
+            }
+        });
+    }
+
     let state = AppState {
         db: pool,
         config: Arc::new(config.clone()),
         signing_key_pem,
         auth_config,
+        ws_tickets,
     };
 
     let app = build_router(state);
@@ -109,6 +138,10 @@ pub fn build_router(state: AppState) -> Router {
         .nest("/status", routes::status::router())
         // Patch jobs
         .nest("/jobs", routes::jobs::router())
+        // Maintenance windows (nested under hosts path param)
+        .nest("/hosts/:host_id/maintenance-windows", routes::maintenance_windows::router())
+        // WS ticket issuance (JWT-protected — ticket returned to browser, then used for WS upgrade)
+        .merge(routes::ws::ticket_router())
         // Apply auth middleware to all the above
         .route_layer(middleware::from_fn(move |req, next| {
             let auth_config = auth_config.clone();
@@ -121,6 +154,8 @@ pub fn build_router(state: AppState) -> Router {
         .nest("/api/v1/auth", routes::auth::public_router())
         // Protected API routes (JWT required)
         .nest("/api/v1", protected_api)
+        // WebSocket browser endpoint — ticket-authenticated, outside JWT middleware
+        .merge(routes::ws::ws_router())
         // Serve React SPA
         .fallback_service(
             ServeDir::new(&static_dir).append_index_html_on_directories(true),

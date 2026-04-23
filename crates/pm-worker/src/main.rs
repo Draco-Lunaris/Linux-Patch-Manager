@@ -5,9 +5,11 @@
 
 mod agent_loader;
 mod health_poller;
+mod maintenance_scheduler;
 mod patch_poller;
 mod refresh_listener;
 mod job_executor;
+mod ws_relay;
 
 use pm_core::{
     config::AppConfig,
@@ -19,9 +21,11 @@ use std::{sync::Arc, time::Duration};
 use tokio::time;
 
 use health_poller::run_health_poller;
+use maintenance_scheduler::run_maintenance_scheduler;
 use patch_poller::run_patch_poller;
 use refresh_listener::run_refresh_listener;
 use job_executor::run_job_executor;
+use ws_relay::run_ws_relay;
 
 /// Minimum number of applied migrations the worker requires before
 /// accepting work. Prevents the worker from running against a schema
@@ -70,6 +74,12 @@ async fn main() -> anyhow::Result<()> {
     // M5: job execution engine
     let job_exec_handle = tokio::spawn(run_job_executor(pool.clone(), config.clone()));
 
+    // M6: maintenance window scheduler
+    let maint_sched_handle = tokio::spawn(run_maintenance_scheduler(pool.clone(), config.clone()));
+
+    // M7: WS relay — streams agent job events → DB → pg_notify → browser WS
+    let ws_relay_handle = tokio::spawn(run_ws_relay(pool.clone(), config.clone()));
+
     tracing::info!("Worker tasks started");
 
     // Wait for all tasks (they run indefinitely)
@@ -79,6 +89,8 @@ async fn main() -> anyhow::Result<()> {
         patch_handle,
         refresh_handle,
         job_exec_handle,
+        maint_sched_handle,
+        ws_relay_handle,
     );
 
     Ok(())

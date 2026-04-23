@@ -11,6 +11,7 @@ import UsersPage from './pages/UsersPage'
 import DashboardPage from './pages/DashboardPage'
 import PatchDeploymentPage from './pages/PatchDeploymentPage'
 import JobsPage from './pages/JobsPage'
+import MaintenanceWindowsPage from './pages/MaintenanceWindowsPage'
 
 // Placeholder pages — implemented in later milestones
 const PlaceholderPage = ({ title }: { title: string }) => (
@@ -44,10 +45,14 @@ function App() {
         <Route path="/groups" element={<RequireAuth><GroupsPage /></RequireAuth>} />
         <Route path="/users" element={<RequireAuth><UsersPage /></RequireAuth>} />
 
-        {/* Protected — later milestones */}
+        {/* Protected — M5 */}
         <Route path="/jobs" element={<RequireAuth><JobsPage /></RequireAuth>} />
         <Route path="/deployment" element={<RequireAuth><PatchDeploymentPage /></RequireAuth>} />
-        <Route path="/maintenance" element={<RequireAuth><PlaceholderPage title="Maintenance Windows" /></RequireAuth>} />
+
+        {/* Protected — M6 */}
+        <Route path="/maintenance" element={<RequireAuth><MaintenanceWindowsPage /></RequireAuth>} />
+
+        {/* Placeholder — later milestones */}
         <Route path="/reports" element={<RequireAuth><PlaceholderPage title="Reports" /></RequireAuth>} />
         <Route path="/certificates" element={<RequireAuth><PlaceholderPage title="Certificates" /></RequireAuth>} />
         <Route path="/settings" element={<RequireAuth><PlaceholderPage title="Settings" /></RequireAuth>} />

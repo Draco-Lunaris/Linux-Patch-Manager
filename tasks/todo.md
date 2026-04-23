@@ -147,25 +147,25 @@ Each milestone produces a **testable vertical slice** — backend + frontend + d
 ### M6: Maintenance Windows & Scheduling + Frontend Page
 **Goal:** Per-device recurring and one-time maintenance windows, auto-execution at window open.
 
-- [ ] Implement maintenance window CRUD: `GET/POST/PUT/DELETE /api/v1/hosts/{id}/maintenance-windows`
-- [ ] Implement recurring schedule logic: daily, weekly, monthly (cron-like evaluation)
-- [ ] Implement one-time window support
-- [ ] Implement worker job scheduler: detect window openings, dispatch queued jobs
-- [ ] Implement window-open event triggering job execution
-- [ ] Frontend: Maintenance Windows page (per-device schedule management)
-- [ ] Frontend: Maintenance window config on Host Detail page
+- [x] Implement maintenance window CRUD: `GET/POST/PUT/DELETE /api/v1/hosts/{id}/maintenance-windows`
+- [x] Implement recurring schedule logic: daily, weekly, monthly (cron-like evaluation)
+- [x] Implement one-time window support
+- [x] Implement worker job scheduler: detect window openings, dispatch queued jobs
+- [x] Implement window-open event triggering job execution
+- [x] Frontend: Maintenance Windows page (per-device schedule management)
+- [x] Frontend: Maintenance window config on Host Detail page
 - [ ] Verify: create recurring/one-time windows, queued jobs execute at window open, window expiration stops execution
 
 ### M7: WebSocket Relay (Real-Time Job Status)
 **Goal:** Browser receives live job updates via WebSocket.
 
-- [ ] Implement WS ticket endpoint: `POST /api/v1/ws/ticket` (single-use, 60s expiry, JWT-authenticated)
-- [ ] Implement WebSocket relay: `WS /api/v1/ws/jobs?ticket=...` → authenticated browser connection
-- [ ] Implement agent WebSocket consumption: worker subscribes to agent `WS /api/v1/ws/jobs` for running jobs
-- [ ] Implement event multiplexing: agent WS events → PostgreSQL update → browser WS push
-- [ ] Frontend: WebSocket client hook with auto-reconnect and ticket refresh
-- [ ] Frontend: Live job progress updates on Jobs page
-- [ ] Verify: open job in browser, see real-time progress updates, WS ticket expires correctly
+- [x] Implement WS ticket endpoint: `POST /api/v1/ws/ticket` (single-use, 60s expiry, JWT-authenticated)
+- [x] Implement WebSocket relay: `WS /api/v1/ws/jobs?ticket=...` → authenticated browser connection
+- [x] Implement agent WebSocket consumption: worker subscribes to agent `WS /api/v1/ws/jobs` for running jobs
+- [x] Implement event multiplexing: agent WS events → PostgreSQL update → browser WS push
+- [x] Frontend: WebSocket client hook with auto-reconnect and ticket refresh
+- [x] Frontend: Live job progress updates on Jobs page
+- [x] Verify: open job in browser, see real-time progress updates, WS ticket expires correctly
 
 ### M8: Internal CA + Certificate Management + Frontend Page
 **Goal:** CA issues/renews certs, download links work.

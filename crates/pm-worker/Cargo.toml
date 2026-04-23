@@ -23,3 +23,7 @@ tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 futures = { workspace = true }
+rustls = { workspace = true }
+tokio-rustls = { version = "0.26" }
+rustls-pemfile = { version = "2" }
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }

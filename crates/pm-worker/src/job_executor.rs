@@ -204,6 +204,39 @@ async fn scan_queued_jobs(pool: PgPool, config: Arc<AppConfig>) {
         WHERE  pjh.status = 'queued'
           AND  (pjh.retry_next_at IS NULL OR pjh.retry_next_at <= NOW())
           AND  j.status != 'cancelled'
+          AND  (
+            -- Immediate jobs always dispatch
+            j.immediate = TRUE
+            OR
+            -- Non-immediate jobs only dispatch when the host has an open window
+            EXISTS (
+              SELECT 1 FROM maintenance_windows mw
+              WHERE mw.host_id = pjh.host_id
+                AND mw.enabled = TRUE
+                AND (
+                  (mw.recurrence = 'once'
+                   AND mw.start_at <= NOW()
+                   AND NOW() < mw.start_at + (mw.duration_minutes * INTERVAL '1 minute'))
+                  OR
+                  (mw.recurrence = 'daily'
+                   AND (NOW() AT TIME ZONE 'UTC')::time >= (mw.start_at AT TIME ZONE 'UTC')::time
+                   AND (NOW() AT TIME ZONE 'UTC')::time < ((mw.start_at AT TIME ZONE 'UTC')::time
+                                                           + (mw.duration_minutes * INTERVAL '1 minute')))
+                  OR
+                  (mw.recurrence = 'weekly'
+                   AND EXTRACT(DOW FROM NOW() AT TIME ZONE 'UTC') = mw.recurrence_day
+                   AND (NOW() AT TIME ZONE 'UTC')::time >= (mw.start_at AT TIME ZONE 'UTC')::time
+                   AND (NOW() AT TIME ZONE 'UTC')::time < ((mw.start_at AT TIME ZONE 'UTC')::time
+                                                           + (mw.duration_minutes * INTERVAL '1 minute')))
+                  OR
+                  (mw.recurrence = 'monthly'
+                   AND EXTRACT(DAY FROM NOW() AT TIME ZONE 'UTC') = mw.recurrence_day
+                   AND (NOW() AT TIME ZONE 'UTC')::time >= (mw.start_at AT TIME ZONE 'UTC')::time
+                   AND (NOW() AT TIME ZONE 'UTC')::time < ((mw.start_at AT TIME ZONE 'UTC')::time
+                                                           + (mw.duration_minutes * INTERVAL '1 minute')))
+                )
+            )
+          )
         "#,
     )
     .fetch_all(&pool)
@@ -230,7 +263,7 @@ async fn scan_queued_jobs(pool: PgPool, config: Arc<AppConfig>) {
 
 /// Fetch all queued host entries for `job_id` and dispatch them concurrently,
 /// bounded by `config.worker.max_concurrent_agent_calls`.
-async fn process_job(pool: PgPool, config: Arc<AppConfig>, job_id: Uuid) {
+pub async fn process_job(pool: PgPool, config: Arc<AppConfig>, job_id: Uuid) {
     tracing::info!(%job_id, "process_job: dispatching queued hosts");
 
     // Mark the parent job as running (idempotent guard).

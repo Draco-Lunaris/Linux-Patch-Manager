@@ -28,3 +28,4 @@ uuid = { workspace = true }
 ulid = { workspace = true }
 chrono = { workspace = true }
 ipnet = { workspace = true }
+dashmap = { version = "6" }
