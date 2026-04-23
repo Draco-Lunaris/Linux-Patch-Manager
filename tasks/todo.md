@@ -197,16 +197,16 @@ Each milestone produces a **testable vertical slice** — backend + frontend + d
 ### M10: Settings Page (Azure SSO, SMTP, TLS, IP Whitelist) + Frontend Page
 **Goal:** All runtime configuration manageable from the UI.
 
-- [ ] Implement `system_config` table CRUD API
-- [ ] Implement Azure SSO configuration: tenant ID, client ID/secret, redirect URI, scopes
-- [ ] Implement "Test Connection" action for Azure SSO (round-trip against Azure AD, report success/failure without enabling)
-- [ ] Implement SMTP configuration: host, port, auth mode, username/password, TLS mode, from-address
-- [ ] Implement "Send Test Email" action for SMTP
-- [ ] Implement polling interval tuning (health, patch) in Settings
+- [x] Implement `system_config` table CRUD API
+- [x] Implement Azure SSO configuration: tenant ID, client ID/secret, redirect URI, scopes
+- [x] Implement "Test Connection" action for Azure SSO (round-trip against Azure AD, report success/failure without enabling)
+- [x] Implement SMTP configuration: host, port, auth mode, username/password, TLS mode, from-address
+- [x] Implement "Send Test Email" action for SMTP
+- [x] Implement polling interval tuning (health, patch) in Settings
 - [x] Implement Web UI TLS certificate strategy selection (internal CA vs. operator-supplied)
-- [ ] Implement IP whitelist management in Settings
-- [ ] Implement Azure SSO OAuth2/OIDC Authorization Code flow with PKCE
-- [ ] Frontend: Settings page with all configuration sections and test actions
+- [x] Implement IP whitelist management in Settings
+- [x] Implement Azure SSO OAuth2/OIDC Authorization Code flow with PKCE
+- [x] Frontend: Settings page with all configuration sections and test actions
 - [ ] Verify: Azure SSO test connection works, test email sends, TLS strategy switches, IP whitelist updates take effect
 
 ### M11: Email Notifications + Audit Logging Hardening

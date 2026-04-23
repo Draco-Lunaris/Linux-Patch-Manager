@@ -13,6 +13,7 @@ use axum::{
     response::{IntoResponse, Json, Response},
 };
 use ipnet::IpNet;
+use parking_lot::RwLock;
 use serde_json::json;
 use std::net::IpAddr;
 use std::str::FromStr;
@@ -64,8 +65,8 @@ impl UserRole {
 pub struct AuthConfig {
     /// Ed25519 public key PEM for JWT verification.
     pub verify_key_pem: String,
-    /// IP whitelist (empty = allow all).
-    pub ip_whitelist: Vec<IpNet>,
+    /// IP whitelist (empty = allow all). RwLock for runtime updates.
+    pub ip_whitelist: Arc<RwLock<Vec<IpNet>>>,
 }
 
 impl AuthConfig {
@@ -77,17 +78,29 @@ impl AuthConfig {
 
         Self {
             verify_key_pem,
-            ip_whitelist,
+            ip_whitelist: Arc::new(RwLock::new(ip_whitelist)),
         }
     }
 
     /// Check if an IP address is allowed by the whitelist.
     /// If the whitelist is empty, all IPs are allowed.
     pub fn is_ip_allowed(&self, ip: &IpAddr) -> bool {
-        if self.ip_whitelist.is_empty() {
+        let whitelist = self.ip_whitelist.read();
+        if whitelist.is_empty() {
             return true;
         }
-        self.ip_whitelist.iter().any(|net| net.contains(ip))
+        whitelist.iter().any(|net| net.contains(ip))
+    }
+
+    /// Update the IP whitelist at runtime without restart.
+    pub fn update_ip_whitelist(&self, entries: Vec<String>) {
+        let nets: Vec<IpNet> = entries
+            .iter()
+            .filter_map(|cidr| IpNet::from_str(cidr).ok())
+            .collect();
+        let count = nets.len();
+        *self.ip_whitelist.write() = nets;
+        tracing::info!(count, "IP whitelist updated at runtime");
     }
 }
 

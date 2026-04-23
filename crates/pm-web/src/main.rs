@@ -22,6 +22,7 @@ use pm_auth::{
     rbac::{AuthConfig, require_auth},
 };
 use routes::ws::WsTicket;
+use routes::azure_sso::SsoSession;
 use serde_json::{json, Value};
 use std::{
     net::SocketAddr,
@@ -42,6 +43,8 @@ pub struct AppState {
     pub auth_config: Arc<AuthConfig>,
     /// In-memory store for single-use WebSocket authentication tickets.
     pub ws_tickets: Arc<DashMap<String, WsTicket>>,
+    /// In-memory store for SSO PKCE sessions (state → code_verifier).
+    pub sso_sessions: Arc<DashMap<String, SsoSession>>,
     /// Internal certificate authority for mTLS client cert issuance.
     pub ca: Arc<pm_ca::CertAuthority>,
 }
@@ -90,6 +93,7 @@ async fn main() -> anyhow::Result<()> {
         });
 
     let ws_tickets: Arc<DashMap<String, WsTicket>> = Arc::new(DashMap::new());
+    let sso_sessions: Arc<DashMap<String, SsoSession>> = Arc::new(DashMap::new());
 
     // Background task: purge expired WS tickets every 30 seconds.
     {
@@ -115,6 +119,7 @@ async fn main() -> anyhow::Result<()> {
         signing_key_pem,
         auth_config,
         ws_tickets,
+        sso_sessions,
         ca: Arc::new(ca),
     };
 
@@ -163,6 +168,8 @@ pub fn build_router(state: AppState) -> Router {
         .merge(routes::ws::ticket_router())
         // Reports
         .nest("/reports", routes::reports::router())
+        // Settings (admin-only)
+        .nest("/settings", routes::settings::router())
         // Apply auth middleware to all the above
         .route_layer(middleware::from_fn(move |req, next| {
             let auth_config = auth_config.clone();
@@ -173,6 +180,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/status/health", get(health_handler))
         // Public auth routes (no JWT needed)
         .nest("/api/v1/auth", routes::auth::public_router())
+        // Public Azure SSO routes (no JWT needed)
+        .nest("/api/v1/auth/azure", routes::azure_sso::public_router())
         // Protected API routes (JWT required)
         .nest("/api/v1", protected_api)
         // WebSocket browser endpoint — ticket-authenticated, outside JWT middleware

@@ -192,4 +192,36 @@ export interface IssuedCert {
 
 // ── Reports (M9) ─────────────────────────────────────────────────────────────
 export type ReportType = 'compliance' | 'patch-history' | 'vulnerability' | 'audit'
+
+// ── Settings (M10) ──────────────────────────────────────────────────────────
+
+export interface AzureSsoConfig {
+  enabled: boolean
+  tenant_id: string
+  client_id: string
+  redirect_uri: string
+  scopes: string
+}
+
+export interface SmtpConfig {
+  enabled: boolean
+  host: string
+  port: number
+  username: string
+  from: string
+  tls_mode: string
+}
+
+export interface PollingConfig {
+  health_poll_interval_secs: number
+  patch_poll_interval_secs: number
+}
+
+export interface SettingsResponse {
+  azure_sso: AzureSsoConfig
+  smtp: SmtpConfig
+  polling: PollingConfig
+  ip_whitelist: string[]
+  web_tls_strategy: string
+}
 export type ReportFormat = 'csv' | 'pdf'

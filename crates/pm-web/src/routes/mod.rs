@@ -8,6 +8,8 @@ pub mod maintenance_windows;
 pub mod jobs;
 pub mod status;
 pub mod users;
+pub mod settings;
+pub mod azure_sso;
 pub mod ws;
 
 pub mod reports;

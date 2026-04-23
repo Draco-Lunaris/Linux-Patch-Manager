@@ -197,3 +197,51 @@ export const reportsApi = {
       timeout: 120_000,   // reports can take a while
     }),
 }
+
+// ── Settings API (M10) ────────────────────────────────────────────────────
+export interface AzureSsoConfig {
+  enabled: boolean
+  tenant_id: string
+  client_id: string
+  redirect_uri: string
+  scopes: string
+}
+
+export interface SmtpConfig {
+  enabled: boolean
+  host: string
+  port: number
+  username: string
+  from: string
+  tls_mode: string
+}
+
+export interface PollingConfig {
+  health_poll_interval_secs: number
+  patch_poll_interval_secs: number
+}
+
+export interface SettingsResponse {
+  azure_sso: AzureSsoConfig
+  smtp: SmtpConfig
+  polling: PollingConfig
+  ip_whitelist: string[]
+  web_tls_strategy: string
+}
+
+export interface TestResult {
+  success: boolean
+  message: string
+}
+
+export const settingsApi = {
+  get: () => apiClient.get<SettingsResponse>('/settings'),
+  update: (data: Partial<SettingsResponse> & {
+    azure_sso?: AzureSsoConfig & { client_secret?: string }
+    smtp?: SmtpConfig & { password?: string }
+  }) => apiClient.put<SettingsResponse>('/settings', data),
+  testAzureSso: () => apiClient.post<TestResult>('/settings/azure-sso/test'),
+  testSmtp: () => apiClient.post<TestResult>('/settings/smtp/test'),
+  getIpWhitelist: () => apiClient.get<{ entries: string[] }>('/settings/ip-whitelist'),
+  updateIpWhitelist: (entries: string[]) => apiClient.put<{ entries: string[] }>('/settings/ip-whitelist', { entries }),
+}

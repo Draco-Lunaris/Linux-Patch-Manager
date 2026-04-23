@@ -14,6 +14,7 @@ import JobsPage from './pages/JobsPage'
 import MaintenanceWindowsPage from './pages/MaintenanceWindowsPage'
 import CertificatesPage from './pages/CertificatesPage'
 import ReportsPage from './pages/ReportsPage'
+import SettingsPage from './pages/SettingsPage'
 
 // Placeholder pages — implemented in later milestones
 const PlaceholderPage = ({ title }: { title: string }) => (
@@ -59,7 +60,7 @@ function App() {
         <Route path="/reports" element={<RequireAuth><ReportsPage /></RequireAuth>} />
         {/* Protected — M8 */}
         <Route path="/certificates" element={<RequireAuth><CertificatesPage /></RequireAuth>} />
-        <Route path="/settings" element={<RequireAuth><PlaceholderPage title="Settings" /></RequireAuth>} />
+        <Route path="/settings" element={<RequireAuth><SettingsPage /></RequireAuth>} />
 
         <Route path="*" element={<PlaceholderPage title="404 Not Found" />} />
       </Routes>
