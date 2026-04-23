@@ -1,0 +1,14 @@
+# Agent Zero project data
+.a0proj/
+
+# Python environments & cache
+venv/**
+**/__pycache__/**
+
+# Node.js dependencies
+**/node_modules/**
+**/.npm/**
+
+# IDE
+.vscode/
+.idea/
