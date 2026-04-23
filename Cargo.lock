@@ -1830,6 +1830,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "futures",
+ "pm-agent-client",
  "pm-core",
  "serde",
  "serde_json",

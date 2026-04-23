@@ -192,3 +192,109 @@ pub struct RegisterDiscoveredRequest {
     pub display_name: Option<String>,
     pub group_ids: Option<Vec<Uuid>>,
 }
+
+// ============================================================
+// Patch Jobs
+// ============================================================
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "job_status", rename_all = "lowercase")]
+pub enum JobStatus {
+    Queued,
+    Pending,
+    Running,
+    Succeeded,
+    Failed,
+    Cancelled,
+}
+
+impl std::fmt::Display for JobStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Queued    => write!(f, "queued"),
+            Self::Pending   => write!(f, "pending"),
+            Self::Running   => write!(f, "running"),
+            Self::Succeeded => write!(f, "succeeded"),
+            Self::Failed    => write!(f, "failed"),
+            Self::Cancelled => write!(f, "cancelled"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "job_kind", rename_all = "snake_case")]
+pub enum JobKind {
+    #[sqlx(rename = "patch_apply")]
+    PatchApply,
+    #[sqlx(rename = "patch_remove")]
+    PatchRemove,
+    Reboot,
+    Rollback,
+}
+
+/// Full `patch_jobs` row.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct PatchJob {
+    pub id: Uuid,
+    pub kind: JobKind,
+    pub status: JobStatus,
+    pub created_by_user_id: Option<Uuid>,
+    pub parent_job_id: Option<Uuid>,
+    pub maintenance_window_id: Option<Uuid>,
+    pub immediate: bool,
+    pub patch_selection: serde_json::Value,
+    pub notes: String,
+    pub created_at: DateTime<Utc>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+}
+
+/// Full `patch_job_hosts` row (includes columns added in migration 003).
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct PatchJobHost {
+    pub id: Uuid,
+    pub job_id: Uuid,
+    pub host_id: Uuid,
+    pub status: JobStatus,
+    pub agent_job_id: Option<String>,
+    pub retry_count: i32,
+    pub output: String,
+    pub error_message: Option<String>,
+    pub retry_next_at: Option<DateTime<Utc>>,
+    pub last_error: Option<String>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+}
+
+/// Request payload for creating a patch job via `POST /api/v1/jobs`.
+#[derive(Debug, Deserialize)]
+pub struct CreateJobRequest {
+    /// Host IDs to patch.
+    pub host_ids: Vec<Uuid>,
+    /// Package names to apply (empty = all available patches).
+    pub packages: Vec<String>,
+    /// If true: apply immediately. If false: queue for next maintenance window.
+    pub immediate: bool,
+    /// Optional maintenance window to bind to.
+    pub maintenance_window_id: Option<Uuid>,
+    /// Allow reboot if required by patches.
+    pub allow_reboot: Option<bool>,
+    /// Optional operator notes.
+    pub notes: Option<String>,
+}
+
+/// Summary row for job list view (aggregates per-host counts).
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct PatchJobSummary {
+    pub id: Uuid,
+    pub kind: JobKind,
+    pub status: JobStatus,
+    pub immediate: bool,
+    pub host_count: i64,
+    pub succeeded_count: i64,
+    pub failed_count: i64,
+    pub notes: String,
+    pub created_at: DateTime<Utc>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+}

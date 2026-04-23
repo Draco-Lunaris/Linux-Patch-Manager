@@ -45,3 +45,75 @@ export interface User {
   is_active: boolean
   last_login_at?: string
 }
+
+export interface FleetStatus {
+  total_hosts: number
+  healthy: number
+  degraded: number
+  unreachable: number
+  pending: number
+  total_pending_patches: number
+  hosts_requiring_reboot: number
+  compliance_pct: number
+}
+
+export interface PatchInfo {
+  name: string
+  current_version: string
+  available_version: string
+  severity: 'critical' | 'high' | 'medium' | 'low'
+  description: string
+  cve_ids: string[]
+  requires_reboot: boolean
+}
+
+export interface PatchJobHost {
+  id: string
+  job_id: string
+  host_id: string
+  host_display_name: string
+  status: JobStatus
+  agent_job_id?: string
+  retry_count: number
+  output: string
+  error_message?: string
+  retry_next_at?: string
+  started_at?: string
+  completed_at?: string
+}
+
+export interface PatchJob {
+  id: string
+  kind: JobKind
+  status: JobStatus
+  immediate: boolean
+  patch_selection: string[]
+  notes: string
+  created_at: string
+  started_at?: string
+  completed_at?: string
+  hosts: PatchJobHost[]
+}
+
+export interface PatchJobSummary {
+  id: string
+  kind: JobKind
+  status: JobStatus
+  immediate: boolean
+  host_count: number
+  succeeded_count: number
+  failed_count: number
+  notes: string
+  created_at: string
+  started_at?: string
+  completed_at?: string
+}
+
+export interface CreateJobRequest {
+  host_ids: string[]
+  packages: string[]   // empty = all patches
+  immediate: boolean
+  maintenance_window_id?: string
+  allow_reboot?: boolean
+  notes?: string
+}

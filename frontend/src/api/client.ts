@@ -1,6 +1,7 @@
 import axios, { type AxiosError } from 'axios'
 import type { InternalAxiosRequestConfig } from 'axios'
 import { useAuthStore } from '../store/authStore'
+import type { FleetStatus, CreateJobRequest } from '../types'
 
 const BASE_URL = '/api/v1'
 
@@ -92,4 +93,33 @@ export const authApi = {
 
   verifyMfa: (secretBase32: string, code: string) =>
     apiClient.post('/auth/mfa/verify', { secret_base32: secretBase32, code }),
+}
+
+// ── Fleet API functions ──────────────────────────────────────────────────────
+export const fleetApi = {
+  getStatus: () => apiClient.get<FleetStatus>('/status/fleet'),
+}
+
+// ── Hosts API functions ──────────────────────────────────────────────────────
+export const hostsApi = {
+  list: (params?: Record<string, unknown>) => apiClient.get('/hosts', { params }),
+  get: (id: string) => apiClient.get(`/hosts/${id}`),
+  delete: (id: string) => apiClient.delete(`/hosts/${id}`),
+  refresh: (id: string) => apiClient.post(`/hosts/${id}/refresh`),
+}
+
+// ── Jobs API ─────────────────────────────────────────────────────────────────
+export const jobsApi = {
+  list: (params?: Record<string, unknown>) => apiClient.get('/jobs', { params }),
+  get: (id: string) => apiClient.get(`/jobs/${id}`),
+  create: (body: CreateJobRequest) => apiClient.post('/jobs', body),
+  cancel: (id: string) => apiClient.post(`/jobs/${id}/cancel`),
+  rollback: (id: string) => apiClient.post(`/jobs/${id}/rollback`),
+}
+
+// ── Patches API (per-host patch listing) ──────────────────────────────────────
+export const patchesApi = {
+  // Returns patches available on a specific host via the manager's proxy
+  // The backend reads from host_patch_data table (cached from agent poll)
+  getHostPatches: (hostId: string) => apiClient.get(`/hosts/${hostId}/patches`),
 }

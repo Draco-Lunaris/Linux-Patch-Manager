@@ -105,6 +105,10 @@ pub fn build_router(state: AppState) -> Router {
         .nest("/users", routes::users::router())
         // Discovery
         .nest("/discovery", routes::discovery::router())
+        // Fleet status
+        .nest("/status", routes::status::router())
+        // Patch jobs
+        .nest("/jobs", routes::jobs::router())
         // Apply auth middleware to all the above
         .route_layer(middleware::from_fn(move |req, next| {
             let auth_config = auth_config.clone();

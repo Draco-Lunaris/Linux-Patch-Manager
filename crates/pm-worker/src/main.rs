@@ -3,6 +3,12 @@
 //! Handles scheduled polling, job execution, maintenance window scheduling,
 //! retry logic, email notifications, and data pruning.
 
+mod agent_loader;
+mod health_poller;
+mod patch_poller;
+mod refresh_listener;
+mod job_executor;
+
 use pm_core::{
     config::AppConfig,
     db,
@@ -11,6 +17,11 @@ use pm_core::{
 use sqlx::PgPool;
 use std::{sync::Arc, time::Duration};
 use tokio::time;
+
+use health_poller::run_health_poller;
+use patch_poller::run_patch_poller;
+use refresh_listener::run_refresh_listener;
+use job_executor::run_job_executor;
 
 /// Minimum number of applied migrations the worker requires before
 /// accepting work. Prevents the worker from running against a schema
@@ -51,14 +62,24 @@ async fn main() -> anyhow::Result<()> {
         config.worker.heartbeat_interval_secs,
     ));
 
-    // TODO M4: spawn health_poller, patch_data_poller
-    // TODO M5: spawn job_executor
-    // TODO M6: spawn job_scheduler
+    // M4: agent health poller, patch data poller, on-demand refresh listener
+    let health_handle = tokio::spawn(run_health_poller(pool.clone(), config.clone()));
+    let patch_handle = tokio::spawn(run_patch_poller(pool.clone(), config.clone()));
+    let refresh_handle = tokio::spawn(run_refresh_listener(pool.clone(), config.clone()));
+
+    // M5: job execution engine
+    let job_exec_handle = tokio::spawn(run_job_executor(pool.clone(), config.clone()));
 
     tracing::info!("Worker tasks started");
 
     // Wait for all tasks (they run indefinitely)
-    let _ = tokio::join!(heartbeat_handle);
+    let _ = tokio::join!(
+        heartbeat_handle,
+        health_handle,
+        patch_handle,
+        refresh_handle,
+        job_exec_handle,
+    );
 
     Ok(())
 }

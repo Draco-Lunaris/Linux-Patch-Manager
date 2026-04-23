@@ -50,7 +50,7 @@ export default function GroupsPage() {
             <TableBody>
               {groups.map(g => (
                 <TableRow key={g.id} hover>
-                  <TableCell fontWeight={600}>{g.name}</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>{g.name}</TableCell>
                   <TableCell>{g.description || '—'}</TableCell>
                   <TableCell>{new Date(g.created_at).toLocaleDateString()}</TableCell>
                   <TableCell>

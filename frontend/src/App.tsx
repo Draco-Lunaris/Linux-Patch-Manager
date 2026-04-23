@@ -8,6 +8,9 @@ import HostsPage from './pages/HostsPage'
 import HostDetailPage from './pages/HostDetailPage'
 import GroupsPage from './pages/GroupsPage'
 import UsersPage from './pages/UsersPage'
+import DashboardPage from './pages/DashboardPage'
+import PatchDeploymentPage from './pages/PatchDeploymentPage'
+import JobsPage from './pages/JobsPage'
 
 // Placeholder pages — implemented in later milestones
 const PlaceholderPage = ({ title }: { title: string }) => (
@@ -35,15 +38,15 @@ function App() {
         <Route path="/mfa/setup" element={<RequireAuth><MfaSetupPage /></RequireAuth>} />
 
         {/* Protected — M3 */}
-        <Route path="/dashboard" element={<RequireAuth><PlaceholderPage title="Dashboard" /></RequireAuth>} />
+        <Route path="/dashboard" element={<RequireAuth><DashboardPage /></RequireAuth>} />
         <Route path="/hosts" element={<RequireAuth><HostsPage /></RequireAuth>} />
         <Route path="/hosts/:id" element={<RequireAuth><HostDetailPage /></RequireAuth>} />
         <Route path="/groups" element={<RequireAuth><GroupsPage /></RequireAuth>} />
         <Route path="/users" element={<RequireAuth><UsersPage /></RequireAuth>} />
 
         {/* Protected — later milestones */}
-        <Route path="/jobs" element={<RequireAuth><PlaceholderPage title="Jobs" /></RequireAuth>} />
-        <Route path="/deployment" element={<RequireAuth><PlaceholderPage title="Patch Deployment" /></RequireAuth>} />
+        <Route path="/jobs" element={<RequireAuth><JobsPage /></RequireAuth>} />
+        <Route path="/deployment" element={<RequireAuth><PatchDeploymentPage /></RequireAuth>} />
         <Route path="/maintenance" element={<RequireAuth><PlaceholderPage title="Maintenance Windows" /></RequireAuth>} />
         <Route path="/reports" element={<RequireAuth><PlaceholderPage title="Reports" /></RequireAuth>} />
         <Route path="/certificates" element={<RequireAuth><PlaceholderPage title="Certificates" /></RequireAuth>} />

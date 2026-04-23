@@ -11,7 +11,8 @@ path = "src/main.rs"
 
 [dependencies]
 pm-core = { path = "../pm-core" }
-tokio = { workspace = true }
+pm-agent-client = { path = "../pm-agent-client" }
+tokio = { workspace = true, features = ["full"] }
 sqlx = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

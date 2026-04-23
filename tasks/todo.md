@@ -116,32 +116,32 @@ Each milestone produces a **testable vertical slice** — backend + frontend + d
 ### M4: Agent Communication Layer + Dashboard
 **Goal:** mTLS client works, health/patch polling operational, dashboard shows fleet status.
 
-- [ ] Implement `pm-agent-client` — Rustls-based mTLS HTTP client with client certificate, TLS 1.3 only
-- [ ] Implement agent API calls: `GET /api/v1/health`, `GET /api/v1/system/info`, `GET /api/v1/packages`, `GET /api/v1/patches`
-- [ ] Implement worker health poller: 5-minute intervals, bounded concurrency (64 semaphore), update `host_health_data`
-- [ ] Implement worker patch data poller: 30-minute intervals, bounded concurrency, update `host_patch_data`
-- [ ] Implement on-demand refresh: `POST /api/v1/hosts/{id}/refresh` → `NOTIFY refresh_requested` → worker queries immediately
-- [ ] Implement host health status tracking: healthy/degraded/unreachable with timestamps
-- [ ] Implement dashboard API: `GET /api/v1/status/fleet` (authenticated, fleet aggregates)
-- [ ] Frontend: Dashboard page — compliance %, health summary, pending patches, upcoming windows, root CA download icon
-- [ ] Frontend: Real-time health status indicators (green/yellow/red) on host lists
-- [ ] Verify: polling works, dashboard shows live fleet data, on-demand refresh works, visual alerts for unhealthy agents
+- [x] Implement `pm-agent-client` — Rustls-based mTLS HTTP client with client certificate, TLS 1.3 only
+- [x] Implement agent API calls: `GET /api/v1/health`, `GET /api/v1/system/info`, `GET /api/v1/packages`, `GET /api/v1/patches`
+- [x] Implement worker health poller: 5-minute intervals, bounded concurrency (64 semaphore), update `host_health_data`
+- [x] Implement worker patch data poller: 30-minute intervals, bounded concurrency, update `host_patch_data`
+- [x] Implement on-demand refresh: `POST /api/v1/hosts/{id}/refresh` → `NOTIFY refresh_requested` → worker queries immediately
+- [x] Implement host health status tracking: healthy/degraded/unreachable with timestamps
+- [x] Implement dashboard API: `GET /api/v1/status/fleet` (authenticated, fleet aggregates)
+- [x] Frontend: Dashboard page — compliance %, health summary, pending patches, upcoming windows, root CA download icon
+- [x] Frontend: Real-time health status indicators (green/yellow/red) on host lists
+- [x] Verify: polling works, dashboard shows live fleet data, on-demand refresh works, visual alerts for unhealthy agents
 
 ### M5: Patch Deployment & Job Management + Frontend Pages
 **Goal:** Full patch lifecycle — queue, immediate, retry, rollback, job monitoring.
 
-- [ ] Implement job creation: `POST /api/v1/jobs` (queue for window or apply now)
-- [ ] Implement `patch_jobs` and `patch_job_hosts` row creation
-- [ ] Implement `NOTIFY job_enqueued` for immediate-apply wake
-- [ ] Implement worker job executor: call agent `POST /api/v1/patches/apply`, track async job IDs
-- [ ] Implement worker retry engine: exponential backoff (1min, 5min, 30min), 3 retries max
-- [ ] Implement patch job auto-retry within maintenance window (1 retry)
-- [ ] Implement batch partial failure handling: auto-retry once, then report
-- [ ] Implement rollback: `POST /api/v1/jobs/{id}/rollback` → worker calls agent rollback endpoint
-- [ ] Implement job status tracking: poll agent `GET /api/v1/jobs/{id}` for running jobs
-- [ ] Implement job listing/detail API: `GET /api/v1/jobs`, `GET /api/v1/jobs/{id}`
-- [ ] Frontend: Patch Deployment page (select hosts → review patches → queue or apply now)
-- [ ] Frontend: Jobs page (job list, per-host status, rollback action)
+- [x] Implement job creation: `POST /api/v1/jobs` (queue for window or apply now)
+- [x] Implement `patch_jobs` and `patch_job_hosts` row creation
+- [x] Implement `NOTIFY job_enqueued` for immediate-apply wake
+- [x] Implement worker job executor: call agent `POST /api/v1/patches/apply`, track async job IDs
+- [x] Implement worker retry engine: exponential backoff (1min, 5min, 30min), 3 retries max
+- [x] Implement patch job auto-retry within maintenance window (1 retry)
+- [x] Implement batch partial failure handling: auto-retry once, then report
+- [x] Implement rollback: `POST /api/v1/jobs/{id}/rollback` → worker calls agent rollback endpoint
+- [x] Implement job status tracking: poll agent `GET /api/v1/jobs/{id}` for running jobs
+- [x] Implement job listing/detail API: `GET /api/v1/jobs`, `GET /api/v1/jobs/{id}`
+- [x] Frontend: Patch Deployment page (select hosts → review patches → queue or apply now)
+- [x] Frontend: Jobs page (job list, per-host status, rollback action)
 - [ ] Verify: queued job waits for window, immediate job runs now, retry logic works, rollback works, batch partial failures reported
 
 ### M6: Maintenance Windows & Scheduling + Frontend Page

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Alert, Box, Button, Chip, CircularProgress, Container, Divider, Grid, Paper, Typography } from '@mui/material'
+import { Alert, Box, Button, CircularProgress, Container, Divider, Grid, Paper, Typography } from '@mui/material'
 import { ArrowBack } from '@mui/icons-material'
 import { apiClient } from '../api/client'
 
@@ -29,7 +29,7 @@ export default function HostDetailPage() {
         <Divider sx={{ mb: 2 }} />
         <Grid container spacing={2}>
           {host && Object.entries(host).map(([k, v]) => v !== null && v !== '' ? (
-            <Grid item xs={12} sm={6} md={4} key={k}>
+            <Grid size={{ xs: 12, sm: 6, md: 4 }} key={k}>
               <Typography variant="caption" color="text.secondary" display="block">{k.replace(/_/g, ' ').toUpperCase()}</Typography>
               <Typography variant="body2">{String(v)}</Typography>
             </Grid>

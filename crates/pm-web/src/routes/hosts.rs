@@ -7,6 +7,7 @@
 //! GET    /api/v1/hosts/{id}/groups — list groups for host
 //! POST   /api/v1/hosts/{id}/groups — assign host to group
 //! DELETE /api/v1/hosts/{id}/groups/{group_id} — remove host from group
+//! POST   /api/v1/hosts/{id}/refresh           — queue on-demand refresh (operator+)
 
 use axum::{
     extract::{Path, Query, State},
@@ -34,6 +35,7 @@ pub fn router() -> Router<AppState> {
         .route("/:id", get(get_host).delete(remove_host))
         .route("/:id/groups", get(list_host_groups).post(add_host_to_group))
         .route("/:id/groups/:group_id", delete(remove_host_from_group))
+        .route("/:id/refresh", post(refresh_host))
 }
 
 // ── Query params ─────────────────────────────────────────────────────────────
@@ -469,4 +471,57 @@ async fn resolve_fqdn(fqdn: &str) -> Result<String, String> {
             .ok_or_else(|| format!("No addresses found for {fqdn}")),
         _ => Err(format!("Failed to resolve FQDN: {fqdn}")),
     }
+}
+
+// ── POST /api/v1/hosts/:id/refresh ───────────────────────────────────────────
+
+/// Queue an on-demand health + patch refresh for a single host.
+///
+/// Sends a PostgreSQL NOTIFY on the `refresh_requested` channel; the
+/// pm-worker refresh listener picks this up and polls the host immediately.
+/// Requires Operator or Admin role (any authenticated user).
+async fn refresh_host(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
+    // Verify the host exists.
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM hosts WHERE id = $1)")
+        .bind(id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, %id, "refresh_host: db error checking host existence");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+            )
+        })?;
+
+    if !exists {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": { "code": "not_found", "message": "Host not found" } })),
+        ));
+    }
+
+    // NOTIFY the worker's refresh listener.
+    sqlx::query("SELECT pg_notify('refresh_requested', $1)")
+        .bind(id.to_string())
+        .execute(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, %id, "refresh_host: pg_notify failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": "Failed to queue refresh" } })),
+            )
+        })?;
+
+    tracing::info!(%id, "On-demand refresh queued");
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(json!({ "message": "Refresh queued" })),
+    ))
 }

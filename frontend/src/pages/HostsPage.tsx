@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import {
   Box, Button, Chip, CircularProgress, Container, IconButton,
   Paper, Table, TableBody, TableCell, TableContainer, TableHead,
@@ -7,6 +7,7 @@ import {
 import { Add as AddIcon, Refresh as RefreshIcon, Delete as DeleteIcon } from '@mui/icons-material'
 import { useNavigate } from 'react-router-dom'
 import { apiClient } from '../api/client'
+import { hostsApi } from '../api/client'
 import type { Host, HostHealthStatus } from '../types'
 
 const statusColor = (s: HostHealthStatus) =>
@@ -18,8 +19,9 @@ export default function HostsPage() {
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [refreshing, setRefreshing] = useState<string | null>(null)
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true)
     try {
       const res = await apiClient.get('/hosts', { params: { limit: 100 } })
@@ -27,6 +29,17 @@ export default function HostsPage() {
       setTotal(res.data.total)
     } catch { /* handled by interceptor */ }
     finally { setLoading(false) }
+  }, [])
+
+  const handleRefresh = async (e: React.MouseEvent, hostId: string) => {
+    e.stopPropagation()
+    setRefreshing(hostId)
+    try {
+      await hostsApi.refresh(hostId)
+      setTimeout(() => { load(); setRefreshing(null) }, 2000)
+    } catch {
+      setRefreshing(null)
+    }
   }
 
   useEffect(() => { load() }, [])
@@ -72,6 +85,15 @@ export default function HostsPage() {
                   </TableCell>
                   <TableCell>{h.agent_version ?? '—'}</TableCell>
                   <TableCell onClick={e => e.stopPropagation()}>
+                    <Tooltip title="Request refresh">
+                      <IconButton size="small" color="primary"
+                        disabled={refreshing === h.id}
+                        onClick={(e) => handleRefresh(e, h.id)}>
+                        {refreshing === h.id
+                          ? <CircularProgress size={16} />
+                          : <RefreshIcon fontSize="small" />}
+                      </IconButton>
+                    </Tooltip>
                     <Tooltip title="Delete"><IconButton size="small" color="error">
                       <DeleteIcon fontSize="small" />
                     </IconButton></Tooltip>
