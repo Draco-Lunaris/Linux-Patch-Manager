@@ -2,6 +2,8 @@
 //!
 //! Serves the React SPA, exposes the REST API, and handles WebSocket relay.
 
+mod routes;
+
 use axum::{
     extract::State,
     http::StatusCode,
@@ -16,6 +18,10 @@ use pm_core::{
     logging,
     request_id::request_id_middleware,
 };
+use pm_auth::{
+    jwt,
+    rbac::{AuthConfig, require_auth},
+};
 use serde_json::{json, Value};
 use std::{net::SocketAddr, sync::Arc};
 use tower_http::{
@@ -28,47 +34,62 @@ use tower_http::{
 pub struct AppState {
     pub db: sqlx::PgPool,
     pub config: Arc<AppConfig>,
+    /// Ed25519 private key PEM for JWT signing.
+    pub signing_key_pem: String,
+    /// Auth configuration (JWT verify key + IP whitelist).
+    pub auth_config: Arc<AuthConfig>,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Load configuration
     let config_path = std::env::var("PATCH_MANAGER_CONFIG")
         .unwrap_or_else(|_| "/etc/patch-manager/config.toml".to_string());
 
-    let config = AppConfig::load(&config_path)
-        .unwrap_or_else(|_| {
-            eprintln!("Config file not found or invalid, using defaults");
-            AppConfig::default()
-        });
+    let config = AppConfig::load(&config_path).unwrap_or_else(|_| {
+        eprintln!("Config file not found or invalid, using defaults");
+        AppConfig::default()
+    });
 
-    // Initialize logging
     logging::init(&config.logging);
-
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "patch-manager-web starting");
 
-    // Initialize database pool
-    let pool = db::init_pool(&config.database).await?;
+    // Load JWT keys (graceful fallback for dev without keys on disk)
+    let signing_key_pem = jwt::load_signing_key(&config.security.jwt_signing_key_path)
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "JWT signing key not found (dev mode)");
+            String::new()
+        });
 
-    // Run migrations (advisory lock guards single-writer)
+    let verify_key_pem = jwt::load_verify_key(&config.security.jwt_verify_key_path)
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "JWT verify key not found (dev mode)");
+            String::new()
+        });
+
+    let auth_config = Arc::new(AuthConfig::new(
+        verify_key_pem,
+        &config.security.ip_whitelist,
+    ));
+
+    let pool = db::init_pool(&config.database).await?;
     db::run_migrations(&pool).await?;
 
     let state = AppState {
         db: pool,
         config: Arc::new(config.clone()),
+        signing_key_pem,
+        auth_config,
     };
 
-    // Build the application router
     let app = build_router(state);
 
-    // Bind address
     let addr: SocketAddr = format!("{}:{}", config.server.host, config.server.port)
         .parse()
         .expect("Invalid bind address");
 
     tracing::info!(%addr, "Listening");
 
-    // TODO M8: wrap with TLS (rustls). For M1 we bind plain HTTP for local dev.
+    // TODO M8: wrap with TLS. For M1/M2 plain HTTP for local dev.
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
 
@@ -78,48 +99,36 @@ async fn main() -> anyhow::Result<()> {
 /// Construct the full Axum router.
 pub fn build_router(state: AppState) -> Router {
     let static_dir = state.config.server.static_dir.clone();
+    let auth_config = state.auth_config.clone();
+
+    // Protected auth routes (MFA setup/verify) — require valid JWT
+    let protected_auth = routes::auth::protected_router().route_layer(
+        middleware::from_fn(move |req, next| {
+            let auth_config = auth_config.clone();
+            require_auth(auth_config, req, next)
+        }),
+    );
 
     Router::new()
         // Health / status (unauthenticated)
         .route("/status/health", get(health_handler))
-        // API v1 routes (stub — expanded in later milestones)
-        .nest("/api/v1", api_v1_router())
-        // Serve React SPA static files; fallback to index.html for client-side routing
+        // Public auth routes (login, refresh, logout)
+        .nest("/api/v1/auth", routes::auth::public_router())
+        // Protected auth routes (mfa setup/verify)
+        .nest("/api/v1/auth", protected_auth)
+        // TODO M3+: additional protected API routes
+        // Serve React SPA static files
         .fallback_service(
-            ServeDir::new(&static_dir)
-                .append_index_html_on_directories(true),
+            ServeDir::new(&static_dir).append_index_html_on_directories(true),
         )
-        // Middleware stack
         .layer(middleware::from_fn(request_id_middleware))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
 
-/// API v1 sub-router — routes added per milestone.
-fn api_v1_router() -> Router<AppState> {
-    Router::new()
-        // M2+: auth routes will be nested here
-        // M3+: host/group/user routes
-        // M4+: fleet status, agent polling
-        // M5+: jobs
-        // M6+: maintenance windows
-        // M7+: websocket relay
-        // M8+: certificates
-        // M9+: reports
-        // M10+: settings
-}
-
 /// GET /status/health — liveness probe.
-///
-/// Returns 200 OK with a JSON payload including service name, version,
-/// and basic database reachability.
 async fn health_handler(State(state): State<AppState>) -> Result<Json<Value>, StatusCode> {
-    // Quick DB ping
-    let db_ok = sqlx::query("SELECT 1")
-        .execute(&state.db)
-        .await
-        .is_ok();
-
+    let db_ok = sqlx::query("SELECT 1").execute(&state.db).await.is_ok();
     let status = if db_ok { "healthy" } else { "degraded" };
 
     let body = json!({
@@ -129,9 +138,5 @@ async fn health_handler(State(state): State<AppState>) -> Result<Json<Value>, St
         "database": if db_ok { "ok" } else { "error" },
     });
 
-    if db_ok {
-        Ok(Json(body))
-    } else {
-        Err(StatusCode::SERVICE_UNAVAILABLE)
-    }
+    if db_ok { Ok(Json(body)) } else { Err(StatusCode::SERVICE_UNAVAILABLE) }
 }

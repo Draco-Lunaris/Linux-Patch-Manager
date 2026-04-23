@@ -1,0 +1,86 @@
+import React, { useEffect, useState } from 'react'
+import {
+  Box, Button, Container, TextField, Typography,
+  Alert, CircularProgress, Paper, Stepper, Step, StepLabel,
+} from '@mui/material'
+import { authApi } from '../api/client'
+
+const STEPS = ['Get your QR code', 'Verify code', 'Done']
+
+export default function MfaSetupPage() {
+  const [step, setStep] = useState(0)
+  const [setup, setSetup] = useState<{ secret_base32: string; otp_uri: string } | null>(null)
+  const [code, setCode] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    authApi.getMfaSetup()
+      .then((res) => setSetup(res.data))
+      .catch(() => setError('Failed to load MFA setup.'))
+  }, [])
+
+  const handleVerify = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!setup) return
+    setLoading(true)
+    setError(null)
+    try {
+      await authApi.verifyMfa(setup.secret_base32, code)
+      setStep(2)
+    } catch {
+      setError('Invalid code. Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <Container maxWidth="sm" sx={{ mt: 6 }}>
+      <Paper elevation={3} sx={{ p: 4 }}>
+        <Typography variant="h5" fontWeight={700} mb={3}>Set Up MFA</Typography>
+        <Stepper activeStep={step} sx={{ mb: 4 }}>
+          {STEPS.map((label) => <Step key={label}><StepLabel>{label}</StepLabel></Step>)}
+        </Stepper>
+
+        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+
+        {step === 0 && setup && (
+          <Box>
+            <Typography mb={2}>
+              Scan this URI in your authenticator app or enter the secret manually:
+            </Typography>
+            <Typography variant="body2" sx={{ fontFamily: 'monospace', wordBreak: 'break-all', mb: 2, p: 1, bgcolor: 'grey.100', borderRadius: 1 }}>
+              {setup.otp_uri}
+            </Typography>
+            <Typography variant="caption" color="text.secondary" display="block" mb={3}>
+              Manual entry secret: <strong>{setup.secret_base32}</strong>
+            </Typography>
+            <Button variant="contained" onClick={() => setStep(1)}>Continue</Button>
+          </Box>
+        )}
+
+        {step === 1 && (
+          <Box component="form" onSubmit={handleVerify}>
+            <Typography mb={2}>Enter the 6-digit code from your authenticator app to confirm setup:</Typography>
+            <TextField
+              fullWidth label="Verification Code" inputMode="numeric"
+              inputProps={{ maxLength: 6, pattern: '[0-9]*' }}
+              value={code} onChange={(e) => setCode(e.target.value)}
+              disabled={loading} required autoFocus
+            />
+            <Button type="submit" variant="contained" sx={{ mt: 2 }} disabled={loading}>
+              {loading ? <CircularProgress size={24} /> : 'Verify & Enable MFA'}
+            </Button>
+          </Box>
+        )}
+
+        {step === 2 && (
+          <Alert severity="success">
+            MFA has been enabled for your account. You will need your authenticator app at each login.
+          </Alert>
+        )}
+      </Paper>
+    </Container>
+  )
+}

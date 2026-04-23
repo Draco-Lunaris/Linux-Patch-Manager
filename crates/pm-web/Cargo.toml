@@ -11,8 +11,10 @@ path = "src/main.rs"
 
 [dependencies]
 pm-core = { path = "../pm-core" }
+pm-auth = { path = "../pm-auth" }
 tokio = { workspace = true }
 axum = { workspace = true }
+axum-extra = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
 sqlx = { workspace = true }
@@ -25,3 +27,4 @@ tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
 ulid = { workspace = true }
 chrono = { workspace = true }
+ipnet = { workspace = true }

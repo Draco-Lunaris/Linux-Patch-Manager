@@ -22,6 +22,7 @@ tokio = { version = "1", features = ["full"] }
 
 # Web framework
 axum = { version = "0.8", features = ["ws", "macros"] }
+axum-extra = { version = "0.10", features = ["typed-header"] }
 tower = { version = "0.5" }
 tower-http = { version = "0.6", features = ["fs", "trace", "cors", "request-id"] }
 
@@ -60,3 +61,14 @@ config = { version = "0.15" }
 # Misc
 bytes = { version = "1" }
 futures = { version = "0.3" }
+
+# Authentication & Security
+argon2 = { version = "0.5", features = ["std"] }
+jsonwebtoken = { version = "9" }
+rand = { version = "0.8", features = ["std"] }
+totp-rs = { version = "5", features = ["gen_secret", "otpauth"] }
+base64 = { version = "0.22" }
+hex = { version = "0.4" }
+sha2 = { version = "0.10" }
+ipnet = { version = "2" }
+url = { version = "2" }

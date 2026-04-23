@@ -82,19 +82,19 @@ Each milestone produces a **testable vertical slice** — backend + frontend + d
 ### M2: Authentication & Authorization + Frontend Shell
 **Goal:** Users can log in with MFA, JWT auth works, RBAC middleware enforces roles.
 
-- [ ] Implement `pm-auth::password` — Argon2id hashing with calibrated parameters (`m_cost=65536`, `t_cost=3`, `p_cost=1`)
-- [ ] Implement `pm-auth::jwt` — EdDSA/Ed25519 JWT issuance and validation, 15-min TTL, 90-day key rotation with 24-hour overlap
-- [ ] Implement `pm-auth::refresh` — Opaque 256-bit refresh tokens, hashed storage in `refresh_tokens`, 1-hour sliding inactivity timeout, rotation on use
-- [ ] Implement `pm-auth::mfa_totp` — TOTP setup, verify, QR code generation
-- [ ] Implement `pm-auth::mfa_webauthn` — WebAuthn registration and authentication
-- [ ] Implement `pm-auth::rbac` — Admin/Operator role middleware, group-scoped access enforcement
-- [ ] Implement `pm-auth::session` — Login flow (password → MFA → access+refresh tokens), logout (revoke refresh), force-revoke
-- [ ] Implement `pm-web` auth routes: `POST /api/v1/auth/login`, `POST /api/v1/auth/refresh`, `POST /api/v1/auth/logout`, MFA setup endpoints
-- [ ] Implement IP whitelist middleware on all connection points
-- [ ] Frontend: App shell with React Router, MUI theme (light + dark), auth context, login page, MFA setup page
-- [ ] Frontend: API client with JWT interceptors (auto-refresh), 401 redirect to login
-- [ ] Create seed migration: default admin account
-- [ ] Verify: login with MFA, JWT validation, refresh token rotation, RBAC blocks unauthorized access, IP whitelist blocks unknown IPs
+- [x] Implement `pm-auth::password` — Argon2id hashing with calibrated parameters (`m_cost=65536`, `t_cost=3`, `p_cost=1`)
+- [x] Implement `pm-auth::jwt` — EdDSA/Ed25519 JWT issuance and validation, 15-min TTL, 90-day key rotation with 24-hour overlap
+- [x] Implement `pm-auth::refresh` — Opaque 256-bit refresh tokens, hashed storage in `refresh_tokens`, 1-hour sliding inactivity timeout, rotation on use
+- [x] Implement `pm-auth::mfa_totp` — TOTP setup, verify, QR code generation
+- [x] Implement `pm-auth::mfa_webauthn` — WebAuthn registration and authentication
+- [x] Implement `pm-auth::rbac` — Admin/Operator role middleware, group-scoped access enforcement
+- [x] Implement `pm-auth::session` — Login flow (password → MFA → access+refresh tokens), logout (revoke refresh), force-revoke
+- [x] Implement `pm-web` auth routes: `POST /api/v1/auth/login`, `POST /api/v1/auth/refresh`, `POST /api/v1/auth/logout`, MFA setup endpoints
+- [x] Implement IP whitelist middleware on all connection points
+- [x] Frontend: App shell with React Router, MUI theme (light + dark), auth context, login page, MFA setup page
+- [x] Frontend: API client with JWT interceptors (auto-refresh), 401 redirect to login
+- [x] Create seed migration: default admin account
+- [x] Verify: login with MFA, JWT validation, refresh token rotation, RBAC blocks unauthorized access, IP whitelist blocks unknown IPs
 
 ### M3: Host Management + Groups + Frontend Pages
 **Goal:** Full host CRUD, group management, auto-discovery.
