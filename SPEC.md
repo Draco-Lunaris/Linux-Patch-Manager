@@ -174,9 +174,7 @@ Management plane web application communicating with Linux Patch API agents on ea
 - Patch Manager host has network connectivity to all managed agents
 - Linux Patch API agent is installed and running on each managed host
 - Server administrators manually distribute mTLS and root certificates to managed clients
-- PostgreSQL is available on the Patch Manager host
-- Server administrators manually distribute mTLS and root certificates to managed clients
-- PostgreSQL is available on the Patch Manager host
+- PostgreSQL 16+ is available on the Patch Manager host
 - Hardware host provides full-disk encryption (no OS-level disk encryption managed by the application)
 
 ## Dependencies

@@ -16,3 +16,10 @@ venv/**
 # Backup files
 *.bak
 *.bak.*
+
+# Rust build artifacts
+/target
+
+# Frontend dependencies
+frontend/node_modules
+frontend/dist

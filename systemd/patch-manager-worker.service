@@ -1,0 +1,37 @@
+[Unit]
+Description=Linux Patch Manager — Background Worker
+Documentation=https://gitea.moon-dragon.us/echo/linux_patch_manager
+After=network.target postgresql.service patch-manager-web.service
+Requires=postgresql.service
+# Worker waits for the web process to apply migrations before starting tasks
+Wants=patch-manager-web.service
+
+[Service]
+Type=simple
+User=patch-manager
+Group=patch-manager
+WorkingDirectory=/opt/patch-manager
+
+# Configuration
+Environment="PATCH_MANAGER_CONFIG=/etc/patch-manager/config.toml"
+
+ExecStart=/usr/local/bin/pm-worker
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=60s
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/patch-manager
+PrivateTmp=true
+PrivateDevices=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=patch-manager-worker
+
+[Install]
+WantedBy=multi-user.target

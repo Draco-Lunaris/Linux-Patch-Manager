@@ -1,0 +1,62 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/pm-web",
+    "crates/pm-worker",
+    "crates/pm-core",
+    "crates/pm-agent-client",
+    "crates/pm-auth",
+    "crates/pm-ca",
+    "crates/pm-reports",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Echo <echo@moon-dragon.us>"]
+license = "MIT"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Web framework
+axum = { version = "0.8", features = ["ws", "macros"] }
+tower = { version = "0.5" }
+tower-http = { version = "0.6", features = ["fs", "trace", "cors", "request-id"] }
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "macros", "migrate", "uuid", "chrono", "json"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1" }
+toml = { version = "0.8" }
+
+# Error handling
+thiserror = { version = "2" }
+anyhow = { version = "1" }
+
+# Logging / Tracing
+tracing = { version = "0.1" }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# UUID / ULID
+uuid = { version = "1", features = ["v4", "serde"] }
+ulid = { version = "1", features = ["serde"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# HTTP client
+reqwest = { version = "0.12", features = ["rustls-tls", "json"] }
+
+# TLS
+rustls = { version = "0.23" }
+
+# Config
+config = { version = "0.15" }
+
+# Misc
+bytes = { version = "1" }
+futures = { version = "0.3" }
