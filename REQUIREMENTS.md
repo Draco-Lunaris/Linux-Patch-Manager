@@ -1,8 +1,28 @@
-# Linux_Patch_Manager - Requirements Document
+# Linux_Patch_Manager — Requirements Document
+
+## Document Control
+
+| Field | Value |
+|-------|-------|
+| Title | Linux_Patch_Manager — Requirements Document |
+| Version | 0.0.2 |
+| Status | Draft |
+| Last Updated | 2026-04-23 |
+| Related Docs | `SPEC.md`, `ARCHITECTURE.md`, `README.md` |
+
+### Revision History
+
+| Version | Date | Summary |
+|---------|------|---------|
+| 0.0.1 | 2026-04-21 | Initial draft |
+| 0.0.2 | 2026-04-23 | Aligned with SDD v0.0.3: hardware-host encryption at rest (no OS-level LUKS), Argon2id, EdDSA JWTs, Azure SSO configuration GUI, web-UI TLS cert strategy, SMTP runtime configurability |
+
+---
 
 ## Project Overview
 **Title:** Linux_Patch_Manager
-**Version:** 0.0.1
+**Description:** Enterprise-class, secure, web-based management interface for controlling patching and updates on Linux servers and workstations
+**Version:** 0.0.2
 **Status:** Draft
 
 ## Functional Requirements
@@ -44,7 +64,8 @@
 - Compliance report: percentage of hosts fully patched, by group or fleet-wide
 - Patch history: log of all patch operations per host or per group
 - Vulnerability exposure: hosts with known CVEs pending patches
-- Audit trail: who did what when (user actions, patch operations)
+- Audit trail: who did what, when (user actions, patch operations)
+- Charts and graphs required in PDF exports (compliance trends, patch-status distributions)
 - Export formats: CSV and PDF
 
 ### FR-06: User Management
@@ -56,18 +77,30 @@
 - Azure SSO integration (optional, with Azure's built-in MFA)
 - Group membership management for users and hosts
 
+### FR-07: System Configuration
+
+- Azure SSO configuration GUI in the Settings page (tenant ID, client ID, client secret, redirect URI, scopes)
+- "Test connection" action in the Azure SSO config GUI that performs a round-trip against Azure AD and reports success/failure without enabling SSO
+- SMTP configuration GUI (host, port, auth mode, username/password, TLS mode, from-address); disabled by default
+- "Send test email" action in the SMTP config GUI
+- Polling-interval tuning (health and patch pollers)
+- Web UI TLS certificate strategy selection: self-signed from the internal CA (default) or operator-supplied certificate/key (e.g., existing infrastructure wildcard)
+
 ## Non-Functional Requirements
 
 ### NFR-01: Security
 
 - Combination authentication: local accounts + Azure SSO
 - MFA required for all users (TOTP or WebAuthn; Azure MFA for SSO users)
-- Session management: short-lived JWT access tokens (15 min) + server-side refresh tokens (1-hour inactivity timeout, revocable)
-- mTLS for all agent communication (certificate-based, TLS 1.3 only)
-- HTTPS enforced for web UI
+- Password hashing: **Argon2id**
+- Session management: short-lived JWT access tokens (15 min, signed with **EdDSA / Ed25519**) + server-side opaque refresh tokens (1-hour inactivity timeout, rotated on use, revocable)
+- JWT signing key rotation every 90 days with a 24-hour overlap window for in-flight tokens
+- mTLS for all agent communication (certificate-based, **TLS 1.3 only**)
+- HTTPS enforced for web UI (TLS 1.3 only)
 - Internal CA managed by Patch Manager for mTLS certificate issuance and renewal
 - Certificate distribution to managed clients is manual (server administrators responsible)
 - RBAC with group-scoped access control
+- IP whitelist enforcement on all connection points
 
 ### NFR-02: Performance
 
@@ -75,6 +108,8 @@
 - Dashboard load time under 5 seconds for full fleet view
 - Background polling must not degrade UI responsiveness
 - Concurrent batch operations (e.g., patch 500 hosts simultaneously) must not overwhelm the system
+- Login latency budget: 250–500 ms on target hardware (Intel Xeon, 4 cores, 16 GB RAM); Argon2id parameters calibrated to land in this window
+- CIDR auto-discovery of a `/22` network (~1,024 hosts) across sites completes within 10 seconds wall-clock
 
 ### NFR-03: Scalability
 
@@ -95,6 +130,7 @@
 - Responsive design for desktop/laptop screens
 - Dark mode support
 - Certificate download links integrated into dashboard (root CA) and host detail (host-specific mTLS)
+- Long-running scans (CIDR discovery, full-fleet operations) must display progress and offer a cancel action
 
 ## Interface Requirements
 
@@ -104,6 +140,8 @@
 - Real-time job status via WebSocket relay (agent WebSocket → Patch Manager → browser)
 - RESTful API backend for all UI operations
 - Certificate download endpoints for root CA and host-specific mTLS certs
+- Unauthenticated liveness endpoint at `/status/health` (minimal: process up, DB reachable, worker heartbeat fresh)
+- Authenticated fleet-aggregate endpoint at `/api/v1/status/fleet` (counts of healthy / degraded / unreachable agents)
 
 ### IR-02: Linux Patch API Integration
 
@@ -112,12 +150,12 @@
 - Base path: `/api/v1/`, Port: 12443, TLS 1.3 only
 - Sync operations: GET endpoints (packages, patches, system info, health)
 - Async operations: POST/PUT/DELETE endpoints (install, update, remove, patch apply, reboot)
-- Job status tracking via GET `/api/v1/jobs/{id}` and WebSocket `/api/v1/ws/jobs`
-- Rollback via POST `/api/v1/jobs/{id}/rollback`
+- Job status tracking via `GET /api/v1/jobs/{id}` and WebSocket `/api/v1/ws/jobs`
+- Rollback via `POST /api/v1/jobs/{id}/rollback`
 
 ## Data Requirements
 
-- **Database:** PostgreSQL
+- **Database:** PostgreSQL 16+
 - **Operational data retention:** 30 days (host patch history, job history, health history)
 - **Audit log retention:** 6 months
 - **Data storage:** All data on Patch Manager host
@@ -126,27 +164,43 @@
 
 ### HIPAA (Health Insurance Portability and Accountability Act)
 
-- **Audit Controls (§164.312(b)):** Comprehensive audit logging of all system activity (covered by audit logging requirements)
+- **Audit Controls (§164.312(b)):** Comprehensive audit logging of all system activity (hash-chained rows for integrity)
 - **Access Controls (§164.312(a)(1)):** RBAC with group-scoped access, unique user identification, MFA enforcement
-- **Integrity Controls (§164.312(c)(1)):** Audit log integrity protection (tamper-evident logging)
+- **Integrity Controls (§164.312(c)(1)):** Audit log integrity protection via hash chaining
 - **Transmission Security (§164.312(e)(1)):** mTLS for all agent communication, HTTPS for web UI, TLS 1.3 minimum
-- **Encryption at Rest:** PostgreSQL data encryption (full-disk or column-level for sensitive fields)
+- **Encryption at Rest:** Provided by the underlying hardware host (infrastructure-level full-disk encryption). The application does not manage disk encryption.
 - **Automatic Logoff (§164.312(a)(2)(iii)):** 1-hour inactivity session timeout
 
 ### PCI-DSS (Payment Card Industry Data Security Standard)
 
-- **Requirement 6:** Vulnerability management — patch management is core PCI-DSS requirement; system must track and enforce timely patching
+- **Requirement 3:** Protect stored data — encryption at rest provided by the hardware host
+- **Requirement 4:** Encrypt transmission — mTLS (TLS 1.3) for agent communication, HTTPS (TLS 1.3) for web UI
+- **Requirement 6:** Vulnerability management — patch management is the core function; system tracks and enforces timely patching
 - **Requirement 7:** Restrict access to need-to-know — RBAC with group-scoped operator access
 - **Requirement 8:** Identify and authenticate users — MFA required, unique IDs, session timeouts
 - **Requirement 10:** Track and monitor all access — comprehensive audit logging with 6-month retention
-- **Requirement 3:** Protect stored data — encryption at rest for PostgreSQL
-- **Requirement 4:** Encrypt transmission — mTLS (TLS 1.3) for agent communication, HTTPS for web UI
+
+## Audit Logging
+
+**Captured Events:**
+- All user login/logout events (success and failure)
+- All patch operations (who triggered, which hosts, what patches, queue vs. immediate)
+- All host registration/removal events
+- All group membership changes (hosts and users)
+- All certificate operations (issue, renew, download, revoke)
+- All maintenance window changes
+- All configuration changes (including Azure SSO and SMTP configuration)
+
+**Integrity:** Tamper-evident via hash-chained rows (`prev_hash`, `row_hash`). Periodic and on-demand integrity verification.
+
+**Retention:** 6 months
 
 ## Constraints
 
 - Single bare metal/VM host running Ubuntu 24.04
 - Systemd service management
 - Internal network only (no public internet exposure)
-- Rust/Axum backend, React/TypeScript frontend, PostgreSQL database
+- Rust/Axum backend, React/TypeScript frontend, PostgreSQL 16+ database
 - No direct permissions on managed clients
 - Certificate distribution to clients is manual
+- Encryption at rest is provided by the hardware host; the application does not configure or manage disk encryption

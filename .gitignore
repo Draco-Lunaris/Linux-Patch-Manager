@@ -12,3 +12,7 @@ venv/**
 # IDE
 .vscode/
 .idea/
+
+# Backup files
+*.bak
+*.bak.*

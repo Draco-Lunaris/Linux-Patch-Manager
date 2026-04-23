@@ -1,9 +1,28 @@
-# Linux_Patch_Manager - Specification Document
+# Linux_Patch_Manager — Specification Document
+
+## Document Control
+
+| Field | Value |
+|-------|-------|
+| Title | Linux_Patch_Manager — Specification Document |
+| Version | 0.0.2 |
+| Status | Draft |
+| Last Updated | 2026-04-23 |
+| Related Docs | `REQUIREMENTS.md`, `ARCHITECTURE.md`, `README.md` |
+
+### Revision History
+
+| Version | Date | Summary |
+|---------|------|---------|
+| 0.0.1 | 2026-04-21 | Initial draft |
+| 0.0.2 | 2026-04-23 | Aligned with SDD v0.0.3: portable ASCII diagram, hardware-host encryption at rest, Argon2id / EdDSA / TLS 1.3 called out, Settings page scope expanded (Azure SSO, SMTP, web-UI TLS), IP whitelist enforcement |
+
+---
 
 ## Project Overview
 **Title:** Linux_Patch_Manager
-**Description:** Enterprise class secure web based management interface for controlling patching and updates on Linux servers and workstations
-**Version:** 0.0.1
+**Description:** Enterprise-class, secure, web-based management interface for controlling patching and updates on Linux servers and workstations
+**Version:** 0.0.2
 **Status:** Draft
 
 ## Scope
@@ -13,13 +32,15 @@
 - Multi-distribution support (Debian/Ubuntu, RHEL/CentOS/Fedora, Alpine, Arch)
 - Batch patch operations across multiple hosts
 - Maintenance window scheduling (per-device, daily/weekly/monthly recurring + one-time) with immediate-apply override
-- Compliance reporting and patch status dashboards (compliance, patch history, vulnerability exposure, audit trail — exportable as CSV and PDF)
+- Compliance reporting and patch status dashboards (compliance, patch history, vulnerability exposure, audit trail — exportable as CSV and PDF, with charts/graphs in PDF output)
 - User management with RBAC
-- Secure mTLS communication with Linux Patch API agents
+- Secure mTLS communication with Linux Patch API agents (TLS 1.3 only)
 - Real-time job status via WebSocket relay
 - Host registration (manual FQDN/IP + on-demand CIDR auto-discover)
 - Static group-based device organization with group-scoped operator access
-- Email notifications (optional, disabled by default)
+- Email notifications (optional, disabled by default, runtime-configurable SMTP)
+- Azure SSO configuration GUI with "test connection" action (runtime-configurable)
+- Web UI TLS certificate strategy selection (self-signed from internal CA or operator-supplied)
 
 **Out of Scope:**
 - Configuration management (Ansible/Puppet/Chef territory)
@@ -38,7 +59,7 @@
 **Key Goals:**
 - Fleet-wide visibility into patch status and compliance
 - Zero-friction patch deployment via maintenance windows
-- Secure-by-design architecture (Rust core, mTLS, MFA)
+- Secure-by-design architecture (Rust core, mTLS, MFA, Argon2id, EdDSA JWTs)
 - Single-instance simplicity supporting up to 2,500 managed hosts
 
 ## Constraints
@@ -46,22 +67,28 @@
 **Deployment:**
 - Single bare metal/VM host running Ubuntu 24.04
 - Systemd service management
-- Internal network access only (same network as managed agents)
+- Internal network access only (same network as managed agents, no public internet exposure)
+- Encryption at rest provided by the hardware host (infrastructure-level); the application does not manage disk encryption
 
 **Technical:**
 - Backend: Rust with Axum framework, Tokio async runtime
-- Frontend: React + TypeScript SPA
-- Database: PostgreSQL with SQLx for type-safe queries
+- Frontend: React + TypeScript SPA (Vite build)
+- Database: PostgreSQL 16+ with SQLx for type-safe queries; migrations via `sqlx-cli`
 - Real-time: Axum native WebSocket support for agent-to-browser relay
 - Single-instance design (manual horizontal scaling by dividing clients between multiple Patch Manager hosts if needed)
 - Fleet capacity: ~500 typical, up to 2,500 hosts
+- PDF generation: `printpdf` + `plotters` for charts (in-process, no sidecar)
 
 **Security:**
 - Combination authentication: local accounts + Azure SSO
 - MFA required for all users (TOTP or WebAuthn)
 - Azure SSO users may use Azure's built-in MFA
-- mTLS for all agent communication
-- HTTPS for web UI
+- Password hashing: Argon2id
+- JWT access tokens signed with EdDSA / Ed25519 (15-minute TTL), 90-day key rotation with 24-hour overlap
+- Refresh tokens: opaque, server-side stored, 1-hour inactivity timeout, rotated on use, revocable
+- mTLS for all agent communication (TLS 1.3 only)
+- HTTPS for web UI (TLS 1.3 only)
+- **IP whitelist enforcement on all connection points**
 - Role-based access control:
   - **Admin**: Full access to manage all aspects of Linux Patch Manager
   - **Operator**: Can add/remove clients, manage schedules and patches only for devices in their group memberships
@@ -73,25 +100,26 @@
 Management plane web application communicating with Linux Patch API agents on each managed host.
 
 ```
-┌─────────────────────────────┐
-│    Linux Patch Manager      │  ← Web UI (this project)
-│     (Management Plane)      │     Rust/Axum + React/TS
-│     PostgreSQL + WebSocket  │
-└──────────────┬──────────────┘
-               │  mTLS / REST API
-        ┌──────┼──────┐
-        ▼      ▼      ▼
-   ┌──────┐┌──────┐┌──────┐
-   │ Host ││ Host ││ Host │  ← Linux Patch API agents
-   │  A   ││  B   ││  C   │     (up to 2,500)
-   └──────┘└──────┘└──────┘
++-----------------------------+
+|    Linux Patch Manager      |  <- Web UI (this project)
+|     (Management Plane)      |     Rust/Axum + React/TS
+|     PostgreSQL + WebSocket  |
++--------------+--------------+
+               |
+               |  mTLS / REST + WSS (TLS 1.3, port 12443)
+       +-------+-------+
+       v       v       v
+   +------+ +------+ +------+
+   | Host | | Host | | Host |  <- Linux Patch API agents
+   |  A   | |  B   | |  C   |     (up to 2,500)
+   +------+ +------+ +------+
 ```
 
 ## API Integration
 
 **Upstream Dependency:** [Linux Patch API](https://gitea.moon-dragon.us/echo/linux_patch_api)
 - All managed device access uses the Linux Patch API
-- mTLS certificate-based authentication to agents
+- mTLS certificate-based authentication to agents (TLS 1.3 only)
 - Hybrid sync/async operation model (sync for queries, async jobs for patch operations)
 - WebSocket streaming for real-time job status from agents
 - Base path: `/api/v1/`, Port: 12443, TLS 1.3 only
@@ -102,6 +130,7 @@ Management plane web application communicating with Linux Patch API agents on ea
 - Patch Manager issues and renews client certificates for mTLS communication
 - Certificate distribution to managed target clients is manual (server administrators responsible)
 - Patch Manager has no direct permissions on managed clients
+- Web UI TLS certificate: self-signed from the internal CA by default; operator may supply an external certificate (e.g., infrastructure wildcard) via configuration
 
 ## User Interface
 
@@ -114,10 +143,15 @@ Management plane web application communicating with Linux Patch API agents on ea
 5. **Jobs** — Real-time job monitoring with WebSocket status updates
 6. **Maintenance Windows** — Create/edit recurring and one-time windows per device
 7. **Groups** — Manage static groups, assign hosts and operators
-8. **Reports** — Generate and export compliance, patch history, vulnerability, audit reports (CSV and PDF)
+8. **Reports** — Generate and export compliance, patch history, vulnerability, audit reports (CSV and PDF with charts)
 9. **Users** — Manage local accounts, MFA setup, group assignments
 10. **Certificates** — View/manage internal CA, issue/renew client certs
-11. **Settings** — System configuration, Azure SSO setup, polling intervals
+11. **Settings** — System configuration including:
+    - Azure SSO setup (tenant ID, client ID/secret, redirect URI, scopes) with "Test Connection" action
+    - SMTP configuration (host, port, auth, TLS mode, from-address) with "Send Test Email" action
+    - Polling intervals (health, patch data)
+    - Web UI TLS certificate strategy (internal CA vs. operator-supplied)
+    - IP whitelist management
 
 ## Error Handling
 
@@ -141,23 +175,29 @@ Management plane web application communicating with Linux Patch API agents on ea
 - Linux Patch API agent is installed and running on each managed host
 - Server administrators manually distribute mTLS and root certificates to managed clients
 - PostgreSQL is available on the Patch Manager host
+- Server administrators manually distribute mTLS and root certificates to managed clients
+- PostgreSQL is available on the Patch Manager host
+- Hardware host provides full-disk encryption (no OS-level disk encryption managed by the application)
 
 ## Dependencies
 
 - Linux Patch API (upstream agent on each managed host)
-- PostgreSQL
+- PostgreSQL 16+
 - Internal CA for mTLS certificates
 - Azure AD (optional, for SSO)
+- SMTP relay (optional, runtime-configurable, for email notifications)
 
 ## Audit Logging
 
 **Captured Events:**
 - All user login/logout events (success and failure)
-- All patch operations (who triggered, which hosts, what patches, queue vs immediate)
+- All patch operations (who triggered, which hosts, what patches, queue vs. immediate)
 - All host registration/removal events
 - All group membership changes (hosts and users)
-- All certificate operations (issue, renew, download)
+- All certificate operations (issue, renew, download, revoke)
 - All maintenance window changes
-- All configuration changes
+- All configuration changes (including Azure SSO, SMTP, IP whitelist, TLS cert strategy)
+
+**Integrity:** Hash-chained rows (tamper-evident). Periodic and on-demand verification.
 
 **Retention:** 6 months
