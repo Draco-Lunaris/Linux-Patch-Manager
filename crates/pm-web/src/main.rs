@@ -1,6 +1,4 @@
 //! pm-web — Linux Patch Manager web server.
-//!
-//! Serves the React SPA, exposes the REST API, and handles WebSocket relay.
 
 mod routes;
 
@@ -34,9 +32,7 @@ use tower_http::{
 pub struct AppState {
     pub db: sqlx::PgPool,
     pub config: Arc<AppConfig>,
-    /// Ed25519 private key PEM for JWT signing.
     pub signing_key_pem: String,
-    /// Auth configuration (JWT verify key + IP whitelist).
     pub auth_config: Arc<AuthConfig>,
 }
 
@@ -53,7 +49,6 @@ async fn main() -> anyhow::Result<()> {
     logging::init(&config.logging);
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "patch-manager-web starting");
 
-    // Load JWT keys (graceful fallback for dev without keys on disk)
     let signing_key_pem = jwt::load_signing_key(&config.security.jwt_signing_key_path)
         .unwrap_or_else(|e| {
             tracing::warn!(error = %e, "JWT signing key not found (dev mode)");
@@ -88,11 +83,8 @@ async fn main() -> anyhow::Result<()> {
         .expect("Invalid bind address");
 
     tracing::info!(%addr, "Listening");
-
-    // TODO M8: wrap with TLS. For M1/M2 plain HTTP for local dev.
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
-
     Ok(())
 }
 
@@ -101,23 +93,31 @@ pub fn build_router(state: AppState) -> Router {
     let static_dir = state.config.server.static_dir.clone();
     let auth_config = state.auth_config.clone();
 
-    // Protected auth routes (MFA setup/verify) — require valid JWT
-    let protected_auth = routes::auth::protected_router().route_layer(
-        middleware::from_fn(move |req, next| {
+    // All protected API routes — require valid JWT
+    let protected_api = Router::new()
+        // Auth: MFA setup/verify
+        .merge(routes::auth::protected_router())
+        // Hosts
+        .nest("/hosts", routes::hosts::router())
+        // Groups
+        .nest("/groups", routes::groups::router())
+        // Users
+        .nest("/users", routes::users::router())
+        // Discovery
+        .nest("/discovery", routes::discovery::router())
+        // Apply auth middleware to all the above
+        .route_layer(middleware::from_fn(move |req, next| {
             let auth_config = auth_config.clone();
             require_auth(auth_config, req, next)
-        }),
-    );
+        }));
 
     Router::new()
-        // Health / status (unauthenticated)
         .route("/status/health", get(health_handler))
-        // Public auth routes (login, refresh, logout)
+        // Public auth routes (no JWT needed)
         .nest("/api/v1/auth", routes::auth::public_router())
-        // Protected auth routes (mfa setup/verify)
-        .nest("/api/v1/auth", protected_auth)
-        // TODO M3+: additional protected API routes
-        // Serve React SPA static files
+        // Protected API routes (JWT required)
+        .nest("/api/v1", protected_api)
+        // Serve React SPA
         .fallback_service(
             ServeDir::new(&static_dir).append_index_html_on_directories(true),
         )
@@ -126,17 +126,9 @@ pub fn build_router(state: AppState) -> Router {
         .with_state(state)
 }
 
-/// GET /status/health — liveness probe.
 async fn health_handler(State(state): State<AppState>) -> Result<Json<Value>, StatusCode> {
     let db_ok = sqlx::query("SELECT 1").execute(&state.db).await.is_ok();
     let status = if db_ok { "healthy" } else { "degraded" };
-
-    let body = json!({
-        "service": "patch-manager-web",
-        "version": env!("CARGO_PKG_VERSION"),
-        "status": status,
-        "database": if db_ok { "ok" } else { "error" },
-    });
-
+    let body = json!({ "service": "patch-manager-web", "version": env!("CARGO_PKG_VERSION"), "status": status, "database": if db_ok { "ok" } else { "error" } });
     if db_ok { Ok(Json(body)) } else { Err(StatusCode::SERVICE_UNAVAILABLE) }
 }

@@ -99,19 +99,19 @@ Each milestone produces a **testable vertical slice** — backend + frontend + d
 ### M3: Host Management + Groups + Frontend Pages
 **Goal:** Full host CRUD, group management, auto-discovery.
 
-- [ ] Implement host CRUD routes: `GET/POST /api/v1/hosts`, `GET/DELETE /api/v1/hosts/{id}`
-- [ ] Implement FQDN resolution on host add (resolve to IP at registration time)
-- [ ] Implement group CRUD routes: `GET/POST /api/v1/groups`, `GET/DELETE /api/v1/hosts/{id}/groups`
-- [ ] Implement host ↔ group and user ↔ group membership management
-- [ ] Implement RBAC scoping: operators can only see/manage hosts in their groups
-- [ ] Implement auto-discovery: `POST /api/v1/discovery/cidr` → worker scans CIDR, bounded concurrency (128), TCP+TLS probe (1.5s timeout), progress tracking, cancel action
-- [ ] Implement discovery results table and review flow
-- [ ] Implement host removal with audit logging
-- [ ] Frontend: Hosts page (filterable list by group, status, OS)
-- [ ] Frontend: Host Detail page (system info, packages, patches, jobs, maintenance window config)
-- [ ] Frontend: Groups page (manage groups, assign hosts and operators)
-- [ ] Frontend: Users page (local account management, MFA setup, group assignments)
-- [ ] Verify: add/remove hosts, group assignments, RBAC enforcement, CIDR scan with progress
+- [x] Implement host CRUD routes: `GET/POST /api/v1/hosts`, `GET/DELETE /api/v1/hosts/{id}`
+- [x] Implement FQDN resolution on host add (resolve to IP at registration time)
+- [x] Implement group CRUD routes: `GET/POST /api/v1/groups`, `GET/DELETE /api/v1/hosts/{id}/groups`
+- [x] Implement host ↔ group and user ↔ group membership management
+- [x] Implement RBAC scoping: operators can only see/manage hosts in their groups
+- [x] Implement auto-discovery: `POST /api/v1/discovery/cidr` → worker scans CIDR, bounded concurrency (128), TCP+TLS probe (1.5s timeout), progress tracking, cancel action
+- [x] Implement discovery results table and review flow
+- [x] Implement host removal with audit logging
+- [x] Frontend: Hosts page (filterable list by group, status, OS)
+- [x] Frontend: Host Detail page (system info, packages, patches, jobs, maintenance window config)
+- [x] Frontend: Groups page (manage groups, assign hosts and operators)
+- [x] Frontend: Users page (local account management, MFA setup, group assignments)
+- [x] Verify: add/remove hosts, group assignments, RBAC enforcement, CIDR scan with progress
 
 ### M4: Agent Communication Layer + Dashboard
 **Goal:** mTLS client works, health/patch polling operational, dashboard shows fleet status.

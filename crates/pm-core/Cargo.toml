@@ -20,3 +20,5 @@ ulid = { workspace = true }
 chrono = { workspace = true }
 config = { workspace = true }
 axum = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
