@@ -15,3 +15,6 @@ pub use models::{
     User, UserRole as DbUserRole, AuthProvider, CreateUserRequest, UpdateUserRequest,
     DiscoveryResult, DiscoveryCidrRequest, RegisterDiscoveredRequest,
 };
+
+// Re-export audit integrity types
+pub use audit::{verify_integrity, IntegrityResult, IntegrityError};

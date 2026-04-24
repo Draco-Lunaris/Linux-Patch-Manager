@@ -2234,6 +2234,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "futures",
+ "lettre",
  "pm-agent-client",
  "pm-core",
  "rustls",

@@ -197,7 +197,6 @@ export const reportsApi = {
       timeout: 120_000,   // reports can take a while
     }),
 }
-
 // ── Settings API (M10) ────────────────────────────────────────────────────
 export interface AzureSsoConfig {
   enabled: boolean
@@ -221,12 +220,19 @@ export interface PollingConfig {
   patch_poll_interval_secs: number
 }
 
+export interface NotificationConfig {
+  email_enabled: boolean
+  email_from: string
+  recipients: string[]
+}
+
 export interface SettingsResponse {
   azure_sso: AzureSsoConfig
   smtp: SmtpConfig
   polling: PollingConfig
   ip_whitelist: string[]
   web_tls_strategy: string
+  notification: NotificationConfig
 }
 
 export interface TestResult {
@@ -234,14 +240,26 @@ export interface TestResult {
   message: string
 }
 
+export interface AuditIntegrityResult {
+  intact: boolean
+  rows_checked: number
+  errors: Array<{
+    row_id: number
+    expected_hash: string
+    actual_hash: string
+  }>
+}
+
 export const settingsApi = {
   get: () => apiClient.get<SettingsResponse>('/settings'),
   update: (data: Partial<SettingsResponse> & {
     azure_sso?: AzureSsoConfig & { client_secret?: string }
     smtp?: SmtpConfig & { password?: string }
+    notification?: NotificationConfig
   }) => apiClient.put<SettingsResponse>('/settings', data),
   testAzureSso: () => apiClient.post<TestResult>('/settings/azure-sso/test'),
   testSmtp: () => apiClient.post<TestResult>('/settings/smtp/test'),
   getIpWhitelist: () => apiClient.get<{ entries: string[] }>('/settings/ip-whitelist'),
   updateIpWhitelist: (entries: string[]) => apiClient.put<{ entries: string[] }>('/settings/ip-whitelist', { entries }),
+  auditIntegrity: () => apiClient.post<AuditIntegrityResult>('/settings/audit-integrity'),
 }

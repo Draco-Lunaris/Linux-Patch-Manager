@@ -212,31 +212,31 @@ Each milestone produces a **testable vertical slice** — backend + frontend + d
 ### M11: Email Notifications + Audit Logging Hardening
 **Goal:** Optional email works, audit logs are tamper-evident.
 
-- [ ] Implement email notifier in worker (Lettre crate, optional/disabled by default)
-- [ ] Implement email templates: patch failure, job completion, maintenance window reminders
-- [ ] Implement audit log hash chaining: `prev_hash` + `row_hash` on every insert
-- [ ] Implement periodic audit integrity verification job
-- [ ] Implement on-demand audit integrity verification from UI
-- [ ] Implement audit log for all configuration changes (Azure SSO, SMTP, IP whitelist, TLS cert strategy)
-- [ ] Implement audit log for certificate operations (issue, renew, download, revoke)
-- [ ] Frontend: Email notification settings integration in Settings page
-- [ ] Frontend: Audit integrity verification action in Reports/Users area
-- [ ] Verify: email sends on failure, audit chain is intact, tampering detected by verification
+- [x] Implement email notifier in worker (Lettre crate, optional/disabled by default)
+- [x] Implement email templates: patch failure, job completion, maintenance window reminders
+- [x] Implement audit log hash chaining: `prev_hash` + `row_hash` on every insert
+- [x] Implement periodic audit integrity verification job
+- [x] Implement on-demand audit integrity verification from UI
+- [x] Implement audit log for all configuration changes (Azure SSO, SMTP, IP whitelist, TLS cert strategy)
+- [x] Implement audit log for certificate operations (issue, renew, download, revoke)
+- [x] Frontend: Email notification settings integration in Settings page
+- [x] Frontend: Audit integrity verification action in Reports/Users area
+- [x] Verify: email sends on failure, audit chain is intact, tampering detected by verification
 
 ### M12: Deployment Packaging, Backup/DR, Integration Testing
 **Goal:** Production-ready deployment with documented runbooks.
 
-- [ ] Create `docs/runbooks/restore.md` — backup/restore procedure
-- [ ] Implement nightly `pg_dump` script to `/var/backups/patch-manager/`
-- [ ] Implement CA material backup inclusion
-- [ ] Implement `/etc/patch-manager/` config backup (excluding secrets unless encrypted destination)
-- [ ] Create `scripts/setup.sh` — full host setup (install deps, create service user, set permissions, initialize DB)
-- [ ] Finalize systemd unit files with proper dependencies, restart policies, logging
-- [ ] End-to-end integration tests: full patch lifecycle across multiple agents
-- [ ] Performance test: verify 500-host polling, dashboard load < 5s, CIDR scan < 10s for /22
-- [ ] Security review: TLS 1.3 enforcement, IP whitelist, RBAC, audit chain integrity
-- [ ] Compliance mapping verification: HIPAA and PCI-DSS controls documented and testable
-- [ ] Verify: backup/restore works, RPO 24h / RTO 4h achievable, all NFRs met
+- [x] Create `docs/runbooks/restore.md` — backup/restore procedure
+- [x] Implement nightly `pg_dump` script to `/var/backups/patch-manager/`
+- [x] Implement CA material backup inclusion
+- [x] Implement `/etc/patch-manager/` config backup (excluding secrets unless encrypted destination)
+- [x] Create `scripts/setup.sh` — full host setup (install deps, create service user, set permissions, initialize DB)
+- [x] Finalize systemd unit files with proper dependencies, restart policies, logging
+- [x] End-to-end integration tests: full patch lifecycle across multiple agents
+- [x] Performance test: verify 500-host polling, dashboard load < 5s, CIDR scan < 10s for /22
+- [x] Security review: TLS 1.3 enforcement, IP whitelist, RBAC, audit chain integrity
+- [x] Compliance mapping verification: HIPAA and PCI-DSS controls documented and testable
+- [x] Verify: backup/restore works, RPO 24h / RTO 4h achievable, all NFRs met
 
 ---
 

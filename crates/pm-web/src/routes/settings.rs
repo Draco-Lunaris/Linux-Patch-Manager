@@ -6,6 +6,7 @@
 //! POST /api/v1/settings/smtp/test    — send test email (admin only)
 //! GET  /api/v1/settings/ip-whitelist — get IP whitelist (admin only)
 //! PUT  /api/v1/settings/ip-whitelist — update IP whitelist (admin only)
+//! POST /api/v1/settings/audit-integrity — verify audit log integrity (admin only)
 
 use axum::{
     extract::State,
@@ -19,7 +20,7 @@ use lettre::{
     transport::smtp::authentication::Credentials,
     AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
 };
-use pm_core::audit::{log_event, AuditAction};
+use pm_core::audit::{log_event, verify_integrity, AuditAction};
 use pm_auth::rbac::AuthUser;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -38,6 +39,7 @@ pub struct SettingsResponse {
     pub polling: PollingConfig,
     pub ip_whitelist: Vec<String>,
     pub web_tls_strategy: String,
+    pub notification: NotificationConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -72,6 +74,21 @@ pub struct UpdateSettingsRequest {
     pub polling: Option<PollingConfigUpdate>,
     pub ip_whitelist: Option<Vec<String>>,
     pub web_tls_strategy: Option<String>,
+    pub notification: Option<NotificationConfigUpdate>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NotificationConfig {
+    pub email_enabled: bool,
+    pub email_from: String,
+    pub recipients: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NotificationConfigUpdate {
+    pub email_enabled: Option<bool>,
+    pub email_from: Option<String>,
+    pub recipients: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -116,6 +133,7 @@ pub fn router() -> Router<AppState> {
         .route("/azure-sso/test", post(test_azure_sso))
         .route("/smtp/test", post(test_smtp))
         .route("/ip-whitelist", get(get_ip_whitelist).put(update_ip_whitelist))
+        .route("/audit-integrity", post(audit_integrity))
 }
 
 // ============================================================
@@ -156,6 +174,8 @@ async fn load_system_config(
 fn build_settings_response(cfg: &HashMap<String, String>, azure: AzureSsoConfig) -> SettingsResponse {
     let get = |key: &str| -> String { cfg.get(key).cloned().unwrap_or_default() };
 
+    let recipients: Vec<String> = serde_json::from_str(&get("notification_email_recipients")).unwrap_or_default();
+
     SettingsResponse {
         azure_sso: azure,
         smtp: SmtpConfig {
@@ -172,6 +192,11 @@ fn build_settings_response(cfg: &HashMap<String, String>, azure: AzureSsoConfig)
         },
         ip_whitelist: serde_json::from_str(&get("ip_whitelist")).unwrap_or_default(),
         web_tls_strategy: get("web_tls_strategy"),
+        notification: NotificationConfig {
+            email_enabled: get("notification_email_enabled") == "true",
+            email_from: get("notification_email_from"),
+            recipients,
+        },
     }
 }
 
@@ -423,6 +448,33 @@ async fn update_settings(
             Some("web_tls_strategy"),
             Some("system_config"),
             json!({ "web_tls_strategy": v }),
+            None,
+            None,
+        )
+        .await;
+    }
+
+    // Update notification config
+    if let Some(notif) = &req.notification {
+        if let Some(v) = notif.email_enabled {
+            update_config_key(&state.db, "notification_email_enabled", &v.to_string()).await?;
+        }
+        if let Some(ref v) = notif.email_from {
+            update_config_key(&state.db, "notification_email_from", v).await?;
+        }
+        if let Some(ref v) = notif.recipients {
+            let json_str = serde_json::to_string(v).unwrap_or_else(|_| "[]".to_string());
+            update_config_key(&state.db, "notification_email_recipients", &json_str).await?;
+        }
+
+        log_event(
+            &state.db,
+            AuditAction::ConfigChanged,
+            Some(auth.user_id),
+            Some(&auth.username),
+            Some("notification"),
+            Some("system_config"),
+            json!({ "section": "notification" }),
             None,
             None,
         )
@@ -689,6 +741,47 @@ async fn update_ip_whitelist(
         None,
     )
     .await;
-
     Ok(Json(json!({ "entries": req.entries })))
+}
+
+// ============================================================
+// POST /api/v1/settings/audit-integrity
+// ============================================================
+
+/// Verify audit log hash chain integrity.
+/// Returns whether the chain is intact, rows checked, and any errors.
+async fn audit_integrity(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    admin_only(&auth)?;
+
+    let result = verify_integrity(&state.db).await;
+
+    log_event(
+        &state.db,
+        AuditAction::AuditIntegrityVerified,
+        Some(auth.user_id),
+        Some(&auth.username),
+        Some("audit_log"),
+        None,
+        json!({
+            "intact": result.intact,
+            "rows_checked": result.rows_checked,
+            "error_count": result.errors.len(),
+        }),
+        None,
+        None,
+    )
+    .await;
+
+    Ok(Json(json!({
+        "intact": result.intact,
+        "rows_checked": result.rows_checked,
+        "errors": result.errors.iter().map(|e| json!({
+            "row_id": e.row_id,
+            "expected_hash": e.expected_hash,
+            "actual_hash": e.actual_hash,
+        })).collect::<Vec<_>>(),
+    })))
 }

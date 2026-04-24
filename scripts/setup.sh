@@ -33,6 +33,7 @@ LOG_DIR="/var/log/patch-manager"
 DATA_DIR="/opt/patch-manager"
 FRONTEND_DIR="/usr/share/patch-manager/frontend"
 BIN_DIR="/usr/local/bin"
+BACKUP_DIR="/var/backups/patch-manager"
 DB_NAME="patch_manager"
 DB_USER="patch_manager"
 SYSTEMD_DIR="/etc/systemd/system"
@@ -63,7 +64,8 @@ mkdir -p \
     "${CONFIG_DIR}/tls" \
     "${LOG_DIR}" \
     "${DATA_DIR}" \
-    "${FRONTEND_DIR}"
+    "${FRONTEND_DIR}" \
+    "${BACKUP_DIR}"
 
 chown -R "${SERVICE_USER}:${SERVICE_GROUP}" \
     "${CONFIG_DIR}" \
@@ -72,6 +74,8 @@ chown -R "${SERVICE_USER}:${SERVICE_GROUP}" \
     "${FRONTEND_DIR}"
 
 chmod 750 "${CONFIG_DIR}/ca" "${CONFIG_DIR}/jwt"
+chmod 700 "${BACKUP_DIR}"
+
 info "Directories created."
 
 # -----------------------------------------------------------------------
@@ -152,6 +156,15 @@ fi
 # 7. Install systemd units
 # -----------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Install systemd target
+TARGET_SRC="${SCRIPT_DIR}/../systemd/patch-manager.target"
+if [[ -f "${TARGET_SRC}" ]]; then
+    cp "${TARGET_SRC}" "${SYSTEMD_DIR}/patch-manager.target"
+    info "Installed systemd target: patch-manager.target"
+fi
+
+# Install service units
 for unit in patch-manager-web.service patch-manager-worker.service; do
     SRC="${SCRIPT_DIR}/../systemd/${unit}"
     if [[ -f "${SRC}" ]]; then
@@ -162,8 +175,39 @@ for unit in patch-manager-web.service patch-manager-worker.service; do
     fi
 done
 
+# Install backup script
+BACKUP_SRC="${SCRIPT_DIR}/backup.sh"
+if [[ -f "${BACKUP_SRC}" ]]; then
+    cp "${BACKUP_SRC}" "${BIN_DIR}/backup.sh"
+    chmod 700 "${BIN_DIR}/backup.sh"
+    info "Installed backup script to ${BIN_DIR}/backup.sh"
+fi
+
 systemctl daemon-reload
 info "systemd units installed and daemon reloaded."
+
+# -----------------------------------------------------------------------
+# 8. Run seed migration (default admin account)
+# -----------------------------------------------------------------------
+SEED_MIGRATION="${SCRIPT_DIR}/../migrations/002_seed_admin.sql"
+if [[ -f "${SEED_MIGRATION}" ]]; then
+    info "Running seed migration for default admin account..."
+    sudo -u postgres psql -d "${DB_NAME}" -f "${SEED_MIGRATION}" 2>/dev/null || \
+        warn "Seed migration already applied or failed (may be idempotent)."
+else
+    warn "Seed migration not found: ${SEED_MIGRATION}"
+fi
+
+# -----------------------------------------------------------------------
+# 9. Install backup cron job
+# -----------------------------------------------------------------------
+CRON_LINE="0 2 * * * /usr/local/bin/backup.sh >> /var/log/patch-manager/backup.log 2>&1"
+if crontab -l 2>/dev/null | grep -qF "backup.sh"; then
+    warn "Backup cron job already installed, skipping."
+else
+    (crontab -l 2>/dev/null; echo "${CRON_LINE}") | crontab -
+    info "Nightly backup cron installed (02:00 daily)."
+fi
 
 # -----------------------------------------------------------------------
 # Done
@@ -176,3 +220,4 @@ echo "  2. Build and install frontend:  scripts/build-frontend.sh"
 echo "  3. Review ${CONFIG_DEST}"
 echo "  4. Enable services:"
 echo "       systemctl enable --now patch-manager-web patch-manager-worker"
+echo "  5. (Optional) Set GPG_RECIPIENT in backup.sh for encrypted backups"

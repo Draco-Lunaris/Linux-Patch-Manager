@@ -22,6 +22,7 @@ use tokio::{sync::Semaphore, time};
 use uuid::Uuid;
 
 use crate::agent_loader::load_agent_certs;
+use crate::email;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal DB row types
@@ -710,6 +711,8 @@ async fn handle_host_failure(pool: PgPool, pjh_id: Uuid, error_msg: String) {
 /// 2. All hosts `succeeded` → parent `succeeded`.
 /// 3. All hosts `cancelled` → parent `cancelled`.
 /// 4. Any `failed` with none still active → parent `failed` (includes partial).
+///
+/// After rolling up, sends email notifications for completed/failed jobs.
 async fn sync_job_status(pool: &PgPool, job_id: Uuid) {
     let counts: StatusCounts = match sqlx::query_as(
         r#"
@@ -797,6 +800,57 @@ async fn sync_job_status(pool: &PgPool, job_id: Uuid) {
 
     if let Err(e) = result {
         tracing::error!(%job_id, error = %e, "sync_job_status: failed to update parent job");
+    }
+
+    // Send email notifications for completed/failed jobs
+    if set_completed {
+        // Spawn email notification in background — non-blocking
+        let pool_clone = pool.clone();
+        let job_id_str = job_id.to_string();
+        let total = counts.total_count;
+        let succeeded = counts.succeeded_count;
+        let failed = counts.failed_count;
+
+        tokio::spawn(async move {
+            email::send_job_completion_email(
+                &pool_clone,
+                &job_id_str,
+                total,
+                succeeded,
+                failed,
+            ).await;
+
+            // If there are failures, also send failure emails per host
+            if failed > 0 {
+                let failed_hosts: Vec<(String, String)> = match sqlx::query_as(
+                    r#"
+                    SELECT h.fqdn, COALESCE(pjh.error_message, 'Unknown error')
+                    FROM patch_job_hosts pjh
+                    JOIN hosts h ON h.id = pjh.host_id
+                    WHERE pjh.job_id = $1 AND pjh.status = 'failed'
+                    "#,
+                )
+                .bind(job_id)
+                .fetch_all(&pool_clone)
+                .await
+                {
+                    Ok(rows) => rows,
+                    Err(e) => {
+                        tracing::error!(%job_id, error = %e, "sync_job_status: failed to fetch failed hosts for email");
+                        Vec::new()
+                    }
+                };
+
+                for (fqdn, error_msg) in failed_hosts {
+                    email::send_patch_failure_email(
+                        &pool_clone,
+                        &fqdn,
+                        &job_id_str,
+                        &error_msg,
+                    ).await;
+                }
+            }
+        });
     }
 }
 

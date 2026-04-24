@@ -1,9 +1,11 @@
 //! pm-worker — Linux Patch Manager background worker.
 //!
 //! Handles scheduled polling, job execution, maintenance window scheduling,
-//! retry logic, email notifications, and data pruning.
+//! retry logic, email notifications, audit integrity verification, and data pruning.
 
 mod agent_loader;
+mod audit_verifier;
+mod email;
 mod health_poller;
 mod maintenance_scheduler;
 mod patch_poller;
@@ -20,6 +22,7 @@ use sqlx::PgPool;
 use std::{sync::Arc, time::Duration};
 use tokio::time;
 
+use audit_verifier::run_audit_verifier;
 use health_poller::run_health_poller;
 use maintenance_scheduler::run_maintenance_scheduler;
 use patch_poller::run_patch_poller;
@@ -30,7 +33,7 @@ use ws_relay::run_ws_relay;
 /// Minimum number of applied migrations the worker requires before
 /// accepting work. Prevents the worker from running against a schema
 /// that hasn't been migrated yet.
-const REQUIRED_MIGRATION_COUNT: i64 = 1;
+const REQUIRED_MIGRATION_COUNT: i64 = 5;
 
 /// How long to wait between schema-version checks before giving up.
 const SCHEMA_CHECK_TIMEOUT: Duration = Duration::from_secs(120);
@@ -80,6 +83,9 @@ async fn main() -> anyhow::Result<()> {
     // M7: WS relay — streams agent job events → DB → pg_notify → browser WS
     let ws_relay_handle = tokio::spawn(run_ws_relay(pool.clone(), config.clone()));
 
+    // M11: audit integrity verification (runs every 24 hours)
+    let audit_verifier_handle = tokio::spawn(run_audit_verifier(pool.clone(), config.clone()));
+
     tracing::info!("Worker tasks started");
 
     // Wait for all tasks (they run indefinitely)
@@ -91,6 +97,7 @@ async fn main() -> anyhow::Result<()> {
         job_exec_handle,
         maint_sched_handle,
         ws_relay_handle,
+        audit_verifier_handle,
     );
 
     Ok(())

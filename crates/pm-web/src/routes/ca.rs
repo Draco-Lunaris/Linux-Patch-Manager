@@ -22,6 +22,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use pm_auth::rbac::AuthUser;
+use pm_core::audit::{log_event, AuditAction};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -129,9 +130,23 @@ fn db_error(e: sqlx::Error) -> (StatusCode, Json<Value>) {
 /// Download the root CA certificate as a PEM file.
 async fn download_root_ca(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
 ) -> Result<Response<Body>, (StatusCode, Json<Value>)> {
     let pem = state.ca.root_cert_pem().to_owned();
+
+    log_event(
+        &state.db,
+        AuditAction::CertificateDownloaded,
+        Some(auth.user_id),
+        Some(&auth.username),
+        Some("certificate"),
+        Some("root_ca"),
+        json!({ "operation": "download_root_ca" }),
+        None,
+        None,
+    )
+    .await;
+
     pem_response(pem, "ca.crt")
 }
 
@@ -230,7 +245,21 @@ async fn download_client_cert(
     })?;
 
     match cert_pem {
-        Some(pem) => pem_response(pem, "client.crt"),
+        Some(pem) => {
+            log_event(
+                &state.db,
+                AuditAction::CertificateDownloaded,
+                Some(auth.user_id),
+                Some(&auth.username),
+                Some("certificate"),
+                Some(&host_id.to_string()),
+                json!({ "operation": "download_client_cert" }),
+                None,
+                None,
+            )
+            .await;
+            pem_response(pem, "client.crt")
+        }
         None => Err((
             StatusCode::NOT_FOUND,
             Json(json!({
@@ -267,6 +296,19 @@ async fn issue_client_cert(
                 Json(json!({ "error": { "code": "internal_error", "message": e.to_string() } })),
             )
         })?;
+
+    log_event(
+        &state.db,
+        AuditAction::CertificateIssued,
+        Some(auth.user_id),
+        Some(&auth.username),
+        Some("certificate"),
+        Some(&host_id.to_string()),
+        json!({ "hostname": req.hostname, "serial_number": issued.serial_number }),
+        None,
+        None,
+    )
+    .await;
 
     Ok(Json(json!({
         "cert_pem":      issued.cert_pem,
@@ -305,6 +347,19 @@ async fn renew_cert(
                 )
             }
         })?;
+
+    log_event(
+        &state.db,
+        AuditAction::CertificateRenewed,
+        Some(auth.user_id),
+        Some(&auth.username),
+        Some("certificate"),
+        Some(&cert_id.to_string()),
+        json!({ "serial_number": issued.serial_number }),
+        None,
+        None,
+    )
+    .await;
 
     Ok(Json(json!({
         "cert_pem":      issued.cert_pem,
@@ -345,5 +400,19 @@ async fn revoke_cert(
         })?;
 
     tracing::info!(%cert_id, "Certificate revoked via API");
+
+    log_event(
+        &state.db,
+        AuditAction::CertificateRevoked,
+        Some(auth.user_id),
+        Some(&auth.username),
+        Some("certificate"),
+        Some(&cert_id.to_string()),
+        json!({ "operation": "revoke" }),
+        None,
+        None,
+    )
+    .await;
+
     Ok(Json(json!({ "revoked": true })))
 }

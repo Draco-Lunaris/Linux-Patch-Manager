@@ -1,0 +1,7 @@
+[Unit]
+Description=Linux Patch Manager — Service Target
+Documentation=https://gitea.moon-dragon.us/echo/linux_patch_manager
+Wants=patch-manager-web.service patch-manager-worker.service
+
+[Install]
+WantedBy=multi-user.target

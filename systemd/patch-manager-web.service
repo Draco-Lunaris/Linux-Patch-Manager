@@ -1,8 +1,10 @@
 [Unit]
 Description=Linux Patch Manager — Web Server
 Documentation=https://gitea.moon-dragon.us/echo/linux_patch_manager
-After=network.target postgresql.service
+After=network-online.target postgresql.service
+Wants=network-online.target
 Requires=postgresql.service
+PartOf=patch-manager.target
 
 [Service]
 Type=simple
@@ -16,21 +18,39 @@ Environment="PATCH_MANAGER_CONFIG=/etc/patch-manager/config.toml"
 # Environment="PATCH_MANAGER__DATABASE__URL=postgres://..."
 
 ExecStart=/usr/local/bin/pm-web
-Restart=on-failure
+
+# Restart policy — aggressive restart for production availability
+Restart=always
 RestartSec=5s
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+# Timeouts
+TimeoutStartSec=90s
 TimeoutStopSec=30s
+
+# Watchdog — pm-web must report health within this interval
+WatchdogSec=120s
 
 # Security hardening
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/log/patch-manager
+ReadWritePaths=/var/log/patch-manager /etc/patch-manager/ca /etc/patch-manager/certs /etc/patch-manager/tls /etc/patch-manager/jwt /usr/share/patch-manager/frontend
 PrivateTmp=true
 PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
 
 # Allow binding to port 443 without root
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+# File descriptor limits
+LimitNOFILE=65536
 
 # Logging
 StandardOutput=journal

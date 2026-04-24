@@ -216,6 +216,16 @@ export interface PollingConfig {
   health_poll_interval_secs: number
   patch_poll_interval_secs: number
 }
+export interface PollingConfig {
+  health_poll_interval_secs: number
+  patch_poll_interval_secs: number
+}
+
+export interface NotificationConfig {
+  email_enabled: boolean
+  email_from: string
+  recipients: string[]
+}
 
 export interface SettingsResponse {
   azure_sso: AzureSsoConfig
@@ -223,5 +233,17 @@ export interface SettingsResponse {
   polling: PollingConfig
   ip_whitelist: string[]
   web_tls_strategy: string
+  notification: NotificationConfig
 }
+
+export interface AuditIntegrityResult {
+  intact: boolean
+  rows_checked: number
+  errors: Array<{
+    row_id: number
+    expected_hash: string
+    actual_hash: string
+  }>
+}
+
 export type ReportFormat = 'csv' | 'pdf'

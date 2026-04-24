@@ -21,8 +21,9 @@ import {
 } from '@mui/material'
 import DescriptionIcon from '@mui/icons-material/Description'
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf'
-import { reportsApi } from '../api/client'
-import type { ReportType, ReportFormat } from '../types'
+import VerifiedUserIcon from '@mui/icons-material/VerifiedUser'
+import { reportsApi, settingsApi } from '../api/client'
+import type { ReportType, ReportFormat, AuditIntegrityResult } from '../types'
 
 // ── Report metadata ───────────────────────────────────────────────────────────
 
@@ -98,6 +99,8 @@ export default function ReportsPage() {
   const [groupId, setGroupId] = useState<string>('')
   const [downloading, setDownloading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [verifyingIntegrity, setVerifyingIntegrity] = useState(false)
+  const [integrityResult, setIntegrityResult] = useState<AuditIntegrityResult | null>(null)
 
   const info = REPORT_INFO[reportType]
 
@@ -127,6 +130,20 @@ export default function ReportsPage() {
       setError('Failed to generate report. Please try again.')
     } finally {
       setDownloading(false)
+    }
+  }
+
+  const handleVerifyIntegrity = async () => {
+    setVerifyingIntegrity(true)
+    setIntegrityResult(null)
+    try {
+      const { data } = await settingsApi.auditIntegrity()
+      setIntegrityResult(data)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Verification failed'
+      setIntegrityResult({ intact: false, rows_checked: 0, errors: [{ row_id: 0, expected_hash: '', actual_hash: msg }] })
+    } finally {
+      setVerifyingIntegrity(false)
     }
   }
 
@@ -223,6 +240,44 @@ export default function ReportsPage() {
                 Download PDF
               </Button>
             </Box>
+          </Paper>
+
+          {/* ── Audit Integrity card ── */}
+          <Paper variant="outlined" sx={{ p: 3, mt: 3 }}>
+            <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 1 }}>
+              Audit Integrity Verification
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Verify the audit log hash chain has not been tampered with. Each entry is cryptographically linked to the previous one.
+            </Typography>
+            <Button
+              variant="outlined"
+              fullWidth
+              startIcon={verifyingIntegrity ? <CircularProgress size={20} /> : <VerifiedUserIcon />}
+              onClick={handleVerifyIntegrity}
+              disabled={verifyingIntegrity}
+            >
+              Verify Integrity
+            </Button>
+            {integrityResult && (
+              <Alert severity={integrityResult.intact ? 'success' : 'error'} sx={{ mt: 2 }}>
+                {integrityResult.intact
+                  ? `✓ Chain intact — ${integrityResult.rows_checked} rows verified`
+                  : `✗ Chain compromised! ${integrityResult.errors.length} error(s) in ${integrityResult.rows_checked} rows`}
+                {integrityResult.errors.length > 0 && (
+                  <Box sx={{ mt: 1 }}>
+                    {integrityResult.errors.slice(0, 5).map((e, i) => (
+                      <Typography key={i} variant="body2">
+                        Row {e.row_id}: expected {e.expected_hash.substring(0, 16)}… got {e.actual_hash.substring(0, 16)}…
+                      </Typography>
+                    ))}
+                    {integrityResult.errors.length > 5 && (
+                      <Typography variant="body2">…and {integrityResult.errors.length - 5} more</Typography>
+                    )}
+                  </Box>
+                )}
+              </Alert>
+            )}
           </Paper>
         </Grid>
 
