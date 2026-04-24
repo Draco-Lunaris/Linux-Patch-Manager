@@ -38,3 +38,30 @@
 **Pattern:** Don't use `uses: actions/checkout@v4`, `actions/cache@v3`, etc. in Gitea Actions workflows.
 **Why:** Self-hosted runners may not have reliable internet access to github.com to clone those actions. The runner gets stuck cloning GitHub repos.
 **Action:** Use pure shell steps: `git clone ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git .` for checkout, skip caching, and avoid any `uses:` directives that reference github.com.
+
+## CI/CD Runner Dual-Registration Root Cause (2026-04-24)
+
+**Problem:** CI jobs kept failing with 'apt-get: command not found' and 'curl: command not found' despite multiple PATH fixes.
+
+**Root Cause:** TWO runners registered with the same name 'echo-runner-01':
+- Docker container runner (ID 5) - running inside minimal Alpine container where apt-get doesn't exist
+- Native systemd runner (ID 6) - running on Ubuntu 24.04 LXC host
+
+The Docker container intercepted some jobs and ran them in its Alpine environment. The native runner ran other jobs on the host.
+
+**Fix:** Stopped and removed the Docker container runner. Switched workflow to `runs-on: ubuntu-latest` which uses `ubuntu-latest:docker://ubuntu:24.04` label to create proper Ubuntu 24.04 containers for each job.
+
+**Lesson:** When debugging CI failures, check for multiple runners with the same name. The error pattern (some jobs succeeding, some failing) was the key clue that different execution contexts were involved. Stop after 2 attempts and diagnose root cause instead of making 5+ superficial fixes.
+
+## CI/CD Runner Dual-Registration Root Cause (2026-04-24)
+
+**Problem:** CI jobs kept failing with apt-get/curl command not found despite multiple PATH fixes.
+
+**Root Cause:** TWO runners registered with same name echo-runner-01:
+- Docker container runner (ID 5) - minimal Alpine, no apt-get
+- Native systemd runner (ID 6) - Ubuntu 24.04 LXC host
+- Docker container intercepted some jobs and ran them in Alpine where tools dont exist
+
+**Fix:** Stopped Docker container runner. Switched to runs-on: ubuntu-latest with docker://ubuntu:24.04 containers.
+
+**Lesson:** Check for multiple runners with same name. Stop after 2 attempts and diagnose root cause.
