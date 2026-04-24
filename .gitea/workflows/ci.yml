@@ -20,7 +20,7 @@ jobs:
         run: |
           SUDO=""; [ "$(/usr/bin/id -u)" -ne 0 ] && SUDO="/usr/bin/sudo"
           $SUDO /usr/bin/apt-get update -qq
-          $SUDO /usr/bin/apt-get install -y --no-install-recommends /usr/bin/curl ca-certificates
+          $SUDO /usr/bin/apt-get install -y --no-install-recommends curl ca-certificates
 
       - name: Checkout repository
         run: |
@@ -55,7 +55,7 @@ jobs:
         run: |
           SUDO=""; [ "$(/usr/bin/id -u)" -ne 0 ] && SUDO="/usr/bin/sudo"
           $SUDO /usr/bin/apt-get update -qq
-          $SUDO /usr/bin/apt-get install -y --no-install-recommends /usr/bin/curl ca-certificates
+          $SUDO /usr/bin/apt-get install -y --no-install-recommends curl ca-certificates
 
       - name: Install system dependencies
         run: |
@@ -95,7 +95,7 @@ jobs:
         run: |
           SUDO=""; [ "$(/usr/bin/id -u)" -ne 0 ] && SUDO="/usr/bin/sudo"
           $SUDO /usr/bin/apt-get update -qq
-          $SUDO /usr/bin/apt-get install -y --no-install-recommends /usr/bin/curl ca-certificates
+          $SUDO /usr/bin/apt-get install -y --no-install-recommends curl ca-certificates
 
       - name: Install system dependencies
         run: |
@@ -134,7 +134,7 @@ jobs:
         run: |
           SUDO=""; [ "$(/usr/bin/id -u)" -ne 0 ] && SUDO="/usr/bin/sudo"
           $SUDO /usr/bin/apt-get update -qq
-          $SUDO /usr/bin/apt-get install -y --no-install-recommends /usr/bin/curl ca-certificates
+          $SUDO /usr/bin/apt-get install -y --no-install-recommends curl ca-certificates
 
       - name: Checkout repository
         run: |
@@ -172,7 +172,7 @@ jobs:
         run: |
           SUDO=""; [ "$(/usr/bin/id -u)" -ne 0 ] && SUDO="/usr/bin/sudo"
           $SUDO /usr/bin/apt-get update -qq
-          $SUDO /usr/bin/apt-get install -y --no-install-recommends /usr/bin/curl ca-certificates
+          $SUDO /usr/bin/apt-get install -y --no-install-recommends curl ca-certificates
 
       - name: Checkout repository
         run: |
@@ -212,7 +212,7 @@ jobs:
           SUDO=""; [ "$(/usr/bin/id -u)" -ne 0 ] && SUDO="/usr/bin/sudo"
           $SUDO /usr/bin/apt-get update -qq
           $SUDO /usr/bin/apt-get install -y --no-install-recommends \
-            /usr/bin/curl pkg-config libssl-dev ca-certificates \
+            curl pkg-config libssl-dev ca-certificates \
             git nodejs npm dpkg-dev python3
 
       - name: Checkout repository
