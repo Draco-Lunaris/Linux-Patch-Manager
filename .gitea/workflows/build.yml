@@ -23,10 +23,13 @@ jobs:
 
       - name: Checkout repository
         run: |
-          # Use internal Gitea URL with GITHUB_TOKEN for auth
-          # GITHUB_SERVER_URL may point to unreachable external domain
-          git clone "http://echo:${GITHUB_TOKEN}@192.168.2.189:3000/${GITHUB_REPOSITORY}.git" .
-          git checkout "$GITHUB_SHA"
+          # Use Gitea API archive download (avoids git auth issues with private repos)
+          # Token auth works reliably in HTTP headers, not in git URLs
+          curl -sf -H "Authorization: token ${GITHUB_TOKEN}" \
+            "http://192.168.2.189:3000/api/v1/repos/${GITHUB_REPOSITORY}/archive/${GITHUB_SHA}.tar.gz" \
+            -o repo.tar.gz
+          tar xzf repo.tar.gz --strip-components=1
+          rm repo.tar.gz
 
       - name: Ensure Rust toolchain
         run: |
