@@ -23,11 +23,9 @@ jobs:
 
       - name: Checkout repository
         run: |
-          # Use GITHUB_TOKEN for authenticated clone
-          GIT_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
-          # Inject token into URL for private repos
-          AUTH_URL="${GIT_URL/http:\/\//http://echo:${GITHUB_TOKEN}@}"
-          git clone "${AUTH_URL}" .
+          # Use internal Gitea URL with GITHUB_TOKEN for auth
+          # GITHUB_SERVER_URL may point to unreachable external domain
+          git clone "http://echo:${GITHUB_TOKEN}@192.168.2.189:3000/${GITHUB_REPOSITORY}.git" .
           git checkout "$GITHUB_SHA"
 
       - name: Ensure Rust toolchain
