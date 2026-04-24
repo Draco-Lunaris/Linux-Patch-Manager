@@ -149,29 +149,8 @@ jobs:
         run: |
           DEB_NAME=$(ls linux-patch-manager_*.deb)
           VERSION="${{ steps.version.outputs.version }}"
-          TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
-          REF_NAME="${GITHUB_REF_NAME:-v${VERSION}}"
-          REPO="${GITHUB_REPOSITORY:-echo/linux_patch_manager}"
-          echo "Creating release for tag: ${REF_NAME} repo: ${REPO}"
-          echo "DEB: ${DEB_NAME}"
-          # Create release via Gitea API
-          HTTP_CODE=$(curl -s -o release.json -w "%{http_code}" -X POST \
-            "http://192.168.2.189:3000/api/v1/repos/${REPO}/releases" \
-            -H "Authorization: token ${TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d "{\"tag_name\": \"${REF_NAME}\", \"title\": \"Release ${VERSION}\", \"body\": \"Automated build from tag ${REF_NAME}.\\n\\n## Installation\\n\\n\\\`\\\`\\\`bash\\nsudo apt install ./linux-patch-manager_${VERSION}-1_amd64.deb\\n\\\`\\\`\\\`\\\"}")
-          echo "Release API HTTP status: ${HTTP_CODE}"
-          cat release.json
-          if [ "${HTTP_CODE}" != "201" ]; then
-            echo "ERROR: Failed to create release (HTTP ${HTTP_CODE})"
-            exit 1
-          fi
-          # Extract release ID and upload .deb
-          RELEASE_ID=$(python3 -c "import json; print(json.load(open('release.json'))['id'])")
-          echo "Release ID: ${RELEASE_ID}"
-          curl -s -X POST \
-            "http://192.168.2.189:3000/api/v1/repos/${REPO}/releases/${RELEASE_ID}/assets" \
-            -H "Authorization: token ${TOKEN}" \
-            -F "attachment=@${DEB_NAME}" \
-            -F "name=${DEB_NAME}"
-          echo "Release upload complete"
+          export GITEA_TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
+          python3 scripts/create-release.py \
+            --tag "${GITHUB_REF_NAME:-v${VERSION}}" \
+            --deb "${DEB_NAME}" \
+            --version "${VERSION}"
