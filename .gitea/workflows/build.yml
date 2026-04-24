@@ -14,15 +14,6 @@ jobs:
   build-and-package:
     runs-on: linux
     steps:
-      - name: Debug environment
-        run: |
-          echo "GITHUB_TOKEN=${GITHUB_TOKEN:-NOT_SET}"
-          echo "GITEA_TOKEN=${GITEA_TOKEN:-NOT_SET}"
-          echo "GITHUB_SERVER_URL=${GITHUB_SERVER_URL:-NOT_SET}"
-          echo "GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-NOT_SET}"
-          echo "GITHUB_SHA=${GITHUB_SHA:-NOT_SET}"
-          echo "GITHUB_REF=${GITHUB_REF:-NOT_SET}"
-          env | sort
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
@@ -158,17 +149,18 @@ jobs:
         run: |
           DEB_NAME=$(ls linux-patch-manager_*.deb)
           VERSION="${{ steps.version.outputs.version }}"
+          TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
           # Create release via Gitea API
           curl -s -X POST \
-            "${GITHUB_SERVER_URL}/api/v1/repos/${GITHUB_REPOSITORY}/releases" \
-            -H "Authorization: token ${GITHUB_TOKEN}" \
+            "http://192.168.2.189:3000/api/v1/repos/${GITHUB_REPOSITORY}/releases" \
+            -H "Authorization: token ${TOKEN}" \
             -H "Content-Type: application/json" \
-            -d "{\"tag_name\": \"${GITHUB_REF_NAME}\", \"title\": \"Release ${VERSION}\", \"body\": \"Automated build from tag ${GITHUB_REF_NAME}.\"}" \
+            -d "{\"tag_name\": \"${GITHUB_REF_NAME}\", \"title\": \"Release ${VERSION}\", \"body\": \"Automated build from tag ${GITHUB_REF_NAME}.\\n\\n## Installation\\n\\n\\\`\\\`\\\`bash\\nsudo apt install ./linux-patch-manager_${VERSION}-1_amd64.deb\\n\\\`\\\`\\\`\\\"}" \
             -o release.json
           # Extract release ID and upload .deb
           RELEASE_ID=$(python3 -c "import json; print(json.load(open('release.json'))['id'])")
           curl -s -X POST \
-            "${GITHUB_SERVER_URL}/api/v1/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets" \
-            -H "Authorization: token ${GITHUB_TOKEN}" \
+            "http://192.168.2.189:3000/api/v1/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets" \
+            -H "Authorization: token ${TOKEN}" \
             -F "attachment=@${DEB_NAME}" \
             -F "name=${DEB_NAME}"
