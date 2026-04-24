@@ -1,0 +1,26 @@
+Package: linux-patch-manager
+Version: 1.0.0-1
+Architecture: amd64
+Maintainer: Moon Dragon <echo@moon-dragon.us>
+Installed-Size: 45000
+Depends: postgresql-16, libssl3, libc6 (>= 2.39)
+Recommends: postgresql-client-16
+Suggests: gpg
+Section: admin
+Priority: optional
+Description: Enterprise Linux Patch Management System
+ Linux Patch Manager is a secure, web-based management interface for
+ controlling patching and updates on Linux servers and workstations.
+ .
+ Features include:
+  - Multi-factor authentication (TOTP + WebAuthn)
+  - Role-based access control (Admin/Operator)
+  - Mutual TLS agent communication
+  - Internal Certificate Authority
+  - Automated patch deployment with rollback
+  - Maintenance window scheduling
+  - Real-time WebSocket job monitoring
+  - CSV/PDF compliance reporting
+  - Audit logging with hash-chain integrity
+  - Email notifications
+  - Azure SSO (OAuth2/OIDC with PKCE)

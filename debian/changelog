@@ -1,0 +1,8 @@
+linux-patch-manager (1.0.0-1) noble; urgency=medium
+
+  * Initial release of Linux Patch Manager
+  * Full M1-M12 feature set implemented
+  * MFA, RBAC, mTLS, CA, reporting, audit integrity
+  * HIPAA/PCI-DSS compliance mapping documented
+
+ -- Echo <echo@moon-dragon.us>  Thu, 24 Apr 2026 00:00:00 +0000

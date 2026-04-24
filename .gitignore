@@ -23,3 +23,7 @@ venv/**
 # Frontend dependencies
 frontend/node_modules
 frontend/dist
+
+# Package build artifacts
+*.deb
+package-build/

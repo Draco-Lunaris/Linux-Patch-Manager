@@ -1,0 +1,9 @@
+usr/local/bin/pm-web
+usr/local/bin/pm-worker
+usr/local/bin/backup.sh
+usr/share/patch-manager/frontend/*
+usr/share/patch-manager/config.example.toml
+usr/share/patch-manager/migrations/*
+lib/systemd/system/patch-manager-web.service
+lib/systemd/system/patch-manager-worker.service
+lib/systemd/system/patch-manager.target
