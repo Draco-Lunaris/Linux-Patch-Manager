@@ -12,12 +12,12 @@ env:
 
 jobs:
   build-and-package:
-    runs-on: linux
+    runs-on: ubuntu-latest
     steps:
       - name: Install system dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
+          apt-get update -qq
+          apt-get install -y --no-install-recommends \
             curl pkg-config libssl-dev ca-certificates \
             git nodejs npm dpkg-dev python3
 
@@ -28,20 +28,19 @@ jobs:
 
       - name: Install Rust toolchain
         run: |
-          if ! command -v cargo &>/dev/null; then
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-            . "$HOME/.cargo/env"
-            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          fi
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          . "$HOME/.cargo/env"
+          rustup default stable
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Build Rust backend (release)
         run: |
-          . "$HOME/.cargo/env" 2>/dev/null || true
+          . "$HOME/.cargo/env"
           cargo build --release
 
       - name: Run Rust tests
         run: |
-          . "$HOME/.cargo/env" 2>/dev/null || true
+          . "$HOME/.cargo/env"
           cargo test --release
 
       - name: Strip binaries
