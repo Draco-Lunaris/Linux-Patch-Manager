@@ -12,35 +12,30 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  # ─── Quality Gates (run on every push/PR/tag) ───
-
   rust-format:
     name: Rust Format Check
     runs-on: linux
     steps:
       - name: Install checkout dependencies
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
-          SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO="sudo"
-          $SUDO apt-get update -qq
-          $SUDO apt-get install -y --no-install-recommends curl ca-certificates
+          SUDO=""; [ "$(/usr/bin/id -u)" -ne 0 ] && SUDO="/usr/bin/sudo"
+          $SUDO /usr/bin/apt-get update -qq
+          $SUDO /usr/bin/apt-get install -y --no-install-recommends /usr/bin/curl ca-certificates
 
       - name: Checkout repository
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
           TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
-          curl -sf -H "Authorization: token ${TOKEN}" \
+          /usr/bin/curl -sf -H "Authorization: token ${TOKEN}" \
             "http://192.168.2.189:3000/api/v1/repos/${GITHUB_REPOSITORY}/archive/${GITHUB_SHA}.tar.gz" \
             -o repo.tar.gz
-          tar xzf repo.tar.gz --strip-components=1
-          rm repo.tar.gz
+          /bin/tar xzf repo.tar.gz --strip-components=1
+          /bin/rm repo.tar.gz
 
       - name: Ensure Rust toolchain
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
           . "$HOME/.cargo/env" 2>/dev/null || true
-          if ! command -v cargo &>/dev/null; then
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          if ! /usr/bin/which cargo &>/dev/null; then
+            /usr/bin/curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | /bin/sh -s -- -y
             . "$HOME/.cargo/env"
           fi
           rustup component add rustfmt
@@ -49,7 +44,6 @@ jobs:
 
       - name: Check formatting
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
           . "$HOME/.cargo/env"
           cargo fmt --check --all 2>&1
 
@@ -59,34 +53,30 @@ jobs:
     steps:
       - name: Install checkout dependencies
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
-          SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO="sudo"
-          $SUDO apt-get update -qq
-          $SUDO apt-get install -y --no-install-recommends curl ca-certificates
+          SUDO=""; [ "$(/usr/bin/id -u)" -ne 0 ] && SUDO="/usr/bin/sudo"
+          $SUDO /usr/bin/apt-get update -qq
+          $SUDO /usr/bin/apt-get install -y --no-install-recommends /usr/bin/curl ca-certificates
 
       - name: Install system dependencies
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
-          SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO="sudo"
-          $SUDO apt-get update -qq
-          $SUDO apt-get install -y --no-install-recommends pkg-config libssl-dev
+          SUDO=""; [ "$(/usr/bin/id -u)" -ne 0 ] && SUDO="/usr/bin/sudo"
+          $SUDO /usr/bin/apt-get update -qq
+          $SUDO /usr/bin/apt-get install -y --no-install-recommends pkg-config libssl-dev
 
       - name: Checkout repository
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
           TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
-          curl -sf -H "Authorization: token ${TOKEN}" \
+          /usr/bin/curl -sf -H "Authorization: token ${TOKEN}" \
             "http://192.168.2.189:3000/api/v1/repos/${GITHUB_REPOSITORY}/archive/${GITHUB_SHA}.tar.gz" \
             -o repo.tar.gz
-          tar xzf repo.tar.gz --strip-components=1
-          rm repo.tar.gz
+          /bin/tar xzf repo.tar.gz --strip-components=1
+          /bin/rm repo.tar.gz
 
       - name: Ensure Rust toolchain
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
           . "$HOME/.cargo/env" 2>/dev/null || true
-          if ! command -v cargo &>/dev/null; then
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          if ! /usr/bin/which cargo &>/dev/null; then
+            /usr/bin/curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | /bin/sh -s -- -y
             . "$HOME/.cargo/env"
           fi
           rustup component add clippy
@@ -94,7 +84,6 @@ jobs:
 
       - name: Run Clippy
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
           . "$HOME/.cargo/env"
           cargo clippy --all-targets --all-features 2>&1
 
@@ -104,41 +93,36 @@ jobs:
     steps:
       - name: Install checkout dependencies
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
-          SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO="sudo"
-          $SUDO apt-get update -qq
-          $SUDO apt-get install -y --no-install-recommends curl ca-certificates
+          SUDO=""; [ "$(/usr/bin/id -u)" -ne 0 ] && SUDO="/usr/bin/sudo"
+          $SUDO /usr/bin/apt-get update -qq
+          $SUDO /usr/bin/apt-get install -y --no-install-recommends /usr/bin/curl ca-certificates
 
       - name: Install system dependencies
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
-          SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO="sudo"
-          $SUDO apt-get update -qq
-          $SUDO apt-get install -y --no-install-recommends pkg-config libssl-dev
+          SUDO=""; [ "$(/usr/bin/id -u)" -ne 0 ] && SUDO="/usr/bin/sudo"
+          $SUDO /usr/bin/apt-get update -qq
+          $SUDO /usr/bin/apt-get install -y --no-install-recommends pkg-config libssl-dev
 
       - name: Checkout repository
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
           TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
-          curl -sf -H "Authorization: token ${TOKEN}" \
+          /usr/bin/curl -sf -H "Authorization: token ${TOKEN}" \
             "http://192.168.2.189:3000/api/v1/repos/${GITHUB_REPOSITORY}/archive/${GITHUB_SHA}.tar.gz" \
             -o repo.tar.gz
-          tar xzf repo.tar.gz --strip-components=1
-          rm repo.tar.gz
+          /bin/tar xzf repo.tar.gz --strip-components=1
+          /bin/rm repo.tar.gz
 
       - name: Ensure Rust toolchain
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
           . "$HOME/.cargo/env" 2>/dev/null || true
-          if ! command -v cargo &>/dev/null; then
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          if ! /usr/bin/which cargo &>/dev/null; then
+            /usr/bin/curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | /bin/sh -s -- -y
             . "$HOME/.cargo/env"
           fi
           echo "Rust: $(cargo --version)"
 
       - name: Run tests
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
           . "$HOME/.cargo/env"
           cargo test --workspace --all-features 2>&1
 
@@ -148,40 +132,35 @@ jobs:
     steps:
       - name: Install checkout dependencies
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
-          SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO="sudo"
-          $SUDO apt-get update -qq
-          $SUDO apt-get install -y --no-install-recommends curl ca-certificates
+          SUDO=""; [ "$(/usr/bin/id -u)" -ne 0 ] && SUDO="/usr/bin/sudo"
+          $SUDO /usr/bin/apt-get update -qq
+          $SUDO /usr/bin/apt-get install -y --no-install-recommends /usr/bin/curl ca-certificates
 
       - name: Checkout repository
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
           TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
-          curl -sf -H "Authorization: token ${TOKEN}" \
+          /usr/bin/curl -sf -H "Authorization: token ${TOKEN}" \
             "http://192.168.2.189:3000/api/v1/repos/${GITHUB_REPOSITORY}/archive/${GITHUB_SHA}.tar.gz" \
             -o repo.tar.gz
-          tar xzf repo.tar.gz --strip-components=1
-          rm repo.tar.gz
+          /bin/tar xzf repo.tar.gz --strip-components=1
+          /bin/rm repo.tar.gz
 
       - name: Ensure Rust toolchain
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
           . "$HOME/.cargo/env" 2>/dev/null || true
-          if ! command -v cargo &>/dev/null; then
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          if ! /usr/bin/which cargo &>/dev/null; then
+            /usr/bin/curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | /bin/sh -s -- -y
             . "$HOME/.cargo/env"
           fi
           echo "Rust: $(cargo --version)"
 
       - name: Install cargo-audit
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
           . "$HOME/.cargo/env"
           cargo install cargo-audit 2>&1
 
       - name: Run security audit
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
           . "$HOME/.cargo/env"
           cargo audit 2>&1
 
@@ -191,40 +170,36 @@ jobs:
     steps:
       - name: Install checkout dependencies
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
-          SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO="sudo"
-          $SUDO apt-get update -qq
-          $SUDO apt-get install -y --no-install-recommends curl ca-certificates
+          SUDO=""; [ "$(/usr/bin/id -u)" -ne 0 ] && SUDO="/usr/bin/sudo"
+          $SUDO /usr/bin/apt-get update -qq
+          $SUDO /usr/bin/apt-get install -y --no-install-recommends /usr/bin/curl ca-certificates
 
       - name: Checkout repository
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
           TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
-          curl -sf -H "Authorization: token ${TOKEN}" \
+          /usr/bin/curl -sf -H "Authorization: token ${TOKEN}" \
             "http://192.168.2.189:3000/api/v1/repos/${GITHUB_REPOSITORY}/archive/${GITHUB_SHA}.tar.gz" \
             -o repo.tar.gz
-          tar xzf repo.tar.gz --strip-components=1
-          rm repo.tar.gz
+          /bin/tar xzf repo.tar.gz --strip-components=1
+          /bin/rm repo.tar.gz
 
       - name: Install Node.js dependencies
         working-directory: frontend
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
+          . "$HOME/.cargo/env" 2>/dev/null || true
           npm ci
 
       - name: Run ESLint
         working-directory: frontend
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
+          . "$HOME/.cargo/env" 2>/dev/null || true
           npx eslint src/ --ext .ts,.tsx --max-warnings 0 2>&1
 
       - name: TypeScript type check
         working-directory: frontend
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
+          . "$HOME/.cargo/env" 2>/dev/null || true
           npx tsc --noEmit 2>&1
-
-  # ─── Build & Release (only on tag pushes, gated by quality checks) ───
 
   build-and-release:
     name: Build .deb & Release
@@ -234,84 +209,74 @@ jobs:
     steps:
       - name: Install system dependencies
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
-          SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO="sudo"
-          $SUDO apt-get update -qq
-          $SUDO apt-get install -y --no-install-recommends \
-            curl pkg-config libssl-dev ca-certificates \
+          SUDO=""; [ "$(/usr/bin/id -u)" -ne 0 ] && SUDO="/usr/bin/sudo"
+          $SUDO /usr/bin/apt-get update -qq
+          $SUDO /usr/bin/apt-get install -y --no-install-recommends \
+            /usr/bin/curl pkg-config libssl-dev ca-certificates \
             git nodejs npm dpkg-dev python3
 
       - name: Checkout repository
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
           TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
-          curl -sf -H "Authorization: token ${TOKEN}" \
+          /usr/bin/curl -sf -H "Authorization: token ${TOKEN}" \
             "http://192.168.2.189:3000/api/v1/repos/${GITHUB_REPOSITORY}/archive/${GITHUB_SHA}.tar.gz" \
             -o repo.tar.gz
-          tar xzf repo.tar.gz --strip-components=1
-          rm repo.tar.gz
+          /bin/tar xzf repo.tar.gz --strip-components=1
+          /bin/rm repo.tar.gz
 
       - name: Ensure Rust toolchain
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
           . "$HOME/.cargo/env" 2>/dev/null || true
-          if ! command -v cargo &>/dev/null; then
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          if ! /usr/bin/which cargo &>/dev/null; then
+            /usr/bin/curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | /bin/sh -s -- -y
             . "$HOME/.cargo/env"
           fi
           echo "Rust: $(cargo --version)"
 
       - name: Build Rust backend (release)
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
           . "$HOME/.cargo/env"
           cargo build --release 2>&1
 
       - name: Run Rust tests
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
           . "$HOME/.cargo/env"
           cargo test --workspace --all-features 2>&1
 
       - name: Strip binaries
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
-          strip target/release/pm-web target/release/pm-worker
+          /usr/bin/strip target/release/pm-web target/release/pm-worker
 
       - name: Build frontend
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
+          . "$HOME/.cargo/env" 2>/dev/null || true
           cd frontend && npm ci && npm run build
 
       - name: Determine version
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
-          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*=.*"\(.*\)"/\1/')
+          VERSION=$(/usr/bin/grep '^version' Cargo.toml | /usr/bin/head -1 | /bin/sed 's/.*=.*"\(.*\)"/\1/')
           echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
           echo "Building version: ${VERSION}"
 
       - name: Assemble .deb package
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
-          chmod +x scripts/build-package.sh
+          /bin/chmod +x scripts/build-package.sh
           scripts/build-package.sh
 
       - name: Verify package
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
-          ls -la target/package/*.deb
-          dpkg-deb -I target/package/linux-patch-manager_*.deb
+          /usr/bin/ls -la target/package/*.deb
+          /usr/bin/dpkg-deb -I target/package/linux-patch-manager_*.deb
 
       - name: Create Gitea Release (tags only)
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.cargo/bin:$PATH"
           . "$HOME/.cargo/env"
-          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*=.*"\(.*\)"/\1/')
+          VERSION=$(/usr/bin/grep '^version' Cargo.toml | /usr/bin/head -1 | /bin/sed 's/.*=.*"\(.*\)"/\1/')
           REPO="${GITHUB_REPOSITORY:-echo/linux_patch_manager}"
           REF_NAME="${GITHUB_REF_NAME:-v${VERSION}}"
-          DEB=$(ls target/package/linux-patch-manager_*.deb)
-          python3 scripts/create-release.py \
+          DEB=$(/usr/bin/ls target/package/linux-patch-manager_*.deb)
+          /usr/bin/python3 scripts/create-release.py \
             --repo "${REPO}" \
             --tag "${REF_NAME}" \
             --title "Release ${REF_NAME}" \
