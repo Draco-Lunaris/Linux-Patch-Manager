@@ -1,0 +1,11 @@
+# Linux Patch Manager - Clippy Lint Configuration
+# Run: cargo clippy -- -D warnings (CI) or cargo clippy (local)
+
+# Deny all warnings in CI - warnings become errors
+cognitive-complexity-threshold = 30
+
+# Type complexity limits
+type-complexity-threshold = 300
+
+# Single character binding names allowed for common patterns (i, j, k, e, f, etc.)
+allow-single-char-binding-names = ["i", "j", "k", "n", "e", "f", "r", "w", "x", "y", "z"]

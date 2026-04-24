@@ -2,10 +2,7 @@ name: Build .deb Package
 
 on:
   push:
-    branches: [master]
     tags: ["v*"]
-  pull_request:
-    branches: [master]
 
 env:
   CARGO_TERM_COLOR: always

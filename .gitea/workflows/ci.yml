@@ -1,0 +1,180 @@
+name: CI Quality Gates
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  rust-format:
+    name: Rust Format Check
+    runs-on: linux
+    steps:
+      - name: Checkout repository
+        run: |
+          TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
+          curl -sf -H "Authorization: token ${TOKEN}" \
+            "http://192.168.2.189:3000/api/v1/repos/${GITHUB_REPOSITORY}/archive/${GITHUB_SHA}.tar.gz" \
+            -o repo.tar.gz
+          tar xzf repo.tar.gz --strip-components=1
+          rm repo.tar.gz
+
+      - name: Ensure Rust toolchain
+        run: |
+          . "$HOME/.cargo/env" 2>/dev/null || true
+          if ! command -v cargo &>/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            . "$HOME/.cargo/env"
+          fi
+          rustup component add rustfmt
+          echo "Rust: $(cargo --version)"
+          echo "Rustfmt: $(rustfmt --version)"
+
+      - name: Check formatting
+        run: |
+          . "$HOME/.cargo/env"
+          cargo fmt --check --all 2>&1
+          echo "All Rust code is properly formatted"
+
+  clippy:
+    name: Clippy Lints
+    runs-on: linux
+    steps:
+      - name: Checkout repository
+        run: |
+          TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
+          curl -sf -H "Authorization: token ${TOKEN}" \
+            "http://192.168.2.189:3000/api/v1/repos/${GITHUB_REPOSITORY}/archive/${GITHUB_SHA}.tar.gz" \
+            -o repo.tar.gz
+          tar xzf repo.tar.gz --strip-components=1
+          rm repo.tar.gz
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends pkg-config libssl-dev
+
+      - name: Ensure Rust toolchain
+        run: |
+          . "$HOME/.cargo/env" 2>/dev/null || true
+          if ! command -v cargo &>/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            . "$HOME/.cargo/env"
+          fi
+          rustup component add clippy
+          echo "Rust: $(cargo --version)"
+          echo "Clippy: $(cargo clippy --version)"
+
+      - name: Run Clippy
+        run: |
+          . "$HOME/.cargo/env"
+          cargo clippy --all-targets --all-features -- \
+            -D warnings \
+            -D clippy::all \
+            -D clippy::pedantic \
+            -A clippy::module-name-repetitions \
+            -A clippy::too-many-arguments \
+            -A clippy::cast-possible-truncation \
+            -A clippy::cast-possible-wrap \
+            -A clippy::missing-errors-doc \
+            -A clippy::missing-panics-doc 2>&1
+          echo "No Clippy warnings"
+
+  rust-test:
+    name: Rust Unit Tests
+    runs-on: linux
+    steps:
+      - name: Checkout repository
+        run: |
+          TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
+          curl -sf -H "Authorization: token ${TOKEN}" \
+            "http://192.168.2.189:3000/api/v1/repos/${GITHUB_REPOSITORY}/archive/${GITHUB_SHA}.tar.gz" \
+            -o repo.tar.gz
+          tar xzf repo.tar.gz --strip-components=1
+          rm repo.tar.gz
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends pkg-config libssl-dev
+
+      - name: Ensure Rust toolchain
+        run: |
+          . "$HOME/.cargo/env" 2>/dev/null || true
+          if ! command -v cargo &>/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            . "$HOME/.cargo/env"
+          fi
+          echo "Rust: $(cargo --version)"
+
+      - name: Run tests
+        run: |
+          . "$HOME/.cargo/env"
+          cargo test --workspace --all-features 2>&1
+          echo "All Rust tests passed"
+
+  security-audit:
+    name: Security Audit
+    runs-on: linux
+    steps:
+      - name: Checkout repository
+        run: |
+          TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
+          curl -sf -H "Authorization: token ${TOKEN}" \
+            "http://192.168.2.189:3000/api/v1/repos/${GITHUB_REPOSITORY}/archive/${GITHUB_SHA}.tar.gz" \
+            -o repo.tar.gz
+          tar xzf repo.tar.gz --strip-components=1
+          rm repo.tar.gz
+
+      - name: Ensure Rust toolchain
+        run: |
+          . "$HOME/.cargo/env" 2>/dev/null || true
+          if ! command -v cargo &>/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            . "$HOME/.cargo/env"
+          fi
+
+      - name: Install cargo-audit
+        run: |
+          . "$HOME/.cargo/env"
+          cargo install cargo-audit 2>/dev/null || true
+
+      - name: Run security audit
+        run: |
+          . "$HOME/.cargo/env"
+          cargo audit 2>&1
+          echo "No known security vulnerabilities"
+
+  frontend-lint:
+    name: Frontend Lint & Type Check
+    runs-on: linux
+    steps:
+      - name: Checkout repository
+        run: |
+          TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
+          curl -sf -H "Authorization: token ${TOKEN}" \
+            "http://192.168.2.189:3000/api/v1/repos/${GITHUB_REPOSITORY}/archive/${GITHUB_SHA}.tar.gz" \
+            -o repo.tar.gz
+          tar xzf repo.tar.gz --strip-components=1
+          rm repo.tar.gz
+
+      - name: Install Node.js dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Run ESLint
+        working-directory: frontend
+        run: |
+          npx eslint src/ --ext .ts,.tsx --max-warnings 0 2>&1
+          echo "No ESLint errors"
+
+      - name: TypeScript type check
+        working-directory: frontend
+        run: |
+          npx tsc --noEmit 2>&1
+          echo "TypeScript types are valid"
