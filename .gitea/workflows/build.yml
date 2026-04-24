@@ -23,8 +23,11 @@ jobs:
 
       - name: Checkout repository
         run: |
-          rm -rf .git
-          git clone "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git" .
+          # Use GITHUB_TOKEN for authenticated clone
+          GIT_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          # Inject token into URL for private repos
+          AUTH_URL="${GIT_URL/http:\/\//http://echo:${GITHUB_TOKEN}@}"
+          git clone "${AUTH_URL}" .
           git checkout "$GITHUB_SHA"
 
       - name: Ensure Rust toolchain
