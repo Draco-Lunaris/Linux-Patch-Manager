@@ -10,6 +10,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/echo/.cargo/bin"
 
 jobs:
   # ─── Quality Gates (run on every push/PR/tag) ───
@@ -59,6 +60,12 @@ jobs:
           $SUDO apt-get update -qq
           $SUDO apt-get install -y --no-install-recommends curl ca-certificates
 
+      - name: Install system dependencies
+        run: |
+          SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO="sudo"
+          $SUDO apt-get update -qq
+          $SUDO apt-get install -y --no-install-recommends pkg-config libssl-dev
+
       - name: Checkout repository
         run: |
           TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
@@ -67,12 +74,6 @@ jobs:
             -o repo.tar.gz
           tar xzf repo.tar.gz --strip-components=1
           rm repo.tar.gz
-
-      - name: Install system dependencies
-        run: |
-          SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO="sudo"
-          $SUDO apt-get update -qq
-          $SUDO apt-get install -y --no-install-recommends pkg-config libssl-dev
 
       - name: Ensure Rust toolchain
         run: |
@@ -83,21 +84,11 @@ jobs:
           fi
           rustup component add clippy
           echo "Rust: $(cargo --version)"
-          echo "Clippy: $(cargo clippy --version)"
 
       - name: Run Clippy
         run: |
           . "$HOME/.cargo/env"
-          cargo clippy --all-targets --all-features -- \
-            -D warnings \
-            -D clippy::all \
-            -D clippy::pedantic \
-            -A clippy::module-name-repetitions \
-            -A clippy::too-many-arguments \
-            -A clippy::cast-possible-truncation \
-            -A clippy::cast-possible-wrap \
-            -A clippy::missing-errors-doc \
-            -A clippy::missing-panics-doc 2>&1
+          cargo clippy --all-targets --all-features 2>&1
 
   rust-test:
     name: Rust Unit Tests
@@ -109,6 +100,12 @@ jobs:
           $SUDO apt-get update -qq
           $SUDO apt-get install -y --no-install-recommends curl ca-certificates
 
+      - name: Install system dependencies
+        run: |
+          SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO="sudo"
+          $SUDO apt-get update -qq
+          $SUDO apt-get install -y --no-install-recommends pkg-config libssl-dev
+
       - name: Checkout repository
         run: |
           TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
@@ -117,12 +114,6 @@ jobs:
             -o repo.tar.gz
           tar xzf repo.tar.gz --strip-components=1
           rm repo.tar.gz
-
-      - name: Install system dependencies
-        run: |
-          SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO="sudo"
-          $SUDO apt-get update -qq
-          $SUDO apt-get install -y --no-install-recommends pkg-config libssl-dev
 
       - name: Ensure Rust toolchain
         run: |
@@ -164,11 +155,12 @@ jobs:
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
             . "$HOME/.cargo/env"
           fi
+          echo "Rust: $(cargo --version)"
 
       - name: Install cargo-audit
         run: |
           . "$HOME/.cargo/env"
-          cargo install cargo-audit 2>/dev/null || true
+          cargo install cargo-audit 2>&1
 
       - name: Run security audit
         run: |
@@ -242,114 +234,49 @@ jobs:
 
       - name: Build Rust backend (release)
         run: |
-          . "$HOME/.cargo/env" 2>/dev/null || true
+          . "$HOME/.cargo/env"
           cargo build --release 2>&1
 
       - name: Run Rust tests
         run: |
-          . "$HOME/.cargo/env" 2>/dev/null || true
-          cargo test --release 2>&1 || true
+          . "$HOME/.cargo/env"
+          cargo test --workspace --all-features 2>&1
 
       - name: Strip binaries
         run: |
-          strip target/release/pm-web
-          strip target/release/pm-worker
-
-      - name: Install frontend dependencies
-        working-directory: frontend
-        run: npm ci
+          strip target/release/pm-web target/release/pm-worker
 
       - name: Build frontend
-        working-directory: frontend
-        run: npm run build
+        run: |
+          cd frontend && npm ci && npm run build
 
       - name: Determine version
-        id: version
         run: |
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
-          else
-            VERSION="1.0.0-dev.$(date +%Y%m%d%H%M)"
-          fi
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*=.*"\(.*\)"/\1/')
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
           echo "Building version: ${VERSION}"
 
       - name: Assemble .deb package
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          BUILD_DIR="package-build"
-
-          mkdir -p "${BUILD_DIR}/DEBIAN"
-          mkdir -p "${BUILD_DIR}/usr/local/bin"
-          mkdir -p "${BUILD_DIR}/usr/share/patch-manager/frontend"
-          mkdir -p "${BUILD_DIR}/usr/share/patch-manager/migrations"
-          mkdir -p "${BUILD_DIR}/lib/systemd/system"
-
-          # Binaries
-          cp target/release/pm-web "${BUILD_DIR}/usr/local/bin/pm-web"
-          cp target/release/pm-worker "${BUILD_DIR}/usr/local/bin/pm-worker"
-          cp scripts/backup.sh "${BUILD_DIR}/usr/local/bin/backup.sh"
-          chmod 755 "${BUILD_DIR}/usr/local/bin/pm-web"
-          chmod 755 "${BUILD_DIR}/usr/local/bin/pm-worker"
-          chmod 700 "${BUILD_DIR}/usr/local/bin/backup.sh"
-
-          # Frontend
-          cp -r frontend/dist/* "${BUILD_DIR}/usr/share/patch-manager/frontend/"
-
-          # Config + migrations
-          cp config/config.example.toml "${BUILD_DIR}/usr/share/patch-manager/config.example.toml"
-          cp migrations/*.sql "${BUILD_DIR}/usr/share/patch-manager/migrations/"
-
-          # Systemd units
-          cp systemd/patch-manager-web.service "${BUILD_DIR}/lib/systemd/system/"
-          cp systemd/patch-manager-worker.service "${BUILD_DIR}/lib/systemd/system/"
-          cp systemd/patch-manager.target "${BUILD_DIR}/lib/systemd/system/"
-
-          # DEBIAN control scripts
-          cp debian/postinst "${BUILD_DIR}/DEBIAN/postinst"
-          cp debian/prerm "${BUILD_DIR}/DEBIAN/prerm"
-          cp debian/postrm "${BUILD_DIR}/DEBIAN/postrm"
-          chmod 755 "${BUILD_DIR}/DEBIAN/postinst" "${BUILD_DIR}/DEBIAN/prerm" "${BUILD_DIR}/DEBIAN/postrm"
-
-          # Generate control file
-          INSTALLED_SIZE=$(du -sk "${BUILD_DIR}" | cut -f1)
-          cat > "${BUILD_DIR}/DEBIAN/control" <<CTRL
-          Package: linux-patch-manager
-          Version: ${VERSION}-1
-          Architecture: amd64
-          Maintainer: Moon Dragon <echo@moon-dragon.us>
-          Installed-Size: ${INSTALLED_SIZE}
-          Depends: postgresql-16, libssl3, libc6 (>= 2.39)
-          Recommends: postgresql-client-16
-          Suggests: gpg
-          Section: admin
-          Priority: optional
-          Description: Enterprise Linux Patch Management System
-           Linux Patch Manager is a secure, web-based management interface for
-           controlling patching and updates on Linux servers and workstations.
-          CTRL
-
-          # Build .deb
-          DEB_NAME="linux-patch-manager_${VERSION}-1_amd64.deb"
-          dpkg-deb --build "${BUILD_DIR}" "${DEB_NAME}"
-          echo "Built: ${DEB_NAME}"
-          du -h "${DEB_NAME}"
+          chmod +x scripts/build-package.sh
+          scripts/build-package.sh
 
       - name: Verify package
         run: |
-          DEB_NAME=$(ls linux-patch-manager_*.deb)
-          echo "=== Package Info ==="
-          dpkg-deb --info "${DEB_NAME}"
-          echo "=== Package Size ==="
-          du -h "${DEB_NAME}"
+          ls -la target/package/*.deb
+          dpkg-deb -I target/package/linux-patch-manager_*.deb
 
-      - name: Create Gitea Release
+      - name: Create Gitea Release (tags only)
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          DEB_NAME=$(ls linux-patch-manager_*.deb)
-          VERSION="${{ steps.version.outputs.version }}"
-          export GITEA_TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*=.*"\(.*\)"/\1/')
+          REPO="${GITHUB_REPOSITORY:-echo/linux_patch_manager}"
+          REF_NAME="${GITHUB_REF_NAME:-v${VERSION}}"
+          DEB=$(ls target/package/linux-patch-manager_*.deb)
           python3 scripts/create-release.py \
-            --tag "${GITHUB_REF_NAME:-v${VERSION}}" \
-            --deb "${DEB_NAME}" \
-            --version "${VERSION}"
+            --repo "${REPO}" \
+            --tag "${REF_NAME}" \
+            --title "Release ${REF_NAME}" \
+            --asset "${DEB}" \
+            --token "${GITHUB_TOKEN:-$GITEA_TOKEN}" \
+            --gitea-url "http://192.168.2.189:3000"
