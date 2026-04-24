@@ -8,10 +8,7 @@
 use std::sync::Arc;
 
 use pm_agent_client::{AgentClient, AgentClientError};
-use pm_core::{
-    config::AppConfig,
-    models::HostHealthStatus,
-};
+use pm_core::{config::AppConfig, models::HostHealthStatus};
 use sqlx::{FromRow, PgPool};
 use tokio::time;
 use uuid::Uuid;
@@ -46,8 +43,7 @@ pub async fn run_refresh_listener(pool: PgPool, config: Arc<AppConfig>) {
 /// Inner loop — returns `Err` only on a fatal listener error so the outer
 /// loop can reconnect.
 async fn listen_loop(pool: &PgPool, config: &AppConfig) -> anyhow::Result<()> {
-    let mut listener =
-        sqlx::postgres::PgListener::connect(&config.database.url).await?;
+    let mut listener = sqlx::postgres::PgListener::connect(&config.database.url).await?;
 
     listener.listen("refresh_requested").await?;
 
@@ -68,7 +64,7 @@ async fn listen_loop(pool: &PgPool, config: &AppConfig) -> anyhow::Result<()> {
                     "Refresh listener: invalid UUID in notification payload"
                 );
                 continue;
-            }
+            },
         };
 
         // Fetch the host from the database.
@@ -85,7 +81,7 @@ async fn listen_loop(pool: &PgPool, config: &AppConfig) -> anyhow::Result<()> {
             None => {
                 tracing::warn!(%host_id, "Refresh listener: host not found");
                 continue;
-            }
+            },
         };
 
         // Load certs for this refresh.
@@ -98,7 +94,7 @@ async fn listen_loop(pool: &PgPool, config: &AppConfig) -> anyhow::Result<()> {
                     "Refresh listener: failed to load agent certs"
                 );
                 continue;
-            }
+            },
         };
 
         // Spawn the actual work so the listener loop is not blocked.
@@ -137,7 +133,7 @@ async fn refresh_host(
             );
             persist_health_unreachable(&pool, host.id).await;
             return;
-        }
+        },
     };
 
     // ── Health ────────────────────────────────────────────────────────────
@@ -145,15 +141,21 @@ async fn refresh_host(
         Ok(data) => {
             let payload = serde_json::to_value(&data).unwrap_or_default();
             (HostHealthStatus::Healthy, payload)
-        }
+        },
         Err(AgentClientError::Timeout) | Err(AgentClientError::Connect(_)) => {
             tracing::warn!(host_id = %host.id, "Refresh: agent unreachable");
-            (HostHealthStatus::Unreachable, serde_json::Value::Object(Default::default()))
-        }
+            (
+                HostHealthStatus::Unreachable,
+                serde_json::Value::Object(Default::default()),
+            )
+        },
         Err(e) => {
             tracing::warn!(host_id = %host.id, error = %e, "Refresh: health error");
-            (HostHealthStatus::Degraded, serde_json::Value::Object(Default::default()))
-        }
+            (
+                HostHealthStatus::Degraded,
+                serde_json::Value::Object(Default::default()),
+            )
+        },
     };
 
     persist_health(&pool, host.id, &health_status, &health_payload).await;
@@ -164,8 +166,7 @@ async fn refresh_host(
 
     match (patches_result, packages_result) {
         (Ok(patches_data), Ok(packages_data)) => {
-            let available_patches =
-                serde_json::to_value(&patches_data.patches).unwrap_or_default();
+            let available_patches = serde_json::to_value(&patches_data.patches).unwrap_or_default();
             let installed_packages =
                 serde_json::to_value(&packages_data.packages).unwrap_or_default();
             let patch_count = patches_data.total as i32;
@@ -196,12 +197,10 @@ async fn refresh_host(
                     "Refresh: failed to insert patch data"
                 );
             } else {
-                let _ = sqlx::query(
-                    "UPDATE hosts SET last_patch_at = NOW() WHERE id = $1",
-                )
-                .bind(host.id)
-                .execute(&pool)
-                .await;
+                let _ = sqlx::query("UPDATE hosts SET last_patch_at = NOW() WHERE id = $1")
+                    .bind(host.id)
+                    .execute(&pool)
+                    .await;
 
                 tracing::info!(
                     host_id = %host.id,
@@ -210,14 +209,14 @@ async fn refresh_host(
                     "On-demand refresh complete"
                 );
             }
-        }
+        },
         (Err(e), _) | (_, Err(e)) => {
             tracing::warn!(
                 host_id = %host.id,
                 error = %e,
                 "Refresh: failed to collect patch data"
             );
-        }
+        },
     }
 }
 
@@ -252,13 +251,12 @@ async fn persist_health(
         );
     }
 
-    if let Err(e) = sqlx::query(
-        "UPDATE hosts SET health_status = $2, last_health_at = NOW() WHERE id = $1",
-    )
-    .bind(host_id)
-    .bind(status)
-    .execute(pool)
-    .await
+    if let Err(e) =
+        sqlx::query("UPDATE hosts SET health_status = $2, last_health_at = NOW() WHERE id = $1")
+            .bind(host_id)
+            .bind(status)
+            .execute(pool)
+            .await
     {
         tracing::error!(%host_id, error = %e, "Refresh: failed to update host health_status");
     }

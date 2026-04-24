@@ -34,12 +34,12 @@ pub fn load_agent_certs(security: &SecurityConfig) -> anyhow::Result<AgentCerts>
     })?;
 
     let ca_cert = std::fs::read(&security.ca_cert_path).map_err(|e| {
-        anyhow::anyhow!(
-            "Failed to read CA cert '{}': {}",
-            security.ca_cert_path,
-            e
-        )
+        anyhow::anyhow!("Failed to read CA cert '{}': {}", security.ca_cert_path, e)
     })?;
 
-    Ok(AgentCerts { client_cert, client_key, ca_cert })
+    Ok(AgentCerts {
+        client_cert,
+        client_key,
+        ca_cert,
+    })
 }

@@ -91,10 +91,7 @@ pub fn issue_access_token(
 }
 
 /// Validate and decode an access token using the Ed25519 public key PEM.
-pub fn validate_access_token(
-    token: &str,
-    verify_key_pem: &str,
-) -> Result<AccessClaims, JwtError> {
+pub fn validate_access_token(token: &str, verify_key_pem: &str) -> Result<AccessClaims, JwtError> {
     let key = DecodingKey::from_ed_pem(verify_key_pem.as_bytes())
         .map_err(|e| JwtError::KeyLoad(e.to_string()))?;
 
@@ -115,14 +112,12 @@ pub fn validate_access_token(
 
 /// Load the Ed25519 signing key from a PEM file path.
 pub fn load_signing_key(path: &str) -> Result<String, JwtError> {
-    std::fs::read_to_string(path)
-        .map_err(|e| JwtError::KeyLoad(format!("Cannot read {path}: {e}")))
+    std::fs::read_to_string(path).map_err(|e| JwtError::KeyLoad(format!("Cannot read {path}: {e}")))
 }
 
 /// Load the Ed25519 verification (public) key from a PEM file path.
 pub fn load_verify_key(path: &str) -> Result<String, JwtError> {
-    std::fs::read_to_string(path)
-        .map_err(|e| JwtError::KeyLoad(format!("Cannot read {path}: {e}")))
+    std::fs::read_to_string(path).map_err(|e| JwtError::KeyLoad(format!("Cannot read {path}: {e}")))
 }
 
 #[cfg(test)]

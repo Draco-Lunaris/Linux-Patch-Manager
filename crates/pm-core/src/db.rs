@@ -1,6 +1,6 @@
+use crate::config::DatabaseConfig;
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use std::time::Duration;
-use crate::config::DatabaseConfig;
 
 /// Initialize and return a PostgreSQL connection pool.
 pub async fn init_pool(cfg: &DatabaseConfig) -> Result<PgPool, sqlx::Error> {
@@ -59,11 +59,9 @@ pub async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateE
 /// Check that the database schema is at the expected version.
 /// Used by the worker to wait until migrations have been applied.
 pub async fn check_schema_version(pool: &PgPool) -> Result<i64, sqlx::Error> {
-    let row: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM _sqlx_migrations WHERE success = true",
-    )
-    .fetch_one(pool)
-    .await?;
+    let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM _sqlx_migrations WHERE success = true")
+        .fetch_one(pool)
+        .await?;
 
     Ok(row.0)
 }

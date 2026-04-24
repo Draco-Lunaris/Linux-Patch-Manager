@@ -20,8 +20,8 @@ use lettre::{
     transport::smtp::authentication::Credentials,
     AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
 };
-use pm_core::audit::{log_event, verify_integrity, AuditAction};
 use pm_auth::rbac::AuthUser;
+use pm_core::audit::{log_event, verify_integrity, AuditAction};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -132,7 +132,10 @@ pub fn router() -> Router<AppState> {
         .route("/", get(get_settings).put(update_settings))
         .route("/azure-sso/test", post(test_azure_sso))
         .route("/smtp/test", post(test_smtp))
-        .route("/ip-whitelist", get(get_ip_whitelist).put(update_ip_whitelist))
+        .route(
+            "/ip-whitelist",
+            get(get_ip_whitelist).put(update_ip_whitelist),
+        )
         .route("/audit-integrity", post(audit_integrity))
 }
 
@@ -155,26 +158,28 @@ fn admin_only(auth: &AuthUser) -> Result<(), (StatusCode, Json<Value>)> {
 async fn load_system_config(
     pool: &sqlx::PgPool,
 ) -> Result<HashMap<String, String>, (StatusCode, Json<Value>)> {
-    let rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT key, value FROM system_config",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| {
-        tracing::error!(error = %e, "Failed to load system_config");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
-        )
-    })?;
+    let rows: Vec<(String, String)> = sqlx::query_as("SELECT key, value FROM system_config")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to load system_config");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+            )
+        })?;
 
     Ok(rows.into_iter().collect())
 }
 
-fn build_settings_response(cfg: &HashMap<String, String>, azure: AzureSsoConfig) -> SettingsResponse {
+fn build_settings_response(
+    cfg: &HashMap<String, String>,
+    azure: AzureSsoConfig,
+) -> SettingsResponse {
     let get = |key: &str| -> String { cfg.get(key).cloned().unwrap_or_default() };
 
-    let recipients: Vec<String> = serde_json::from_str(&get("notification_email_recipients")).unwrap_or_default();
+    let recipients: Vec<String> =
+        serde_json::from_str(&get("notification_email_recipients")).unwrap_or_default();
 
     SettingsResponse {
         azure_sso: azure,
@@ -517,7 +522,7 @@ async fn test_azure_sso(
                 "success": false,
                 "message": "Azure SSO is not configured"
             })));
-        }
+        },
     };
 
     if tenant_id.is_empty() {
@@ -560,7 +565,7 @@ async fn test_azure_sso(
                     "issuer": issuer
                 })))
             }
-        }
+        },
         Ok(resp) => Ok(Json(json!({
             "success": false,
             "message": format!("Failed to reach Azure AD: HTTP {}", resp.status())
@@ -593,11 +598,17 @@ async fn test_smtp(
     }
 
     let host = cfg.get("smtp_host").cloned().unwrap_or_default();
-    let port: u16 = cfg.get("smtp_port").and_then(|v| v.parse().ok()).unwrap_or(587);
+    let port: u16 = cfg
+        .get("smtp_port")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(587);
     let username = cfg.get("smtp_username").cloned().unwrap_or_default();
     let password = cfg.get("smtp_password").cloned().unwrap_or_default();
     let from_addr = cfg.get("smtp_from").cloned().unwrap_or_default();
-    let tls_mode = cfg.get("smtp_tls_mode").cloned().unwrap_or_else(|| "starttls".to_string());
+    let tls_mode = cfg
+        .get("smtp_tls_mode")
+        .cloned()
+        .unwrap_or_else(|| "starttls".to_string());
 
     if host.is_empty() || from_addr.is_empty() {
         return Ok(Json(json!({
@@ -628,7 +639,9 @@ async fn send_smtp_test(
     from_addr: &str,
     tls_mode: &str,
 ) -> Result<(), String> {
-    let from_mailbox: Mailbox = from_addr.parse().map_err(|e| format!("Invalid from address: {}", e))?;
+    let from_mailbox: Mailbox = from_addr
+        .parse()
+        .map_err(|e| format!("Invalid from address: {}", e))?;
 
     let email = Message::builder()
         .from(from_mailbox.clone())
@@ -644,33 +657,39 @@ async fn send_smtp_test(
                 .map_err(|e| format!("TLS relay error: {}", e))?;
             builder = builder.port(port);
             if !username.is_empty() {
-                builder = builder.credentials(Credentials::new(username.to_string(), password.to_string()));
+                builder = builder
+                    .credentials(Credentials::new(username.to_string(), password.to_string()));
             }
             let transport = builder.build();
             transport.send(email).await
-        }
+        },
         "starttls" => {
             let mut builder = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(host)
                 .map_err(|e| format!("STARTTLS relay error: {}", e))?;
             builder = builder.port(port);
             if !username.is_empty() {
-                builder = builder.credentials(Credentials::new(username.to_string(), password.to_string()));
+                builder = builder
+                    .credentials(Credentials::new(username.to_string(), password.to_string()));
             }
             let transport = builder.build();
             transport.send(email).await
-        }
+        },
         _ => {
             // "none" — plaintext / no TLS
-            let mut builder = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(host).port(port);
+            let mut builder =
+                AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(host).port(port);
             if !username.is_empty() {
-                builder = builder.credentials(Credentials::new(username.to_string(), password.to_string()));
+                builder = builder
+                    .credentials(Credentials::new(username.to_string(), password.to_string()));
             }
             let transport = builder.build();
             transport.send(email).await
-        }
+        },
     };
 
-    result.map(|_| ()).map_err(|e| format!("SMTP send error: {}", e))
+    result
+        .map(|_| ())
+        .map_err(|e| format!("SMTP send error: {}", e))
 }
 
 // ============================================================
@@ -713,12 +732,12 @@ async fn update_ip_whitelist(
 
     // Validate each entry
     for entry in &req.entries {
-        if entry.parse::<ipnet::IpNet>().is_err()
-            && entry.parse::<std::net::IpAddr>().is_err()
-        {
+        if entry.parse::<ipnet::IpNet>().is_err() && entry.parse::<std::net::IpAddr>().is_err() {
             return Err((
                 StatusCode::BAD_REQUEST,
-                Json(json!({ "error": { "code": "bad_request", "message": format!("Invalid CIDR or IP: {}", entry) } })),
+                Json(
+                    json!({ "error": { "code": "bad_request", "message": format!("Invalid CIDR or IP: {}", entry) } }),
+                ),
             ));
         }
     }

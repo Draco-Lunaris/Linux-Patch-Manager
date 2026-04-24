@@ -97,15 +97,19 @@ async fn azure_login(
         None => {
             return Err((
                 StatusCode::FORBIDDEN,
-                Json(json!({ "error": { "code": "forbidden", "message": "Azure SSO is not configured" } })),
+                Json(
+                    json!({ "error": { "code": "forbidden", "message": "Azure SSO is not configured" } }),
+                ),
             ));
-        }
+        },
     };
 
     if !enabled {
         return Err((
             StatusCode::FORBIDDEN,
-            Json(json!({ "error": { "code": "forbidden", "message": "Azure SSO is not enabled" } })),
+            Json(
+                json!({ "error": { "code": "forbidden", "message": "Azure SSO is not enabled" } }),
+            ),
         ));
     }
 
@@ -162,7 +166,9 @@ async fn azure_callback(
         let desc = params.error_description.unwrap_or_default();
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": { "code": "sso_error", "message": format!("Azure AD error: {} - {}", error, desc) } })),
+            Json(
+                json!({ "error": { "code": "sso_error", "message": format!("Azure AD error: {} - {}", error, desc) } }),
+            ),
         ));
     }
 
@@ -176,7 +182,9 @@ async fn azure_callback(
     let state_token = params.state.ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": { "code": "bad_request", "message": "Missing state parameter" } })),
+            Json(
+                json!({ "error": { "code": "bad_request", "message": "Missing state parameter" } }),
+            ),
         )
     })?;
 
@@ -211,9 +219,11 @@ async fn azure_callback(
         None => {
             return Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": { "code": "internal_error", "message": "Azure SSO not configured" } })),
+                Json(
+                    json!({ "error": { "code": "internal_error", "message": "Azure SSO not configured" } }),
+                ),
             ));
-        }
+        },
     };
 
     // Exchange code for tokens
@@ -263,7 +273,9 @@ async fn azure_callback(
         tracing::error!(status = %status, body = %body, "Token exchange failed");
         return Err((
             StatusCode::BAD_GATEWAY,
-            Json(json!({ "error": { "code": "sso_error", "message": format!("Token exchange failed: HTTP {}", status) } })),
+            Json(
+                json!({ "error": { "code": "sso_error", "message": format!("Token exchange failed: HTTP {}", status) } }),
+            ),
         ));
     }
 
@@ -302,7 +314,9 @@ async fn azure_callback(
     if email.is_empty() || oid.is_empty() {
         return Err((
             StatusCode::BAD_GATEWAY,
-            Json(json!({ "error": { "code": "sso_error", "message": "Missing email or oid in id_token" } })),
+            Json(
+                json!({ "error": { "code": "sso_error", "message": "Missing email or oid in id_token" } }),
+            ),
         ));
     }
 
@@ -326,9 +340,11 @@ async fn azure_callback(
         Some(u) if !u.is_active => {
             return Err((
                 StatusCode::FORBIDDEN,
-                Json(json!({ "error": { "code": "account_disabled", "message": "Account is disabled" } })),
+                Json(
+                    json!({ "error": { "code": "account_disabled", "message": "Account is disabled" } }),
+                ),
             ));
-        }
+        },
         Some(u) => u,
         None => {
             // Auto-create user with role=operator, auth_provider=azure_sso
@@ -372,22 +388,24 @@ async fn azure_callback(
                 is_active: true,
                 mfa_enabled: false,
             }
-        }
+        },
     };
 
     // Update last_login_at and azure_oid
-    sqlx::query("UPDATE users SET last_login_at = NOW(), azure_oid = COALESCE(azure_oid, $1) WHERE id = $2")
-        .bind(&oid)
-        .bind(user.id)
-        .execute(&state.db)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "Failed to update last_login_at");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
-            )
-        })?;
+    sqlx::query(
+        "UPDATE users SET last_login_at = NOW(), azure_oid = COALESCE(azure_oid, $1) WHERE id = $2",
+    )
+    .bind(&oid)
+    .bind(user.id)
+    .execute(&state.db)
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, "Failed to update last_login_at");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+        )
+    })?;
 
     // Issue JWT access token + refresh token
     let access_ttl = state.config.security.jwt_access_ttl_secs as i64;
@@ -466,6 +484,5 @@ fn decode_jwt_payload(token: &str) -> Result<IdTokenClaims, String> {
         .decode(&payload_b64_padded)
         .map_err(|e| format!("Base64 decode error: {}", e))?;
 
-    serde_json::from_slice(&payload_bytes)
-        .map_err(|e| format!("JSON parse error: {}", e))
+    serde_json::from_slice(&payload_bytes).map_err(|e| format!("JSON parse error: {}", e))
 }

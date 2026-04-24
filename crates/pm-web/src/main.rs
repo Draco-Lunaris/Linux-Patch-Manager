@@ -2,37 +2,18 @@
 
 mod routes;
 
-use axum::{
-    extract::State,
-    http::StatusCode,
-    middleware,
-    response::Json,
-    routing::get,
-    Router,
-};
+use axum::{extract::State, http::StatusCode, middleware, response::Json, routing::get, Router};
 use dashmap::DashMap;
-use pm_core::{
-    config::AppConfig,
-    db,
-    logging,
-    request_id::request_id_middleware,
-};
 use pm_auth::{
     jwt,
-    rbac::{AuthConfig, require_auth},
+    rbac::{require_auth, AuthConfig},
 };
-use routes::ws::WsTicket;
+use pm_core::{config::AppConfig, db, logging, request_id::request_id_middleware};
 use routes::azure_sso::SsoSession;
+use routes::ws::WsTicket;
 use serde_json::{json, Value};
-use std::{
-    net::SocketAddr,
-    sync::Arc,
-    time::Duration,
-};
-use tower_http::{
-    services::ServeDir,
-    trace::TraceLayer,
-};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
+use tower_http::{services::ServeDir, trace::TraceLayer};
 
 /// Shared application state threaded through Axum.
 #[derive(Clone)]
@@ -60,7 +41,10 @@ async fn main() -> anyhow::Result<()> {
     });
 
     logging::init(&config.logging);
-    tracing::info!(version = env!("CARGO_PKG_VERSION"), "patch-manager-web starting");
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        "patch-manager-web starting"
+    );
 
     let signing_key_pem = jwt::load_signing_key(&config.security.jwt_signing_key_path)
         .unwrap_or_else(|e| {
@@ -68,8 +52,8 @@ async fn main() -> anyhow::Result<()> {
             String::new()
         });
 
-    let verify_key_pem = jwt::load_verify_key(&config.security.jwt_verify_key_path)
-        .unwrap_or_else(|e| {
+    let verify_key_pem =
+        jwt::load_verify_key(&config.security.jwt_verify_key_path).unwrap_or_else(|e| {
             tracing::warn!(error = %e, "JWT verify key not found (dev mode)");
             String::new()
         });
@@ -159,7 +143,10 @@ pub fn build_router(state: AppState) -> Router {
         // Patch jobs
         .nest("/jobs", routes::jobs::router())
         // Maintenance windows (nested under hosts path param)
-        .nest("/hosts/:host_id/maintenance-windows", routes::maintenance_windows::router())
+        .nest(
+            "/hosts/:host_id/maintenance-windows",
+            routes::maintenance_windows::router(),
+        )
         // CA root certificate download
         .nest("/ca", routes::ca::ca_router())
         // Certificate list / renew / revoke
@@ -187,9 +174,7 @@ pub fn build_router(state: AppState) -> Router {
         // WebSocket browser endpoint — ticket-authenticated, outside JWT middleware
         .merge(routes::ws::ws_router())
         // Serve React SPA
-        .fallback_service(
-            ServeDir::new(&static_dir).append_index_html_on_directories(true),
-        )
+        .fallback_service(ServeDir::new(&static_dir).append_index_html_on_directories(true))
         .layer(middleware::from_fn(request_id_middleware))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
@@ -199,5 +184,9 @@ async fn health_handler(State(state): State<AppState>) -> Result<Json<Value>, St
     let db_ok = sqlx::query("SELECT 1").execute(&state.db).await.is_ok();
     let status = if db_ok { "healthy" } else { "degraded" };
     let body = json!({ "service": "patch-manager-web", "version": env!("CARGO_PKG_VERSION"), "status": status, "database": if db_ok { "ok" } else { "error" } });
-    if db_ok { Ok(Json(body)) } else { Err(StatusCode::SERVICE_UNAVAILABLE) }
+    if db_ok {
+        Ok(Json(body))
+    } else {
+        Err(StatusCode::SERVICE_UNAVAILABLE)
+    }
 }

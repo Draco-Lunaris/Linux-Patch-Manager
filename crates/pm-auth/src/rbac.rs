@@ -143,11 +143,7 @@ fn forbidden(message: &str) -> Response {
 ///
 /// Inserts `AuthUser` into request extensions on success.
 /// Rejects with 401 if token is missing/invalid, 403 if IP is blocked.
-pub async fn require_auth(
-    auth_config: Arc<AuthConfig>,
-    mut req: Request,
-    next: Next,
-) -> Response {
+pub async fn require_auth(auth_config: Arc<AuthConfig>, mut req: Request, next: Next) -> Response {
     // IP whitelist check
     if let Some(ip) = extract_remote_ip(req.headers()) {
         if !auth_config.is_ip_allowed(&ip) {
@@ -168,7 +164,7 @@ pub async fn require_auth(
         Err(e) => {
             tracing::debug!(error = %e, "JWT validation failed");
             return unauthorized("Invalid token");
-        }
+        },
     };
 
     let role = match UserRole::from_str(&claims.role) {

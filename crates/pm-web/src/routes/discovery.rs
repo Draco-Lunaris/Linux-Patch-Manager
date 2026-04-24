@@ -11,11 +11,11 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use pm_auth::rbac::AuthUser;
 use pm_core::{
     audit::{log_event, AuditAction},
     models::{DiscoveryCidrRequest, DiscoveryResult, RegisterDiscoveredRequest},
 };
-use pm_auth::rbac::AuthUser;
 use serde_json::{json, Value};
 use std::{
     net::{IpAddr, TcpStream},
@@ -46,13 +46,18 @@ async fn start_cidr_scan(
     Json(req): Json<DiscoveryCidrRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     if !auth.role.is_admin() {
-        return Err((StatusCode::FORBIDDEN, Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } }))));
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } })),
+        ));
     }
 
-    let cidr: ipnet::IpNet = req.cidr.parse().map_err(|_| (
-        StatusCode::BAD_REQUEST,
-        Json(json!({ "error": { "code": "bad_request", "message": "Invalid CIDR range" } }))
-    ))?;
+    let cidr: ipnet::IpNet = req.cidr.parse().map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": { "code": "bad_request", "message": "Invalid CIDR range" } })),
+        )
+    })?;
 
     let agent_port = req.agent_port.unwrap_or(12443) as u16;
     let scan_id = Uuid::new_v4();
@@ -67,13 +72,23 @@ async fn start_cidr_scan(
         run_cidr_scan(pool, scan_id_clone, cidr, agent_port).await;
     });
 
-    log_event(&state.db, AuditAction::DiscoveryScanStarted,
-        Some(auth.user_id), Some(&auth.username),
-        Some("discovery"), Some(&scan_id.to_string()),
-        json!({ "cidr": cidr_str }), None, None).await;
+    log_event(
+        &state.db,
+        AuditAction::DiscoveryScanStarted,
+        Some(auth.user_id),
+        Some(&auth.username),
+        Some("discovery"),
+        Some(&scan_id.to_string()),
+        json!({ "cidr": cidr_str }),
+        None,
+        None,
+    )
+    .await;
 
     tracing::info!(scan_id = %scan_id, cidr = %req.cidr, "CIDR scan started");
-    Ok(Json(json!({ "scan_id": scan_id, "message": "Discovery scan started", "cidr": req.cidr })))
+    Ok(Json(
+        json!({ "scan_id": scan_id, "message": "Discovery scan started", "cidr": req.cidr }),
+    ))
 }
 
 /// Background CIDR scanner.
@@ -103,12 +118,7 @@ async fn run_cidr_scan(pool: sqlx::PgPool, scan_id: Uuid, cidr: ipnet::IpNet, po
 }
 
 /// Probe a single IP:port and store the result if the port is open.
-async fn probe_and_store(
-    pool: sqlx::PgPool,
-    scan_id: Uuid,
-    ip: IpAddr,
-    port: u16,
-) -> Option<()> {
+async fn probe_and_store(pool: sqlx::PgPool, scan_id: Uuid, ip: IpAddr, port: u16) -> Option<()> {
     let addr = format!("{ip}:{port}");
 
     // TCP connect probe (blocking, run in thread pool)
@@ -116,9 +126,13 @@ async fn probe_and_store(
     let addr_clone = addr.clone();
     let open = task::spawn_blocking(move || {
         TcpStream::connect_timeout(
-            &match addr_clone.parse() { Ok(a) => a, Err(_) => return false },
+            &match addr_clone.parse() {
+                Ok(a) => a,
+                Err(_) => return false,
+            },
             Duration::from_secs(PROBE_TIMEOUT_SECS),
-        ).is_ok()
+        )
+        .is_ok()
     })
     .await
     .unwrap_or(false);
@@ -132,7 +146,8 @@ async fn probe_and_store(
     let fqdn = task::spawn_blocking(move || {
         use std::net::ToSocketAddrs;
         let addr = format!("{ip_clone}:{port}");
-        addr.to_socket_addrs().ok()
+        addr.to_socket_addrs()
+            .ok()
             .and_then(|mut a| a.next())
             .and_then(|_| dns_lookup_for_ip(ip_clone))
     })
@@ -163,7 +178,10 @@ fn dns_lookup_for_ip(ip: IpAddr) -> Option<String> {
     // Standard library doesn't have reverse lookup; use getaddrinfo via format
     let host = format!("{ip}");
     // Best-effort: try to resolve numeric address to hostname
-    (host + ":0").to_socket_addrs().ok()?.next()
+    (host + ":0")
+        .to_socket_addrs()
+        .ok()?
+        .next()
         .map(|a| a.ip().to_string())
         .filter(|s| s != &ip.to_string())
 }
@@ -188,7 +206,10 @@ async fn get_scan_results(
     .map(Json)
     .map_err(|e| {
         tracing::error!(error = %e);
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+        )
     })
 }
 
@@ -201,7 +222,10 @@ async fn register_discovered_host(
     Json(req): Json<RegisterDiscoveredRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     if !auth.role.is_admin() {
-        return Err((StatusCode::FORBIDDEN, Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } }))));
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } })),
+        ));
     }
 
     // Fetch discovery result
@@ -213,7 +237,12 @@ async fn register_discovered_host(
     .bind(id)
     .fetch_optional(&state.db)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": { "code": "internal_error", "message": e.to_string() } }))))?;
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": e.to_string() } })),
+        )
+    })?;
 
     let result = result.ok_or_else(|| (
         StatusCode::NOT_FOUND,
@@ -235,7 +264,12 @@ async fn register_discovered_host(
     .bind(result.agent_port)
     .fetch_one(&state.db)
     .await
-    .map_err(|e| (StatusCode::CONFLICT, Json(json!({ "error": { "code": "conflict", "message": e.to_string() } }))))?;
+    .map_err(|e| {
+        (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": { "code": "conflict", "message": e.to_string() } })),
+        )
+    })?;
 
     // Assign to groups
     if let Some(group_ids) = &req.group_ids {
@@ -247,10 +281,24 @@ async fn register_discovered_host(
 
     // Mark as registered
     let _ = sqlx::query("UPDATE discovery_results SET registered = TRUE WHERE id = $1")
-        .bind(id).execute(&state.db).await;
+        .bind(id)
+        .execute(&state.db)
+        .await;
 
-    log_event(&state.db, AuditAction::HostRegistered, Some(auth.user_id), Some(&auth.username),
-        Some("host"), Some(&host_id.to_string()), json!({ "from_discovery": true, "ip": result.ip_address }), None, None).await;
+    log_event(
+        &state.db,
+        AuditAction::HostRegistered,
+        Some(auth.user_id),
+        Some(&auth.username),
+        Some("host"),
+        Some(&host_id.to_string()),
+        json!({ "from_discovery": true, "ip": result.ip_address }),
+        None,
+        None,
+    )
+    .await;
 
-    Ok(Json(json!({ "host_id": host_id, "message": "Host registered from discovery" })))
+    Ok(Json(
+        json!({ "host_id": host_id, "message": "Host registered from discovery" }),
+    ))
 }

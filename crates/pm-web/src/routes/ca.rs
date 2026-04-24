@@ -33,8 +33,7 @@ use crate::AppState;
 
 /// Handles routes mounted at /api/v1/ca
 pub fn ca_router() -> Router<AppState> {
-    Router::new()
-        .route("/root.crt", get(download_root_ca))
+    Router::new().route("/root.crt", get(download_root_ca))
 }
 
 /// Handles routes mounted at /api/v1/certificates
@@ -84,10 +83,7 @@ struct IssueCertRequest {
 
 // ── Helper: build PEM download response ──────────────────────────────────────
 
-fn pem_response(
-    pem: String,
-    filename: &str,
-) -> Result<Response<Body>, (StatusCode, Json<Value>)> {
+fn pem_response(pem: String, filename: &str) -> Result<Response<Body>, (StatusCode, Json<Value>)> {
     let disposition = format!("attachment; filename=\"{filename}\"");
     Response::builder()
         .status(StatusCode::OK)
@@ -174,7 +170,7 @@ async fn list_certificates(
             .bind(st)
             .fetch_all(&state.db)
             .await
-        }
+        },
         (Some(hid), None) => {
             sqlx::query_as::<_, CertRow>(
                 r#"SELECT id, host_id, serial_number, common_name,
@@ -187,7 +183,7 @@ async fn list_certificates(
             .bind(hid)
             .fetch_all(&state.db)
             .await
-        }
+        },
         (None, Some(st)) => {
             sqlx::query_as::<_, CertRow>(
                 r#"SELECT id, host_id, serial_number, common_name,
@@ -200,7 +196,7 @@ async fn list_certificates(
             .bind(st)
             .fetch_all(&state.db)
             .await
-        }
+        },
         (None, None) => {
             sqlx::query_as::<_, CertRow>(
                 r#"SELECT id, host_id, serial_number, common_name,
@@ -211,7 +207,7 @@ async fn list_certificates(
             )
             .fetch_all(&state.db)
             .await
-        }
+        },
     }
     .map_err(db_error)?;
 
@@ -259,7 +255,7 @@ async fn download_client_cert(
             )
             .await;
             pem_response(pem, "client.crt")
-        }
+        },
         None => Err((
             StatusCode::NOT_FOUND,
             Json(json!({
@@ -328,25 +324,23 @@ async fn renew_cert(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
 
-    let issued = state
-        .ca
-        .renew_cert(cert_id, &state.db)
-        .await
-        .map_err(|e| {
-            let msg = e.to_string();
-            tracing::error!(error = %e, %cert_id, "Failed to renew cert");
-            if msg.contains("not found") {
-                (
-                    StatusCode::NOT_FOUND,
-                    Json(json!({ "error": { "code": "not_found", "message": "Certificate not found" } })),
-                )
-            } else {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": { "code": "internal_error", "message": msg } })),
-                )
-            }
-        })?;
+    let issued = state.ca.renew_cert(cert_id, &state.db).await.map_err(|e| {
+        let msg = e.to_string();
+        tracing::error!(error = %e, %cert_id, "Failed to renew cert");
+        if msg.contains("not found") {
+            (
+                StatusCode::NOT_FOUND,
+                Json(
+                    json!({ "error": { "code": "not_found", "message": "Certificate not found" } }),
+                ),
+            )
+        } else {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": msg } })),
+            )
+        }
+    })?;
 
     log_event(
         &state.db,

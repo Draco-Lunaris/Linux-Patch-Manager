@@ -15,11 +15,11 @@ use axum::{
     routing::{delete, get, post, put},
     Router,
 };
+use pm_auth::{hash_password, rbac::AuthUser, session::force_logout};
 use pm_core::{
     audit::{log_event, AuditAction},
-    models::{User, CreateUserRequest, UpdateUserRequest},
+    models::{CreateUserRequest, UpdateUserRequest, User},
 };
-use pm_auth::{hash_password, rbac::AuthUser, session::force_logout};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -38,7 +38,10 @@ async fn list_users(
     auth: AuthUser,
 ) -> Result<Json<Vec<User>>, (StatusCode, Json<Value>)> {
     if !auth.role.is_admin() {
-        return Err((StatusCode::FORBIDDEN, Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } }))));
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } })),
+        ));
     }
 
     sqlx::query_as::<_, User>(
@@ -52,7 +55,10 @@ async fn list_users(
     .map(Json)
     .map_err(|e| {
         tracing::error!(error = %e);
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+        )
     })
 }
 
@@ -62,14 +68,24 @@ async fn create_user(
     Json(req): Json<CreateUserRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     if !auth.role.is_admin() {
-        return Err((StatusCode::FORBIDDEN, Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } }))));
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } })),
+        ));
     }
 
     let hash = hash_password(&req.password).map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": { "code": "internal_error", "message": e.to_string() } })))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": e.to_string() } })),
+        )
     })?;
 
-    let role = if req.role == "admin" { "admin" } else { "operator" };
+    let role = if req.role == "admin" {
+        "admin"
+    } else {
+        "operator"
+    };
 
     let id: Uuid = sqlx::query_scalar(
         r#"INSERT INTO users (username, display_name, email, role, auth_provider, password_hash)
@@ -84,12 +100,29 @@ async fn create_user(
     .fetch_one(&state.db)
     .await
     .map_err(|e| {
-        let msg = if e.to_string().contains("unique") { "Username or email already exists".to_string() } else { "Database error".to_string() };
-        (StatusCode::CONFLICT, Json(json!({ "error": { "code": "conflict", "message": msg } })))
+        let msg = if e.to_string().contains("unique") {
+            "Username or email already exists".to_string()
+        } else {
+            "Database error".to_string()
+        };
+        (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": { "code": "conflict", "message": msg } })),
+        )
     })?;
 
-    log_event(&state.db, AuditAction::UserCreated, Some(auth.user_id), Some(&auth.username),
-        Some("user"), Some(&id.to_string()), json!({ "username": req.username }), None, None).await;
+    log_event(
+        &state.db,
+        AuditAction::UserCreated,
+        Some(auth.user_id),
+        Some(&auth.username),
+        Some("user"),
+        Some(&id.to_string()),
+        json!({ "username": req.username }),
+        None,
+        None,
+    )
+    .await;
 
     Ok(Json(json!({ "id": id, "message": "User created" })))
 }
@@ -108,12 +141,18 @@ async fn get_user(
 ) -> Result<Json<User>, (StatusCode, Json<Value>)> {
     // Users can see themselves; admin can see anyone
     if !auth.role.is_admin() && auth.user_id != id {
-        return Err((StatusCode::FORBIDDEN, Json(json!({ "error": { "code": "forbidden", "message": "Access denied" } }))));
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": { "code": "forbidden", "message": "Access denied" } })),
+        ));
     }
     fetch_user(&state.db, id).await
 }
 
-async fn fetch_user(pool: &sqlx::PgPool, id: Uuid) -> Result<Json<User>, (StatusCode, Json<Value>)> {
+async fn fetch_user(
+    pool: &sqlx::PgPool,
+    id: Uuid,
+) -> Result<Json<User>, (StatusCode, Json<Value>)> {
     let user: Option<User> = sqlx::query_as(
         r#"SELECT id, username, display_name, email, role, auth_provider,
                   mfa_enabled, is_active, force_password_reset, last_login_at,
@@ -125,10 +164,18 @@ async fn fetch_user(pool: &sqlx::PgPool, id: Uuid) -> Result<Json<User>, (Status
     .await
     .map_err(|e| {
         tracing::error!(error = %e);
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+        )
     })?;
 
-    user.map(Json).ok_or_else(|| (StatusCode::NOT_FOUND, Json(json!({ "error": { "code": "not_found", "message": "User not found" } }))))
+    user.map(Json).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": { "code": "not_found", "message": "User not found" } })),
+        )
+    })
 }
 
 async fn update_user(
@@ -138,14 +185,25 @@ async fn update_user(
     Json(req): Json<UpdateUserRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     if !auth.role.is_admin() && auth.user_id != id {
-        return Err((StatusCode::FORBIDDEN, Json(json!({ "error": { "code": "forbidden", "message": "Access denied" } }))));
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": { "code": "forbidden", "message": "Access denied" } })),
+        ));
     }
     // Only admins can change role or active status
     if (req.role.is_some() || req.is_active.is_some()) && !auth.role.is_admin() {
-        return Err((StatusCode::FORBIDDEN, Json(json!({ "error": { "code": "forbidden", "message": "Admin role required to change role or status" } }))));
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(
+                json!({ "error": { "code": "forbidden", "message": "Admin role required to change role or status" } }),
+            ),
+        ));
     }
 
-    let role_str = req.role.as_deref().map(|r| if r == "admin" { "admin" } else { "operator" });
+    let role_str = req
+        .role
+        .as_deref()
+        .map(|r| if r == "admin" { "admin" } else { "operator" });
 
     let rows = sqlx::query(
         r#"UPDATE users SET
@@ -163,15 +221,33 @@ async fn update_user(
     .bind(id)
     .execute(&state.db)
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": { "code": "internal_error", "message": e.to_string() } }))))?
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": e.to_string() } })),
+        )
+    })?
     .rows_affected();
 
     if rows == 0 {
-        return Err((StatusCode::NOT_FOUND, Json(json!({ "error": { "code": "not_found", "message": "User not found" } }))));
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": { "code": "not_found", "message": "User not found" } })),
+        ));
     }
 
-    log_event(&state.db, AuditAction::UserUpdated, Some(auth.user_id), Some(&auth.username),
-        Some("user"), Some(&id.to_string()), json!({}), None, None).await;
+    log_event(
+        &state.db,
+        AuditAction::UserUpdated,
+        Some(auth.user_id),
+        Some(&auth.username),
+        Some("user"),
+        Some(&id.to_string()),
+        json!({}),
+        None,
+        None,
+    )
+    .await;
 
     Ok(Json(json!({ "message": "User updated" })))
 }
@@ -182,23 +258,51 @@ async fn delete_user(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     if !auth.role.is_admin() {
-        return Err((StatusCode::FORBIDDEN, Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } }))));
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } })),
+        ));
     }
     if auth.user_id == id {
-        return Err((StatusCode::BAD_REQUEST, Json(json!({ "error": { "code": "bad_request", "message": "Cannot delete your own account" } }))));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(
+                json!({ "error": { "code": "bad_request", "message": "Cannot delete your own account" } }),
+            ),
+        ));
     }
 
     let rows = sqlx::query("DELETE FROM users WHERE id = $1")
-        .bind(id).execute(&state.db).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": { "code": "internal_error", "message": e.to_string() } }))))?
+        .bind(id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": e.to_string() } })),
+            )
+        })?
         .rows_affected();
 
     if rows == 0 {
-        return Err((StatusCode::NOT_FOUND, Json(json!({ "error": { "code": "not_found", "message": "User not found" } }))));
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": { "code": "not_found", "message": "User not found" } })),
+        ));
     }
 
-    log_event(&state.db, AuditAction::UserDeleted, Some(auth.user_id), Some(&auth.username),
-        Some("user"), Some(&id.to_string()), json!({}), None, None).await;
+    log_event(
+        &state.db,
+        AuditAction::UserDeleted,
+        Some(auth.user_id),
+        Some(&auth.username),
+        Some("user"),
+        Some(&id.to_string()),
+        json!({}),
+        None,
+        None,
+    )
+    .await;
 
     Ok(Json(json!({ "message": "User deleted" })))
 }
@@ -209,11 +313,20 @@ async fn revoke_user_sessions(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     if !auth.role.is_admin() {
-        return Err((StatusCode::FORBIDDEN, Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } }))));
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } })),
+        ));
     }
 
-    let count = force_logout(&state.db, id).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": { "code": "internal_error", "message": e.to_string() } }))))?;
+    let count = force_logout(&state.db, id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": e.to_string() } })),
+        )
+    })?;
 
-    Ok(Json(json!({ "message": "Sessions revoked", "count": count })))
+    Ok(Json(
+        json!({ "message": "Sessions revoked", "count": count }),
+    ))
 }

@@ -123,12 +123,10 @@ pub async fn rotate(
     }
 
     // Revoke old token
-    sqlx::query(
-        "UPDATE refresh_tokens SET revoked = TRUE, revoked_at = NOW() WHERE id = $1",
-    )
-    .bind(stored.id)
-    .execute(pool)
-    .await?;
+    sqlx::query("UPDATE refresh_tokens SET revoked = TRUE, revoked_at = NOW() WHERE id = $1")
+        .bind(stored.id)
+        .execute(pool)
+        .await?;
 
     // Issue new token
     let new_token = issue(pool, stored.user_id, user_agent, ip_address).await?;
@@ -138,10 +136,7 @@ pub async fn rotate(
 }
 
 /// Revoke all refresh tokens for a user (force logout).
-pub async fn revoke_all_for_user(
-    pool: &PgPool,
-    user_id: Uuid,
-) -> Result<u64, RefreshError> {
+pub async fn revoke_all_for_user(pool: &PgPool, user_id: Uuid) -> Result<u64, RefreshError> {
     let result = sqlx::query(
         "UPDATE refresh_tokens SET revoked = TRUE, revoked_at = NOW() WHERE user_id = $1 AND revoked = FALSE",
     )
@@ -154,10 +149,7 @@ pub async fn revoke_all_for_user(
 }
 
 /// Revoke a single refresh token by its raw value.
-pub async fn revoke(
-    pool: &PgPool,
-    raw_token: &str,
-) -> Result<(), RefreshError> {
+pub async fn revoke(pool: &PgPool, raw_token: &str) -> Result<(), RefreshError> {
     let hash = hex::encode(Sha256::digest(raw_token.as_bytes()));
 
     sqlx::query(

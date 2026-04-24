@@ -5,27 +5,18 @@
 //! DB row, and fire `pg_notify('job_update', payload_json)` so the browser WS
 //! handler can forward the event to connected clients.
 
-use std::{
-    collections::HashSet,
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use anyhow::Context;
 use futures::StreamExt;
 use rustls::{
     pki_types::{CertificateDer, PrivateKeyDer},
-    ClientConfig as TlsClientConfig,
-    RootCertStore,
+    ClientConfig as TlsClientConfig, RootCertStore,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use tokio::sync::Mutex;
-use tokio_tungstenite::{
-    connect_async_tls_with_config,
-    tungstenite::protocol::Message,
-    Connector,
-};
+use tokio_tungstenite::{connect_async_tls_with_config, tungstenite::protocol::Message, Connector};
 use uuid::Uuid;
 
 use pm_agent_client::client::DEFAULT_AGENT_PORT;
@@ -84,7 +75,7 @@ pub async fn run_ws_relay(pool: PgPool, config: Arc<AppConfig>) {
             Err(e) => {
                 tracing::error!(error = %e, "ws_relay: DB poll failed");
                 continue;
-            }
+            },
         };
 
         for row in rows {
@@ -101,12 +92,12 @@ pub async fn run_ws_relay(pool: PgPool, config: Arc<AppConfig>) {
                 Err(e) => {
                     tracing::error!(error = %e, "ws_relay: TLS config error");
                     continue;
-                }
+                },
             };
 
             active.lock().await.insert(key);
 
-            let pool_c   = pool.clone();
+            let pool_c = pool.clone();
             let active_c = active.clone();
 
             tokio::spawn(async move {
@@ -164,12 +155,15 @@ async fn query_running_jobs(pool: &PgPool) -> anyhow::Result<Vec<RunningHostJob>
 async fn build_tls_config(config: &AppConfig) -> anyhow::Result<TlsClientConfig> {
     let sec = &config.security;
 
-    let cert_pem = tokio::fs::read(&sec.agent_client_cert_path).await
+    let cert_pem = tokio::fs::read(&sec.agent_client_cert_path)
+        .await
         .with_context(|| format!("read agent client cert '{}'", sec.agent_client_cert_path))?;
-    let key_pem  = tokio::fs::read(&sec.agent_client_key_path).await
-        .with_context(|| format!("read agent client key '{}'" , sec.agent_client_key_path))?;
-    let ca_pem   = tokio::fs::read(&sec.ca_cert_path).await
-        .with_context(|| format!("read CA cert '{}'",           sec.ca_cert_path))?;
+    let key_pem = tokio::fs::read(&sec.agent_client_key_path)
+        .await
+        .with_context(|| format!("read agent client key '{}'", sec.agent_client_key_path))?;
+    let ca_pem = tokio::fs::read(&sec.ca_cert_path)
+        .await
+        .with_context(|| format!("read CA cert '{}'", sec.ca_cert_path))?;
 
     // Parse client certificate chain.
     let client_certs: Vec<CertificateDer<'static>> = {
@@ -207,8 +201,8 @@ async fn build_tls_config(config: &AppConfig) -> anyhow::Result<TlsClientConfig>
 // ── Per-job relay ─────────────────────────────────────────────────────────────
 
 async fn relay_one_job(
-    pool:       &PgPool,
-    row:        &RunningHostJob,
+    pool: &PgPool,
+    row: &RunningHostJob,
     tls_config: Arc<TlsClientConfig>,
 ) -> anyhow::Result<()> {
     let url = format!(
@@ -229,7 +223,7 @@ async fn relay_one_job(
 
     while let Some(frame) = stream.next().await {
         let frame = match frame {
-            Ok(f)  => f,
+            Ok(f) => f,
             Err(e) => {
                 tracing::warn!(
                     error   = %e,
@@ -238,16 +232,16 @@ async fn relay_one_job(
                     "WS relay: stream error"
                 );
                 break;
-            }
+            },
         };
 
         let text = match frame {
-            Message::Text(t)   => t.to_string(),
+            Message::Text(t) => t.to_string(),
             Message::Binary(b) => String::from_utf8(b.into()).unwrap_or_default(),
-            Message::Close(_)  => {
+            Message::Close(_) => {
                 tracing::info!(job_id = %row.job_id, "Agent WS closed cleanly");
                 break;
-            }
+            },
             _ => continue,
         };
 
@@ -256,14 +250,14 @@ async fn relay_one_job(
         }
 
         let event: AgentWsEvent = match serde_json::from_str(&text) {
-            Ok(e)  => e,
+            Ok(e) => e,
             Err(e) => {
                 tracing::warn!(
                     error = %e, raw = %text,
                     "WS relay: unparseable agent frame"
                 );
                 continue;
-            }
+            },
         };
 
         process_event(pool, row, &event).await;
@@ -287,17 +281,17 @@ async fn relay_one_job(
 async fn process_event(pool: &PgPool, row: &RunningHostJob, event: &AgentWsEvent) {
     // Map agent status string to DB job_status enum value.
     let db_status = match event.status.as_str() {
-        "running"   => "running",
+        "running" => "running",
         "succeeded" => "succeeded",
-        "failed"    => "failed",
+        "failed" => "failed",
         "cancelled" => "cancelled",
         other => {
             tracing::warn!(status = %other, "WS relay: unknown agent status");
             return;
-        }
+        },
     };
 
-    let output    = event.output.as_deref().unwrap_or("");
+    let output = event.output.as_deref().unwrap_or("");
     let error_msg = event.error.as_deref();
 
     // Determine timestamps based on terminal state.
@@ -359,20 +353,20 @@ async fn process_event(pool: &PgPool, row: &RunningHostJob, event: &AgentWsEvent
 
     // Fire pg_notify so browser WS handlers forward the event.
     let payload = NotifyPayload {
-        job_id:       row.job_id.to_string(),
-        host_id:      row.host_id.to_string(),
-        status:       db_status.to_string(),
-        output:       event.output.clone(),
+        job_id: row.job_id.to_string(),
+        host_id: row.host_id.to_string(),
+        status: db_status.to_string(),
+        output: event.output.clone(),
         error_message: event.error.clone(),
         agent_job_id: row.agent_job_id.clone(),
     };
 
     let payload_json = match serde_json::to_string(&payload) {
-        Ok(s)  => s,
+        Ok(s) => s,
         Err(e) => {
             tracing::error!(error = %e, "WS relay: failed to serialize notify payload");
             return;
-        }
+        },
     };
 
     if let Err(e) = sqlx::query("SELECT pg_notify('job_update', $1)")
@@ -418,11 +412,11 @@ async fn update_parent_job_status(pool: &PgPool, job_id: Uuid) {
     .fetch_one(pool)
     .await
     {
-        Ok(n)  => n,
+        Ok(n) => n,
         Err(e) => {
             tracing::error!(error = %e, %job_id, "update_parent_job_status: count query failed");
             return;
-        }
+        },
     };
 
     if pending > 0 {
@@ -437,14 +431,18 @@ async fn update_parent_job_status(pool: &PgPool, job_id: Uuid) {
     .fetch_one(pool)
     .await
     {
-        Ok(n)  => n,
+        Ok(n) => n,
         Err(e) => {
             tracing::error!(error = %e, %job_id, "update_parent_job_status: failed-count query failed");
             return;
-        }
+        },
     };
 
-    let final_status = if failed_count > 0 { "failed" } else { "succeeded" };
+    let final_status = if failed_count > 0 {
+        "failed"
+    } else {
+        "succeeded"
+    };
 
     if let Err(e) = sqlx::query(
         "UPDATE patch_jobs SET status = $1::job_status, completed_at = NOW() WHERE id = $2",

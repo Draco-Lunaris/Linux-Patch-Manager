@@ -80,7 +80,8 @@ async fn load_notification_settings(pool: &PgPool) -> NotificationSettings {
             .unwrap_or_default()
     };
 
-    let recipients: Vec<String> = serde_json::from_str(&get("notification_email_recipients")).unwrap_or_default();
+    let recipients: Vec<String> =
+        serde_json::from_str(&get("notification_email_recipients")).unwrap_or_default();
 
     NotificationSettings {
         email_enabled: get("notification_email_enabled") == "true",
@@ -90,9 +91,7 @@ async fn load_notification_settings(pool: &PgPool) -> NotificationSettings {
 }
 
 /// Build an async SMTP transport from settings.
-fn build_transport(
-    settings: &SmtpSettings,
-) -> Result<AsyncSmtpTransport<Tokio1Executor>, String> {
+fn build_transport(settings: &SmtpSettings) -> Result<AsyncSmtpTransport<Tokio1Executor>, String> {
     match settings.tls_mode.as_str() {
         "tls" => {
             let mut builder = AsyncSmtpTransport::<Tokio1Executor>::relay(&settings.host)
@@ -105,7 +104,7 @@ fn build_transport(
                 ));
             }
             Ok(builder.build())
-        }
+        },
         "starttls" => {
             let mut builder = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&settings.host)
                 .map_err(|e| format!("STARTTLS relay error: {}", e))?;
@@ -117,11 +116,12 @@ fn build_transport(
                 ));
             }
             Ok(builder.build())
-        }
+        },
         _ => {
             // "none" — plaintext / no TLS
-            let mut builder = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&settings.host)
-                .port(settings.port);
+            let mut builder =
+                AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&settings.host)
+                    .port(settings.port);
             if !settings.username.is_empty() {
                 builder = builder.credentials(Credentials::new(
                     settings.username.clone(),
@@ -129,21 +129,17 @@ fn build_transport(
                 ));
             }
             Ok(builder.build())
-        }
+        },
     }
 }
 
 /// Send an email notification. Returns true if the email was sent successfully.
-async fn send_email(
-    pool: &PgPool,
-    subject: &str,
-    body: &str,
-) -> bool {
+async fn send_email(pool: &PgPool, subject: &str, body: &str) -> bool {
     let smtp = match load_smtp_settings(pool).await {
         s if !s.enabled => {
             tracing::debug!("SMTP not enabled, skipping email notification");
             return false;
-        }
+        },
         s => s,
     };
 
@@ -169,7 +165,7 @@ async fn send_email(
         Err(e) => {
             tracing::error!(error = %e, "Invalid from address for email notification");
             return false;
-        }
+        },
     };
 
     let mut builder = Message::builder()
@@ -184,7 +180,7 @@ async fn send_email(
             Err(e) => {
                 tracing::error!(error = %e, recipient = %recipient, "Invalid recipient address");
                 continue;
-            }
+            },
         };
         builder = builder.to(mailbox);
     }
@@ -194,7 +190,7 @@ async fn send_email(
         Err(e) => {
             tracing::error!(error = %e, "Failed to build email message");
             return false;
-        }
+        },
     };
 
     let transport = match build_transport(&smtp) {
@@ -202,18 +198,18 @@ async fn send_email(
         Err(e) => {
             tracing::error!(error = %e, "Failed to build SMTP transport");
             return false;
-        }
+        },
     };
 
     match transport.send(email).await {
         Ok(_) => {
             tracing::info!(subject, "Email notification sent successfully");
             true
-        }
+        },
         Err(e) => {
             tracing::error!(error = %e, subject, "Failed to send email notification");
             false
-        }
+        },
     }
 }
 
@@ -300,7 +296,10 @@ pub async fn send_maintenance_window_reminder_email(
     window_label: &str,
     start_at: &str,
 ) {
-    let subject = format!("[Patch Manager] Upcoming Maintenance Window: {}", window_label);
+    let subject = format!(
+        "[Patch Manager] Upcoming Maintenance Window: {}",
+        window_label
+    );
     let body = format!(
         "Maintenance window reminder:\n\
          Host: {host_fqdn}\n\

@@ -9,10 +9,7 @@ use std::sync::Arc;
 use pm_agent_client::AgentClient;
 use pm_core::config::AppConfig;
 use sqlx::{FromRow, PgPool};
-use tokio::{
-    sync::Semaphore,
-    time,
-};
+use tokio::{sync::Semaphore, time};
 use uuid::Uuid;
 
 use crate::agent_loader::load_agent_certs;
@@ -34,10 +31,7 @@ pub async fn run_patch_poller(pool: PgPool, config: Arc<AppConfig>) {
     let interval_secs = config.worker.patch_poll_interval_secs;
     let mut ticker = time::interval(std::time::Duration::from_secs(interval_secs));
 
-    tracing::info!(
-        interval_secs,
-        "Patch poller started"
-    );
+    tracing::info!(interval_secs, "Patch poller started");
 
     loop {
         ticker.tick().await;
@@ -47,7 +41,7 @@ pub async fn run_patch_poller(pool: PgPool, config: Arc<AppConfig>) {
             Err(e) => {
                 tracing::error!(error = %e, "Patch poller: failed to load agent certs — skipping cycle");
                 continue;
-            }
+            },
         };
 
         let client_cert = Arc::new(certs.client_cert);
@@ -64,7 +58,7 @@ pub async fn run_patch_poller(pool: PgPool, config: Arc<AppConfig>) {
             Err(e) => {
                 tracing::error!(error = %e, "Patch poller: failed to fetch hosts");
                 continue;
-            }
+            },
         };
 
         if hosts.is_empty() {
@@ -102,16 +96,11 @@ pub async fn run_patch_poller(pool: PgPool, config: Arc<AppConfig>) {
                 Err(e) => {
                     tracing::error!(error = %e, "Patch poller task panicked");
                     failed += 1;
-                }
+                },
             }
         }
 
-        tracing::info!(
-            total,
-            succeeded,
-            failed,
-            "Patch poll cycle complete"
-        );
+        tracing::info!(total, succeeded, failed, "Patch poll cycle complete");
     }
 }
 
@@ -135,7 +124,7 @@ async fn poll_host_patches(
         Err(e) => {
             tracing::warn!(host_id = %host.id, error = %e, "Patch poller: failed to build AgentClient");
             return false;
-        }
+        },
     };
 
     // Fetch patches and packages concurrently.
@@ -147,7 +136,7 @@ async fn poll_host_patches(
         Err(e) => {
             tracing::warn!(host_id = %host.id, error = %e, "Patch poller: patches() failed");
             return false;
-        }
+        },
     };
 
     let packages_data = match packages_result {
@@ -155,7 +144,7 @@ async fn poll_host_patches(
         Err(e) => {
             tracing::warn!(host_id = %host.id, error = %e, "Patch poller: packages_upgradable() failed");
             return false;
-        }
+        },
     };
 
     let available_patches = serde_json::to_value(&patches_data.patches).unwrap_or_default();
@@ -188,12 +177,10 @@ async fn poll_host_patches(
     }
 
     // Update hosts.last_patch_at.
-    if let Err(e) = sqlx::query(
-        "UPDATE hosts SET last_patch_at = NOW() WHERE id = $1",
-    )
-    .bind(host.id)
-    .execute(&pool)
-    .await
+    if let Err(e) = sqlx::query("UPDATE hosts SET last_patch_at = NOW() WHERE id = $1")
+        .bind(host.id)
+        .execute(&pool)
+        .await
     {
         tracing::error!(host_id = %host.id, error = %e, "Patch poller: failed to update last_patch_at");
     }

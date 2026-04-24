@@ -4,8 +4,8 @@
 //! GET  /api/v1/ws/jobs    — browser WebSocket endpoint (ticket-authenticated)
 
 use axum::{
-    extract::{Query, State, WebSocketUpgrade},
     extract::ws::{Message, WebSocket},
+    extract::{Query, State, WebSocketUpgrade},
     http::StatusCode,
     response::{Json, Response},
     routing::{get, post},
@@ -59,7 +59,6 @@ fn err(
 
 // ── POST /api/v1/ws/ticket ────────────────────────────────────────────────────
 
-
 /// Issue a single-use WebSocket authentication ticket (60 s expiry).
 pub async fn create_ticket_handler(
     State(state): State<AppState>,
@@ -109,7 +108,7 @@ pub async fn ws_handler(
                     "invalid_ticket",
                     "WebSocket ticket not found or already used",
                 ));
-            }
+            },
             Some(t) => {
                 if t.expires_at < Utc::now() {
                     drop(t);
@@ -121,7 +120,7 @@ pub async fn ws_handler(
                     ));
                 }
                 t.clone()
-            }
+            },
         }
     };
     // Single-use: remove immediately after validation.
@@ -140,11 +139,7 @@ pub async fn ws_handler(
 // ── WebSocket handler ─────────────────────────────────────────────────────────
 
 /// Drive the browser WebSocket: LISTEN on `job_update` and forward payloads.
-async fn handle_browser_ws(
-    mut socket: WebSocket,
-    db: sqlx::PgPool,
-    ticket: WsTicket,
-) {
+async fn handle_browser_ws(mut socket: WebSocket, db: sqlx::PgPool, ticket: WsTicket) {
     // Acquire a dedicated PG listener connection.
     let mut listener = match PgListener::connect_with(&db).await {
         Ok(l) => l,
@@ -156,7 +151,7 @@ async fn handle_browser_ws(
                 ))
                 .await;
             return;
-        }
+        },
     };
 
     if let Err(e) = listener.listen("job_update").await {

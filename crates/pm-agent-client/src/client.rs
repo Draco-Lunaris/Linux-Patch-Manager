@@ -22,18 +22,15 @@
 
 use std::time::Duration;
 
-use reqwest::{
-    tls::Version,
-    Certificate, ClientBuilder, Identity,
-};
+use reqwest::{tls::Version, Certificate, ClientBuilder, Identity};
 use serde::{de::DeserializeOwned, Serialize};
 use tracing::{debug, instrument};
 
 use crate::{
     error::AgentClientError,
     types::{
-        AgentEnvelope, HealthData, PackagesData, PatchesData, SystemInfoData,
-        ApplyPatchesRequest, ApplyPatchesResponse, AgentJobStatus, RollbackResponse,
+        AgentEnvelope, AgentJobStatus, ApplyPatchesRequest, ApplyPatchesResponse, HealthData,
+        PackagesData, PatchesData, RollbackResponse, SystemInfoData,
     },
 };
 
@@ -151,11 +148,7 @@ impl AgentClient {
     /// Execute a GET request against `{base_url}/{path}` with optional query
     /// parameters, deserialize the [`AgentEnvelope`], and extract the `data`
     /// field — or propagate an [`AgentClientError::ApiError`].
-    async fn get<T>(
-        &self,
-        path: &str,
-        query: &[(&str, &str)],
-    ) -> Result<T, AgentClientError>
+    async fn get<T>(&self, path: &str, query: &[(&str, &str)]) -> Result<T, AgentClientError>
     where
         T: DeserializeOwned,
     {
@@ -190,11 +183,7 @@ impl AgentClient {
             // Fallback: use the HTTP status as the error indicator.
             return Err(AgentClientError::ApiError {
                 code: status.as_str().to_string(),
-                message: format!(
-                    "Agent returned HTTP {} for {}",
-                    status.as_u16(),
-                    url
-                ),
+                message: format!("Agent returned HTTP {} for {}", status.as_u16(), url),
             });
         }
 
@@ -220,21 +209,16 @@ impl AgentClient {
 
     /// `GET /api/v1/jobs/{id}` — poll an async agent job for status.
     #[instrument(skip(self), fields(base_url = %self.base_url, job_id = %job_id))]
-    pub async fn job_status(
-        &self,
-        job_id: &str,
-    ) -> Result<AgentJobStatus, AgentClientError> {
+    pub async fn job_status(&self, job_id: &str) -> Result<AgentJobStatus, AgentClientError> {
         self.get(&format!("jobs/{}", job_id), &[]).await
     }
 
     /// `POST /api/v1/jobs/{id}/rollback` — trigger rollback on the agent.
     #[instrument(skip(self), fields(base_url = %self.base_url, job_id = %job_id))]
-    pub async fn rollback_job(
-        &self,
-        job_id: &str,
-    ) -> Result<RollbackResponse, AgentClientError> {
+    pub async fn rollback_job(&self, job_id: &str) -> Result<RollbackResponse, AgentClientError> {
         let empty: serde_json::Value = serde_json::json!({});
-        self.post(&format!("jobs/{}/rollback", job_id), &empty).await
+        self.post(&format!("jobs/{}/rollback", job_id), &empty)
+            .await
     }
 
     // --------------------------------------------------------
@@ -244,11 +228,7 @@ impl AgentClient {
     /// Execute a POST request against `{base_url}/{path}`, serialize `body` as
     /// JSON, deserialize the [`AgentEnvelope`], and extract the `data` field —
     /// or propagate an [`AgentClientError::ApiError`].
-    async fn post<Req, Resp>(
-        &self,
-        path: &str,
-        body: &Req,
-    ) -> Result<Resp, AgentClientError>
+    async fn post<Req, Resp>(&self, path: &str, body: &Req) -> Result<Resp, AgentClientError>
     where
         Req: Serialize,
         Resp: DeserializeOwned,

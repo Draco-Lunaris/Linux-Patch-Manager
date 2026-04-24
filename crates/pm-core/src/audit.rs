@@ -101,8 +101,15 @@ pub async fn log_event(
     request_id: Option<&str>,
 ) {
     let result = write_audit_row(
-        pool, action, actor_user_id, actor_username,
-        target_type, target_id, details, ip_address, request_id,
+        pool,
+        action,
+        actor_user_id,
+        actor_username,
+        target_type,
+        target_id,
+        details,
+        ip_address,
+        request_id,
     )
     .await;
 
@@ -123,11 +130,10 @@ async fn write_audit_row(
     request_id: Option<&str>,
 ) -> Result<(), sqlx::Error> {
     // Fetch previous hash for chain
-    let prev_hash: Option<String> = sqlx::query_scalar(
-        "SELECT row_hash FROM audit_log ORDER BY id DESC LIMIT 1",
-    )
-    .fetch_optional(pool)
-    .await?;
+    let prev_hash: Option<String> =
+        sqlx::query_scalar("SELECT row_hash FROM audit_log ORDER BY id DESC LIMIT 1")
+            .fetch_optional(pool)
+            .await?;
 
     let prev = prev_hash.unwrap_or_default();
     let now = chrono::Utc::now().to_rfc3339();
@@ -245,7 +251,7 @@ pub async fn verify_integrity(pool: &PgPool) -> IntegrityResult {
                 rows_checked: 0,
                 errors: vec![],
             };
-        }
+        },
     };
 
     let mut errors = Vec::new();
@@ -273,10 +279,7 @@ pub async fn verify_integrity(pool: &PgPool) -> IntegrityResult {
             .unwrap_or_default();
         let ip_str = row.ip_address.as_deref().unwrap_or("");
         let rid = row.request_id.as_deref().unwrap_or("");
-        let created_str = row
-            .created_at
-            .map(|c| c.to_rfc3339())
-            .unwrap_or_default();
+        let created_str = row.created_at.map(|c| c.to_rfc3339()).unwrap_or_default();
 
         let mut hasher = Sha256::new();
         hasher.update(row.prev_hash.as_bytes());

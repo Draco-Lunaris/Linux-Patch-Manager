@@ -4,10 +4,7 @@ use crate::{ReportParams, ReportType};
 use anyhow::Context;
 
 /// Generate a CSV report and return the raw bytes.
-pub async fn generate_csv(
-    pool: &sqlx::PgPool,
-    params: &ReportParams,
-) -> anyhow::Result<Vec<u8>> {
+pub async fn generate_csv(pool: &sqlx::PgPool, params: &ReportParams) -> anyhow::Result<Vec<u8>> {
     match params.report_type {
         ReportType::Compliance => compliance_csv(pool, params).await,
         ReportType::PatchHistory => patch_history_csv(pool, params).await,
@@ -20,12 +17,10 @@ pub async fn generate_csv(
 // Compliance
 // ---------------------------------------------------------------------------
 
-async fn compliance_csv(
-    pool: &sqlx::PgPool,
-    params: &ReportParams,
-) -> anyhow::Result<Vec<u8>> {
+async fn compliance_csv(pool: &sqlx::PgPool, params: &ReportParams) -> anyhow::Result<Vec<u8>> {
     let rows = if let Some(gid) = params.group_id {
-        sqlx::query("
+        sqlx::query(
+            "
 SELECT
     h.id::text            AS host_id,
     h.display_name,
@@ -47,13 +42,15 @@ WHERE h.id IN (
 )
 GROUP BY h.id, pd.total_packages, pd.pending_patches
 ORDER BY compliance_pct ASC
-")
+",
+        )
         .bind(gid)
         .fetch_all(pool)
         .await
         .context("compliance query (group filter) failed")?
     } else {
-        sqlx::query("
+        sqlx::query(
+            "
 SELECT
     h.id::text            AS host_id,
     h.display_name,
@@ -72,7 +69,8 @@ LEFT JOIN host_groups hg ON hg.host_id = h.id
 LEFT JOIN groups g ON g.id = hg.group_id
 GROUP BY h.id, pd.total_packages, pd.pending_patches
 ORDER BY compliance_pct ASC
-")
+",
+        )
         .fetch_all(pool)
         .await
         .context("compliance query failed")?
@@ -80,23 +78,29 @@ ORDER BY compliance_pct ASC
 
     let mut wtr = csv::Writer::from_writer(vec![]);
     wtr.write_record(&[
-        "host_id", "display_name", "fqdn", "group_names",
-        "total_packages", "pending_patches", "compliance_pct",
-        "last_patch_at", "health_status",
+        "host_id",
+        "display_name",
+        "fqdn",
+        "group_names",
+        "total_packages",
+        "pending_patches",
+        "compliance_pct",
+        "last_patch_at",
+        "health_status",
     ])?;
 
     for row in &rows {
         use sqlx::Row;
-        let host_id: String          = row.try_get("host_id").unwrap_or_default();
-        let display_name: String     = row.try_get("display_name").unwrap_or_default();
-        let fqdn: String             = row.try_get("fqdn").unwrap_or_default();
-        let group_names: String      = row.try_get("group_names").unwrap_or_default();
-        let total_packages: i64      = row.try_get("total_packages").unwrap_or(0);
-        let pending_patches: i64     = row.try_get("pending_patches").unwrap_or(0);
-        let compliance_pct: f64      = row.try_get("compliance_pct").unwrap_or(0.0);
+        let host_id: String = row.try_get("host_id").unwrap_or_default();
+        let display_name: String = row.try_get("display_name").unwrap_or_default();
+        let fqdn: String = row.try_get("fqdn").unwrap_or_default();
+        let group_names: String = row.try_get("group_names").unwrap_or_default();
+        let total_packages: i64 = row.try_get("total_packages").unwrap_or(0);
+        let pending_patches: i64 = row.try_get("pending_patches").unwrap_or(0);
+        let compliance_pct: f64 = row.try_get("compliance_pct").unwrap_or(0.0);
         let last_patch_at: Option<chrono::DateTime<chrono::Utc>> =
             row.try_get("last_patch_at").unwrap_or(None);
-        let health_status: String    = row.try_get("health_status").unwrap_or_default();
+        let health_status: String = row.try_get("health_status").unwrap_or_default();
 
         wtr.write_record(&[
             host_id,
@@ -118,11 +122,9 @@ ORDER BY compliance_pct ASC
 // Patch history
 // ---------------------------------------------------------------------------
 
-async fn patch_history_csv(
-    pool: &sqlx::PgPool,
-    params: &ReportParams,
-) -> anyhow::Result<Vec<u8>> {
-    let rows = sqlx::query("
+async fn patch_history_csv(pool: &sqlx::PgPool, params: &ReportParams) -> anyhow::Result<Vec<u8>> {
+    let rows = sqlx::query(
+        "
 SELECT
     pj.id::text        AS job_id,
     pj.kind::text      AS job_kind,
@@ -141,7 +143,8 @@ LEFT JOIN users u ON u.id = pj.created_by_user_id
 WHERE ($1::timestamptz IS NULL OR pjh.started_at >= $1)
   AND ($2::timestamptz IS NULL OR pjh.started_at <= $2)
 ORDER BY pjh.started_at DESC
-")
+",
+    )
     .bind(params.from)
     .bind(params.to)
     .fetch_all(pool)
@@ -150,24 +153,32 @@ ORDER BY pjh.started_at DESC
 
     let mut wtr = csv::Writer::from_writer(vec![]);
     wtr.write_record(&[
-        "job_id", "job_kind", "job_status", "host_display_name", "host_fqdn",
-        "package_count", "started_at", "completed_at", "duration_seconds", "operator",
+        "job_id",
+        "job_kind",
+        "job_status",
+        "host_display_name",
+        "host_fqdn",
+        "package_count",
+        "started_at",
+        "completed_at",
+        "duration_seconds",
+        "operator",
     ])?;
 
     for row in &rows {
         use sqlx::Row;
-        let job_id: String       = row.try_get("job_id").unwrap_or_default();
-        let job_kind: String     = row.try_get("job_kind").unwrap_or_default();
-        let job_status: String   = row.try_get("job_status").unwrap_or_default();
+        let job_id: String = row.try_get("job_id").unwrap_or_default();
+        let job_kind: String = row.try_get("job_kind").unwrap_or_default();
+        let job_status: String = row.try_get("job_status").unwrap_or_default();
         let display_name: String = row.try_get("display_name").unwrap_or_default();
-        let fqdn: String         = row.try_get("fqdn").unwrap_or_default();
-        let package_count: i64   = row.try_get("package_count").unwrap_or(0);
+        let fqdn: String = row.try_get("fqdn").unwrap_or_default();
+        let package_count: i64 = row.try_get("package_count").unwrap_or(0);
         let started_at: Option<chrono::DateTime<chrono::Utc>> =
             row.try_get("started_at").unwrap_or(None);
         let completed_at: Option<chrono::DateTime<chrono::Utc>> =
             row.try_get("completed_at").unwrap_or(None);
         let duration_seconds: Option<i64> = row.try_get("duration_seconds").unwrap_or(None);
-        let operator: String     = row.try_get("operator").unwrap_or_default();
+        let operator: String = row.try_get("operator").unwrap_or_default();
 
         wtr.write_record(&[
             job_id,
@@ -190,17 +201,21 @@ ORDER BY pjh.started_at DESC
 // Vulnerability
 // ---------------------------------------------------------------------------
 
-async fn vulnerability_csv(
-    pool: &sqlx::PgPool,
-    params: &ReportParams,
-) -> anyhow::Result<Vec<u8>> {
+async fn vulnerability_csv(pool: &sqlx::PgPool, params: &ReportParams) -> anyhow::Result<Vec<u8>> {
     let mut wtr = csv::Writer::from_writer(vec![]);
     wtr.write_record(&[
-        "host_id", "display_name", "fqdn", "cve_id",
-        "package_name", "severity", "available_version", "last_seen_at",
+        "host_id",
+        "display_name",
+        "fqdn",
+        "cve_id",
+        "package_name",
+        "severity",
+        "available_version",
+        "last_seen_at",
     ])?;
 
-    let result = sqlx::query("
+    let result = sqlx::query(
+        "
 SELECT
     h.id::text        AS host_id,
     h.display_name,
@@ -224,7 +239,8 @@ ORDER BY
         ELSE 4
     END,
     h.display_name
-")
+",
+    )
     .bind(params.from)
     .bind(params.to)
     .fetch_all(pool)
@@ -234,12 +250,12 @@ ORDER BY
         Ok(rows) => {
             for row in &rows {
                 use sqlx::Row;
-                let host_id: String       = row.try_get("host_id").unwrap_or_default();
-                let display_name: String  = row.try_get("display_name").unwrap_or_default();
-                let fqdn: String          = row.try_get("fqdn").unwrap_or_default();
-                let cve_id: String        = row.try_get("cve_id").unwrap_or_default();
-                let package_name: String  = row.try_get("package_name").unwrap_or_default();
-                let severity: String      = row.try_get("severity").unwrap_or_default();
+                let host_id: String = row.try_get("host_id").unwrap_or_default();
+                let display_name: String = row.try_get("display_name").unwrap_or_default();
+                let fqdn: String = row.try_get("fqdn").unwrap_or_default();
+                let cve_id: String = row.try_get("cve_id").unwrap_or_default();
+                let package_name: String = row.try_get("package_name").unwrap_or_default();
+                let severity: String = row.try_get("severity").unwrap_or_default();
                 let available_version: String =
                     row.try_get("available_version").unwrap_or_default();
                 let last_seen_at: Option<chrono::DateTime<chrono::Utc>> =
@@ -256,15 +272,21 @@ ORDER BY
                     last_seen_at.map(|d| d.to_rfc3339()).unwrap_or_default(),
                 ])?;
             }
-        }
+        },
         Err(e) => {
             tracing::warn!(error = %e, "vulnerability query failed — returning empty rows");
             // write a comment row indicating empty data
             wtr.write_record(&[
-                "(no data)", "", "", "", "", "", "",
+                "(no data)",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
                 &format!("query error: {}", e),
             ])?;
-        }
+        },
     }
 
     Ok(wtr.into_inner().context("csv flush failed")?)
@@ -274,11 +296,9 @@ ORDER BY
 // Audit
 // ---------------------------------------------------------------------------
 
-async fn audit_csv(
-    pool: &sqlx::PgPool,
-    params: &ReportParams,
-) -> anyhow::Result<Vec<u8>> {
-    let rows = sqlx::query("
+async fn audit_csv(pool: &sqlx::PgPool, params: &ReportParams) -> anyhow::Result<Vec<u8>> {
+    let rows = sqlx::query(
+        "
 SELECT
     id::text            AS id,
     created_at,
@@ -293,7 +313,8 @@ WHERE ($1::timestamptz IS NULL OR created_at >= $1)
   AND ($2::timestamptz IS NULL OR created_at <= $2)
 ORDER BY created_at DESC
 LIMIT 10000
-")
+",
+    )
     .bind(params.from)
     .bind(params.to)
     .fetch_all(pool)
@@ -302,21 +323,27 @@ LIMIT 10000
 
     let mut wtr = csv::Writer::from_writer(vec![]);
     wtr.write_record(&[
-        "id", "created_at", "action", "actor_username",
-        "target_type", "target_id", "ip_address", "request_id",
+        "id",
+        "created_at",
+        "action",
+        "actor_username",
+        "target_type",
+        "target_id",
+        "ip_address",
+        "request_id",
     ])?;
 
     for row in &rows {
         use sqlx::Row;
-        let id: String             = row.try_get("id").unwrap_or_default();
+        let id: String = row.try_get("id").unwrap_or_default();
         let created_at: Option<chrono::DateTime<chrono::Utc>> =
             row.try_get("created_at").unwrap_or(None);
-        let action: String         = row.try_get("action").unwrap_or_default();
+        let action: String = row.try_get("action").unwrap_or_default();
         let actor_username: String = row.try_get("actor_username").unwrap_or_default();
-        let target_type: String    = row.try_get("target_type").unwrap_or_default();
-        let target_id: String      = row.try_get("target_id").unwrap_or_default();
-        let ip_address: String     = row.try_get("ip_address").unwrap_or_default();
-        let request_id: String     = row.try_get("request_id").unwrap_or_default();
+        let target_type: String = row.try_get("target_type").unwrap_or_default();
+        let target_id: String = row.try_get("target_id").unwrap_or_default();
+        let ip_address: String = row.try_get("ip_address").unwrap_or_default();
+        let request_id: String = row.try_get("request_id").unwrap_or_default();
 
         wtr.write_record(&[
             id,

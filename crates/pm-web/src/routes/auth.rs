@@ -18,8 +18,8 @@ use axum::{
 };
 use pm_auth::{
     mfa_totp,
-    session::{self, LoginRequest, LoginResponse},
     rbac::AuthUser,
+    session::{self, LoginRequest, LoginResponse},
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -107,10 +107,17 @@ async fn login_handler(
             ),
             _ => {
                 tracing::error!(error = %e, "Login error");
-                (StatusCode::INTERNAL_SERVER_ERROR, "internal_error", "An error occurred")
-            }
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal_error",
+                    "An error occurred",
+                )
+            },
         };
-        (status, Json(json!({ "error": { "code": code, "message": message } })))
+        (
+            status,
+            Json(json!({ "error": { "code": code, "message": message } })),
+        )
     })
 }
 
@@ -156,10 +163,17 @@ async fn refresh_handler(
             ),
             _ => {
                 tracing::error!(error = %e, "Refresh error");
-                (StatusCode::INTERNAL_SERVER_ERROR, "internal_error", "An error occurred")
-            }
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal_error",
+                    "An error occurred",
+                )
+            },
         };
-        (status, Json(json!({ "error": { "code": code, "message": msg } })))
+        (
+            status,
+            Json(json!({ "error": { "code": code, "message": msg } })),
+        )
     })
 }
 
@@ -221,11 +235,13 @@ async fn mfa_verify_handler(
     auth_user: AuthUser,
     Json(req): Json<MfaVerifyRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let valid = mfa_totp::verify_code(&auth_user.username, &req.secret_base32, &req.code)
-        .map_err(|e| (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": { "code": "internal_error", "message": e.to_string() } })),
-        ))?;
+    let valid =
+        mfa_totp::verify_code(&auth_user.username, &req.secret_base32, &req.code).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": e.to_string() } })),
+            )
+        })?;
 
     if !valid {
         return Err((

@@ -15,9 +15,7 @@ use axum::{
 use pm_auth::rbac::AuthUser;
 use pm_core::{
     audit::{log_event, AuditAction},
-    models::{
-        CreateMaintenanceWindowRequest, MaintenanceWindow, UpdateMaintenanceWindowRequest,
-    },
+    models::{CreateMaintenanceWindowRequest, MaintenanceWindow, UpdateMaintenanceWindowRequest},
 };
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -56,15 +54,18 @@ async fn list_windows(
     Path(host_id): Path<Uuid>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     // Verify host exists.
-    let host_exists: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM hosts WHERE id = $1)")
-            .bind(host_id)
-            .fetch_one(&state.db)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, %host_id, "list_windows: host existence check failed");
-                err(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", "Database error")
-            })?;
+    let host_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM hosts WHERE id = $1)")
+        .bind(host_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, %host_id, "list_windows: host existence check failed");
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                "Database error",
+            )
+        })?;
 
     if !host_exists {
         return Err(err(StatusCode::NOT_FOUND, "not_found", "Host not found"));
@@ -84,7 +85,11 @@ async fn list_windows(
     .await
     .map_err(|e| {
         tracing::error!(error = %e, %host_id, "list_windows: query failed");
-        err(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", "Database error")
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            "Database error",
+        )
     })?;
 
     Ok(Json(json!({ "windows": windows })))
@@ -101,41 +106,44 @@ async fn create_window(
     // Validate: weekly requires recurrence_day 0-6
     if req.recurrence == pm_core::models::WindowRecurrence::Weekly {
         match req.recurrence_day {
-            Some(d) if (0..=6).contains(&d) => {}
+            Some(d) if (0..=6).contains(&d) => {},
             _ => {
                 return Err(err(
                     StatusCode::BAD_REQUEST,
                     "bad_request",
                     "Weekly recurrence requires recurrence_day 0-6 (0=Sunday)",
                 ));
-            }
+            },
         }
     }
 
     // Validate: monthly requires recurrence_day 1-31
     if req.recurrence == pm_core::models::WindowRecurrence::Monthly {
         match req.recurrence_day {
-            Some(d) if (1..=31).contains(&d) => {}
+            Some(d) if (1..=31).contains(&d) => {},
             _ => {
                 return Err(err(
                     StatusCode::BAD_REQUEST,
                     "bad_request",
                     "Monthly recurrence requires recurrence_day 1-31",
                 ));
-            }
+            },
         }
     }
 
     // Verify host exists.
-    let host_exists: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM hosts WHERE id = $1)")
-            .bind(host_id)
-            .fetch_one(&state.db)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, %host_id, "create_window: host existence check failed");
-                err(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", "Database error")
-            })?;
+    let host_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM hosts WHERE id = $1)")
+        .bind(host_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, %host_id, "create_window: host existence check failed");
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                "Database error",
+            )
+        })?;
 
     if !host_exists {
         return Err(err(StatusCode::NOT_FOUND, "not_found", "Host not found"));
@@ -165,7 +173,11 @@ async fn create_window(
     .await
     .map_err(|e| {
         tracing::error!(error = %e, %host_id, "create_window: insert failed");
-        err(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", "Database error")
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            "Database error",
+        )
     })?;
 
     log_event(
@@ -219,44 +231,52 @@ async fn update_window(
     .await
     .map_err(|e| {
         tracing::error!(error = %e, %win_id, "update_window: fetch failed");
-        err(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", "Database error")
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            "Database error",
+        )
     })?;
 
     let existing = existing.ok_or_else(|| {
-        err(StatusCode::NOT_FOUND, "not_found", "Maintenance window not found")
+        err(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Maintenance window not found",
+        )
     })?;
 
     // Apply partial updates using existing values as defaults.
-    let new_label      = req.label.unwrap_or(existing.label);
+    let new_label = req.label.unwrap_or(existing.label);
     let new_recurrence = req.recurrence.unwrap_or(existing.recurrence);
-    let new_start_at   = req.start_at.unwrap_or(existing.start_at);
-    let new_duration   = req.duration_minutes.unwrap_or(existing.duration_minutes);
-    let new_rec_day    = req.recurrence_day.or(existing.recurrence_day);
-    let new_enabled    = req.enabled.unwrap_or(existing.enabled);
+    let new_start_at = req.start_at.unwrap_or(existing.start_at);
+    let new_duration = req.duration_minutes.unwrap_or(existing.duration_minutes);
+    let new_rec_day = req.recurrence_day.or(existing.recurrence_day);
+    let new_enabled = req.enabled.unwrap_or(existing.enabled);
 
     // Validate recurrence_day for the final recurrence type.
     if new_recurrence == pm_core::models::WindowRecurrence::Weekly {
         match new_rec_day {
-            Some(d) if (0..=6).contains(&d) => {}
+            Some(d) if (0..=6).contains(&d) => {},
             _ => {
                 return Err(err(
                     StatusCode::BAD_REQUEST,
                     "bad_request",
                     "Weekly recurrence requires recurrence_day 0-6",
                 ));
-            }
+            },
         }
     }
     if new_recurrence == pm_core::models::WindowRecurrence::Monthly {
         match new_rec_day {
-            Some(d) if (1..=31).contains(&d) => {}
+            Some(d) if (1..=31).contains(&d) => {},
             _ => {
                 return Err(err(
                     StatusCode::BAD_REQUEST,
                     "bad_request",
                     "Monthly recurrence requires recurrence_day 1-31",
                 ));
-            }
+            },
         }
     }
 
@@ -287,7 +307,11 @@ async fn update_window(
     .await
     .map_err(|e| {
         tracing::error!(error = %e, %win_id, "update_window: update failed");
-        err(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", "Database error")
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            "Database error",
+        )
     })?;
 
     log_event(
@@ -320,17 +344,19 @@ async fn delete_window(
     auth: AuthUser,
     Path((host_id, win_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let result = sqlx::query(
-        "DELETE FROM maintenance_windows WHERE id = $1 AND host_id = $2",
-    )
-    .bind(win_id)
-    .bind(host_id)
-    .execute(&state.db)
-    .await
-    .map_err(|e| {
-        tracing::error!(error = %e, %win_id, "delete_window: delete failed");
-        err(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", "Database error")
-    })?;
+    let result = sqlx::query("DELETE FROM maintenance_windows WHERE id = $1 AND host_id = $2")
+        .bind(win_id)
+        .bind(host_id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, %win_id, "delete_window: delete failed");
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                "Database error",
+            )
+        })?;
 
     if result.rows_affected() == 0 {
         return Err(err(

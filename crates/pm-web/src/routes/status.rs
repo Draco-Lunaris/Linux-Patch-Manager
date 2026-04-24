@@ -2,13 +2,7 @@
 //!
 //! GET /api/v1/status/fleet — aggregate health and patch summary across all hosts.
 
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::Json,
-    routing::get,
-    Router,
-};
+use axum::{extract::State, http::StatusCode, response::Json, routing::get, Router};
 use serde::Serialize;
 use serde_json::{json, Value};
 

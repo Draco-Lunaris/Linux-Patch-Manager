@@ -211,11 +211,11 @@ pub enum JobStatus {
 impl std::fmt::Display for JobStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Queued    => write!(f, "queued"),
-            Self::Pending   => write!(f, "pending"),
-            Self::Running   => write!(f, "running"),
+            Self::Queued => write!(f, "queued"),
+            Self::Pending => write!(f, "pending"),
+            Self::Running => write!(f, "running"),
             Self::Succeeded => write!(f, "succeeded"),
-            Self::Failed    => write!(f, "failed"),
+            Self::Failed => write!(f, "failed"),
             Self::Cancelled => write!(f, "cancelled"),
         }
     }
@@ -321,9 +321,9 @@ pub enum WindowRecurrence {
 impl std::fmt::Display for WindowRecurrence {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Once    => write!(f, "once"),
-            Self::Daily   => write!(f, "daily"),
-            Self::Weekly  => write!(f, "weekly"),
+            Self::Once => write!(f, "once"),
+            Self::Daily => write!(f, "daily"),
+            Self::Weekly => write!(f, "weekly"),
             Self::Monthly => write!(f, "monthly"),
         }
     }

@@ -7,27 +7,23 @@ mod agent_loader;
 mod audit_verifier;
 mod email;
 mod health_poller;
+mod job_executor;
 mod maintenance_scheduler;
 mod patch_poller;
 mod refresh_listener;
-mod job_executor;
 mod ws_relay;
 
-use pm_core::{
-    config::AppConfig,
-    db,
-    logging,
-};
+use pm_core::{config::AppConfig, db, logging};
 use sqlx::PgPool;
 use std::{sync::Arc, time::Duration};
 use tokio::time;
 
 use audit_verifier::run_audit_verifier;
 use health_poller::run_health_poller;
+use job_executor::run_job_executor;
 use maintenance_scheduler::run_maintenance_scheduler;
 use patch_poller::run_patch_poller;
 use refresh_listener::run_refresh_listener;
-use job_executor::run_job_executor;
 use ws_relay::run_ws_relay;
 
 /// Minimum number of applied migrations the worker requires before
@@ -44,16 +40,18 @@ async fn main() -> anyhow::Result<()> {
     let config_path = std::env::var("PATCH_MANAGER_CONFIG")
         .unwrap_or_else(|_| "/etc/patch-manager/config.toml".to_string());
 
-    let config = AppConfig::load(&config_path)
-        .unwrap_or_else(|_| {
-            eprintln!("Config file not found or invalid, using defaults");
-            AppConfig::default()
-        });
+    let config = AppConfig::load(&config_path).unwrap_or_else(|_| {
+        eprintln!("Config file not found or invalid, using defaults");
+        AppConfig::default()
+    });
 
     // Initialize logging
     logging::init(&config.logging);
 
-    tracing::info!(version = env!("CARGO_PKG_VERSION"), "patch-manager-worker starting");
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        "patch-manager-worker starting"
+    );
 
     // Initialize database pool
     let pool = db::init_pool(&config.database).await?;
@@ -114,17 +112,17 @@ async fn wait_for_schema(pool: &PgPool) -> anyhow::Result<()> {
             Ok(count) if count >= REQUIRED_MIGRATION_COUNT => {
                 tracing::info!(migration_count = count, "Schema version check passed");
                 return Ok(());
-            }
+            },
             Ok(count) => {
                 tracing::warn!(
                     migration_count = count,
                     required = REQUIRED_MIGRATION_COUNT,
                     "Schema not ready, waiting..."
                 );
-            }
+            },
             Err(e) => {
                 tracing::warn!(error = %e, "Schema version check failed, retrying...");
-            }
+            },
         }
 
         if tokio::time::Instant::now() >= deadline {

@@ -122,13 +122,12 @@ pub async fn login(
             // Prevent timing-based username enumeration
             let _ = password::hash_password("dummy-timing-fill");
             return Err(SessionError::InvalidCredentials);
-        }
+        },
     };
 
     // 2. Verify password
     let hash = user.password_hash.as_deref().unwrap_or("");
-    let valid = password::verify_password(&req.password, hash)
-        .unwrap_or(false);
+    let valid = password::verify_password(&req.password, hash).unwrap_or(false);
 
     if !valid {
         tracing::warn!(username = %req.username, "Login failed: invalid password");
@@ -146,8 +145,7 @@ pub async fn login(
         let code = req.totp_code.as_deref().ok_or(SessionError::MfaRequired)?;
         let secret = user.totp_secret.as_deref().unwrap_or("");
 
-        let mfa_ok = mfa_totp::verify_code(&user.username, secret, code)
-            .unwrap_or(false);
+        let mfa_ok = mfa_totp::verify_code(&user.username, secret, code).unwrap_or(false);
 
         if !mfa_ok {
             tracing::warn!(username = %req.username, "Login failed: invalid MFA code");
@@ -246,19 +244,13 @@ pub async fn refresh_session(
 }
 
 /// Logout: revoke the current refresh token.
-pub async fn logout(
-    pool: &PgPool,
-    raw_refresh_token: &str,
-) -> Result<(), SessionError> {
+pub async fn logout(pool: &PgPool, raw_refresh_token: &str) -> Result<(), SessionError> {
     refresh::revoke(pool, raw_refresh_token).await?;
     Ok(())
 }
 
 /// Force-logout: revoke all refresh tokens for a user.
-pub async fn force_logout(
-    pool: &PgPool,
-    user_id: Uuid,
-) -> Result<u64, SessionError> {
+pub async fn force_logout(pool: &PgPool, user_id: Uuid) -> Result<u64, SessionError> {
     let count = refresh::revoke_all_for_user(pool, user_id).await?;
     Ok(count)
 }

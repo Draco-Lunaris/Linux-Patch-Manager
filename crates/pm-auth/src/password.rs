@@ -7,17 +7,15 @@
 //! - Parallelism: 1
 
 use argon2::{
-    password_hash::{
-        rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString,
-    },
+    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2, Params, Version,
 };
 use thiserror::Error;
 
 /// Argon2id parameters per spec.
 const M_COST: u32 = 65536; // 64 MiB
-const T_COST: u32 = 3;     // 3 iterations
-const P_COST: u32 = 1;     // 1 thread
+const T_COST: u32 = 3; // 3 iterations
+const P_COST: u32 = 1; // 1 thread
 
 #[derive(Debug, Error)]
 pub enum PasswordError {
@@ -33,7 +31,11 @@ pub enum PasswordError {
 fn argon2() -> Result<Argon2<'static>, PasswordError> {
     let params = Params::new(M_COST, T_COST, P_COST, None)
         .map_err(|e| PasswordError::HashError(e.to_string()))?;
-    Ok(Argon2::new(argon2::Algorithm::Argon2id, Version::V0x13, params))
+    Ok(Argon2::new(
+        argon2::Algorithm::Argon2id,
+        Version::V0x13,
+        params,
+    ))
 }
 
 /// Hash a plaintext password using Argon2id with a random salt.
@@ -54,8 +56,7 @@ pub fn hash_password(password: &str) -> Result<String, PasswordError> {
 ///
 /// Returns `Ok(true)` if the password matches, `Ok(false)` if not.
 pub fn verify_password(password: &str, hash: &str) -> Result<bool, PasswordError> {
-    let parsed_hash =
-        PasswordHash::new(hash).map_err(|_| PasswordError::InvalidHash)?;
+    let parsed_hash = PasswordHash::new(hash).map_err(|_| PasswordError::InvalidHash)?;
 
     let argon2 = argon2()?;
 

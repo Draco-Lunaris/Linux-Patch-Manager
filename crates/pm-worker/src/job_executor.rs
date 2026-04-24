@@ -15,7 +15,7 @@
 use std::sync::Arc;
 
 use chrono::{Duration as ChronoDuration, Utc};
-use pm_agent_client::{AgentClient, types::ApplyPatchesRequest};
+use pm_agent_client::{types::ApplyPatchesRequest, AgentClient};
 use pm_core::config::AppConfig;
 use sqlx::{FromRow, PgPool};
 use tokio::{sync::Semaphore, time};
@@ -71,13 +71,13 @@ struct RetryRow {
 
 #[derive(Debug, FromRow)]
 struct StatusCounts {
-    running_count:   i64,
-    pending_count:   i64,
-    queued_count:    i64,
+    running_count: i64,
+    pending_count: i64,
+    queued_count: i64,
     succeeded_count: i64,
-    failed_count:    i64,
+    failed_count: i64,
     cancelled_count: i64,
-    total_count:     i64,
+    total_count: i64,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -125,12 +125,8 @@ async fn run_notify_listener(pool: PgPool, config: Arc<AppConfig>) {
 
 /// Inner NOTIFY loop — returns `Err` only on a fatal connection error so the
 /// outer loop can reconnect.
-async fn notify_listen_loop(
-    pool: &PgPool,
-    config: &Arc<AppConfig>,
-) -> anyhow::Result<()> {
-    let mut listener =
-        sqlx::postgres::PgListener::connect(&config.database.url).await?;
+async fn notify_listen_loop(pool: &PgPool, config: &Arc<AppConfig>) -> anyhow::Result<()> {
+    let mut listener = sqlx::postgres::PgListener::connect(&config.database.url).await?;
     listener.listen("job_enqueued").await?;
     tracing::debug!("Job executor NOTIFY listener connected");
 
@@ -148,7 +144,7 @@ async fn notify_listen_loop(
                     "Job executor: invalid UUID in job_enqueued payload"
                 );
                 continue;
-            }
+            },
         };
 
         let (p, c) = (pool.clone(), config.clone());
@@ -301,7 +297,7 @@ pub async fn process_job(pool: PgPool, config: Arc<AppConfig>, job_id: Uuid) {
         Err(e) => {
             tracing::error!(%job_id, error = %e, "process_job: failed to fetch queued hosts");
             return;
-        }
+        },
     };
 
     if hosts.is_empty() {
@@ -317,11 +313,11 @@ pub async fn process_job(pool: PgPool, config: Arc<AppConfig>, job_id: Uuid) {
             Err(e) => {
                 tracing::error!(%job_id, error = %e, "process_job: semaphore closed");
                 break;
-            }
+            },
         };
 
         let (p, c) = (pool.clone(), config.clone());
-        let pjh_id  = host.id;
+        let pjh_id = host.id;
         let host_id = host.host_id;
 
         tokio::spawn(async move {
@@ -338,11 +334,11 @@ pub async fn process_job(pool: PgPool, config: Arc<AppConfig>, job_id: Uuid) {
 /// Connect to a single host agent, submit the patch job, and record the
 /// agent-assigned async job ID for later polling.
 async fn execute_host_job(
-    pool:    PgPool,
-    config:  Arc<AppConfig>,
-    job_id:  Uuid,
+    pool: PgPool,
+    config: Arc<AppConfig>,
+    job_id: Uuid,
     host_id: Uuid,
-    pjh_id:  Uuid,
+    pjh_id: Uuid,
 ) {
     tracing::info!(%job_id, %host_id, %pjh_id, "execute_host_job: starting");
 
@@ -364,34 +360,33 @@ async fn execute_host_job(
             )
             .await;
             return;
-        }
+        },
         Err(e) => {
             tracing::error!(%host_id, error = %e, "execute_host_job: DB error fetching host");
             handle_host_failure(pool, pjh_id, format!("DB error fetching host: {e}")).await;
             return;
-        }
+        },
     };
 
     // ── 2. Fetch the job's patch_selection ──────────────────────────────────
-    let patch_sel: JobPatchSelection = match sqlx::query_as(
-        "SELECT patch_selection FROM patch_jobs WHERE id = $1",
-    )
-    .bind(job_id)
-    .fetch_optional(&pool)
-    .await
-    {
-        Ok(Some(row)) => row,
-        Ok(None) => {
-            tracing::error!(%job_id, "execute_host_job: parent job not found");
-            handle_host_failure(pool, pjh_id, format!("Parent job {job_id} not found")).await;
-            return;
-        }
-        Err(e) => {
-            tracing::error!(%job_id, error = %e, "execute_host_job: DB error fetching job");
-            handle_host_failure(pool, pjh_id, format!("DB error fetching job: {e}")).await;
-            return;
-        }
-    };
+    let patch_sel: JobPatchSelection =
+        match sqlx::query_as("SELECT patch_selection FROM patch_jobs WHERE id = $1")
+            .bind(job_id)
+            .fetch_optional(&pool)
+            .await
+        {
+            Ok(Some(row)) => row,
+            Ok(None) => {
+                tracing::error!(%job_id, "execute_host_job: parent job not found");
+                handle_host_failure(pool, pjh_id, format!("Parent job {job_id} not found")).await;
+                return;
+            },
+            Err(e) => {
+                tracing::error!(%job_id, error = %e, "execute_host_job: DB error fetching job");
+                handle_host_failure(pool, pjh_id, format!("DB error fetching job: {e}")).await;
+                return;
+            },
+        };
 
     let packages: Vec<String> =
         serde_json::from_value(patch_sel.patch_selection).unwrap_or_default();
@@ -403,7 +398,7 @@ async fn execute_host_job(
             tracing::error!(%host_id, error = %e, "execute_host_job: failed to load agent certs");
             handle_host_failure(pool, pjh_id, format!("Failed to load agent certs: {e}")).await;
             return;
-        }
+        },
     };
 
     // ── 4. Build AgentClient ─────────────────────────────────────────────────
@@ -419,7 +414,7 @@ async fn execute_host_job(
             tracing::error!(%host_id, error = %e, "execute_host_job: failed to build AgentClient");
             handle_host_failure(pool, pjh_id, format!("Failed to build agent client: {e}")).await;
             return;
-        }
+        },
     };
 
     // ── 5. Mark pjh as running ───────────────────────────────────────────────
@@ -439,7 +434,10 @@ async fn execute_host_job(
     }
 
     // ── 6. Submit the patch job to the agent ─────────────────────────────────
-    let req = ApplyPatchesRequest { packages, allow_reboot: true };
+    let req = ApplyPatchesRequest {
+        packages,
+        allow_reboot: true,
+    };
 
     match client.apply_patches(&req).await {
         Ok(resp) => {
@@ -450,13 +448,12 @@ async fn execute_host_job(
             );
 
             // ── 7. Store agent_job_id; status stays 'running' (agent is async) ──
-            if let Err(e) = sqlx::query(
-                "UPDATE patch_job_hosts SET agent_job_id = $1 WHERE id = $2",
-            )
-            .bind(&resp.job_id)
-            .bind(pjh_id)
-            .execute(&pool)
-            .await
+            if let Err(e) =
+                sqlx::query("UPDATE patch_job_hosts SET agent_job_id = $1 WHERE id = $2")
+                    .bind(&resp.job_id)
+                    .bind(pjh_id)
+                    .execute(&pool)
+                    .await
             {
                 tracing::error!(
                     %pjh_id,
@@ -464,11 +461,11 @@ async fn execute_host_job(
                     "execute_host_job: failed to store agent_job_id"
                 );
             }
-        }
+        },
         Err(e) => {
             tracing::warn!(%pjh_id, error = %e, "execute_host_job: agent rejected job");
             handle_host_failure(pool, pjh_id, format!("Agent error: {e}")).await;
-        }
+        },
     }
 }
 
@@ -498,7 +495,7 @@ pub async fn poll_running_jobs(pool: PgPool, config: Arc<AppConfig>) {
         Err(e) => {
             tracing::error!(error = %e, "poll_running_jobs: DB query failed");
             return;
-        }
+        },
     };
 
     for row in rows {
@@ -510,11 +507,7 @@ pub async fn poll_running_jobs(pool: PgPool, config: Arc<AppConfig>) {
 }
 
 /// Poll one running host entry and update its status from the agent response.
-async fn poll_single_host(
-    pool:   PgPool,
-    config: Arc<AppConfig>,
-    row:    PatchJobHostRunning,
-) {
+async fn poll_single_host(pool: PgPool, config: Arc<AppConfig>, row: PatchJobHostRunning) {
     let certs = match load_agent_certs(&config.security) {
         Ok(c) => c,
         Err(e) => {
@@ -524,7 +517,7 @@ async fn poll_single_host(
                 "poll_single_host: failed to load agent certs"
             );
             return;
-        }
+        },
     };
 
     let client = match AgentClient::new(
@@ -542,7 +535,7 @@ async fn poll_single_host(
                 "poll_single_host: failed to build AgentClient"
             );
             return;
-        }
+        },
     };
 
     let status = match client.job_status(&row.agent_job_id).await {
@@ -555,7 +548,7 @@ async fn poll_single_host(
                 "poll_single_host: agent status call failed"
             );
             return;
-        }
+        },
     };
 
     match status.status.as_str() {
@@ -578,14 +571,14 @@ async fn poll_single_host(
                 tracing::error!(pjh_id = %row.id, error = %e, "poll_single_host: update failed");
             }
             sync_job_status(&pool, row.job_id).await;
-        }
+        },
         "failed" => {
             tracing::warn!(pjh_id = %row.id, "poll_single_host: agent job failed");
             let err_msg = status
                 .error
                 .unwrap_or_else(|| "Agent reported failure (no detail)".to_string());
             handle_host_failure(pool, row.id, err_msg).await;
-        }
+        },
         "running" | "queued" => {
             // Still in progress — nothing to update; will poll again next cycle.
             tracing::debug!(
@@ -593,14 +586,14 @@ async fn poll_single_host(
                 agent_status = %status.status,
                 "poll_single_host: job still in progress"
             );
-        }
+        },
         other => {
             tracing::warn!(
                 pjh_id = %row.id,
                 agent_status = %other,
                 "poll_single_host: unexpected agent status — ignoring"
             );
-        }
+        },
     }
 }
 
@@ -624,7 +617,7 @@ async fn handle_host_failure(pool: PgPool, pjh_id: Uuid, error_msg: String) {
         Err(e) => {
             tracing::error!(%pjh_id, error = %e, "handle_host_failure: DB error fetching retry row");
             return;
-        }
+        },
     };
 
     let row = match row {
@@ -632,7 +625,7 @@ async fn handle_host_failure(pool: PgPool, pjh_id: Uuid, error_msg: String) {
         None => {
             tracing::error!(%pjh_id, "handle_host_failure: pjh row not found");
             return;
-        }
+        },
     };
 
     if row.retry_count < 3 {
@@ -736,7 +729,7 @@ async fn sync_job_status(pool: &PgPool, job_id: Uuid) {
         Err(e) => {
             tracing::error!(%job_id, error = %e, "sync_job_status: DB query failed");
             return;
-        }
+        },
     };
 
     // Determine the aggregate status.
@@ -745,19 +738,19 @@ async fn sync_job_status(pool: &PgPool, job_id: Uuid) {
 
     if counts.running_count > 0 || counts.pending_count > 0 || counts.queued_count > 0 {
         // Still work in flight — keep parent running.
-        new_status    = "running";
+        new_status = "running";
         set_completed = false;
     } else if counts.total_count > 0 && counts.succeeded_count == counts.total_count {
         // Every host succeeded.
-        new_status    = "succeeded";
+        new_status = "succeeded";
         set_completed = true;
     } else if counts.total_count > 0 && counts.cancelled_count == counts.total_count {
         // Every host cancelled.
-        new_status    = "cancelled";
+        new_status = "cancelled";
         set_completed = true;
     } else if counts.failed_count > 0 {
         // At least one failure and nothing still active → failed (partial counts too).
-        new_status    = "failed";
+        new_status = "failed";
         set_completed = true;
     } else {
         // Fallback: nothing actionable yet.
@@ -789,13 +782,11 @@ async fn sync_job_status(pool: &PgPool, job_id: Uuid) {
         .execute(pool)
         .await
     } else {
-        sqlx::query(
-            "UPDATE patch_jobs SET status = $2 WHERE id = $1",
-        )
-        .bind(job_id)
-        .bind(new_status)
-        .execute(pool)
-        .await
+        sqlx::query("UPDATE patch_jobs SET status = $2 WHERE id = $1")
+            .bind(job_id)
+            .bind(new_status)
+            .execute(pool)
+            .await
     };
 
     if let Err(e) = result {
@@ -812,13 +803,8 @@ async fn sync_job_status(pool: &PgPool, job_id: Uuid) {
         let failed = counts.failed_count;
 
         tokio::spawn(async move {
-            email::send_job_completion_email(
-                &pool_clone,
-                &job_id_str,
-                total,
-                succeeded,
-                failed,
-            ).await;
+            email::send_job_completion_email(&pool_clone, &job_id_str, total, succeeded, failed)
+                .await;
 
             // If there are failures, also send failure emails per host
             if failed > 0 {
@@ -838,16 +824,12 @@ async fn sync_job_status(pool: &PgPool, job_id: Uuid) {
                     Err(e) => {
                         tracing::error!(%job_id, error = %e, "sync_job_status: failed to fetch failed hosts for email");
                         Vec::new()
-                    }
+                    },
                 };
 
                 for (fqdn, error_msg) in failed_hosts {
-                    email::send_patch_failure_email(
-                        &pool_clone,
-                        &fqdn,
-                        &job_id_str,
-                        &error_msg,
-                    ).await;
+                    email::send_patch_failure_email(&pool_clone, &fqdn, &job_id_str, &error_msg)
+                        .await;
                 }
             }
         });
@@ -878,7 +860,7 @@ pub async fn retry_pending_jobs(pool: PgPool, config: Arc<AppConfig>) {
         Err(e) => {
             tracing::error!(error = %e, "retry_pending_jobs: DB query failed");
             return;
-        }
+        },
     };
 
     for row in rows {

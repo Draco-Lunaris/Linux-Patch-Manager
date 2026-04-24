@@ -66,9 +66,9 @@ fn build_totp(username: &str, secret_base32: &str) -> Result<TOTP, TotpError> {
     // new(issuer, account_name, algorithm, digits, skew, step, secret)
     TOTP::new(
         Algorithm::SHA1,
-        6,           // digits
-        1,           // skew
-        30,          // step (seconds)
+        6,  // digits
+        1,  // skew
+        30, // step (seconds)
         secret_bytes,
         Some(ISSUER.to_string()),
         username.to_string(),

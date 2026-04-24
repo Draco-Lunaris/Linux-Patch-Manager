@@ -28,10 +28,10 @@ struct ReportQuery {
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/compliance",    get(compliance_report))
+        .route("/compliance", get(compliance_report))
         .route("/patch-history", get(patch_history_report))
         .route("/vulnerability", get(vulnerability_report))
-        .route("/audit",         get(audit_report))
+        .route("/audit", get(audit_report))
 }
 
 // ---------------------------------------------------------------------------
@@ -58,21 +58,22 @@ async fn run_report(
     match result {
         Ok(bytes) => {
             let mut headers = HeaderMap::new();
-            headers.insert(
-                header::CONTENT_TYPE,
-                HeaderValue::from_static(ct),
-            );
+            headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(ct));
             headers.insert(
                 header::CONTENT_DISPOSITION,
                 HeaderValue::from_str(&disposition)
                     .unwrap_or_else(|_| HeaderValue::from_static("attachment")),
             );
             (headers, Bytes::from(bytes)).into_response()
-        }
+        },
         Err(e) => {
             tracing::error!(error = %e, "report generation failed");
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("Report error: {}", e)).into_response()
-        }
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Report error: {}", e),
+            )
+                .into_response()
+        },
     }
 }
 
@@ -92,10 +93,13 @@ async fn compliance_report(
     };
     let use_pdf = matches!(q.format.as_deref(), Some("pdf"));
     run_report(
-        state.db, params, use_pdf,
+        state.db,
+        params,
+        use_pdf,
         "compliance-report.csv",
         "compliance-report.pdf",
-    ).await
+    )
+    .await
 }
 
 async fn patch_history_report(
@@ -110,10 +114,13 @@ async fn patch_history_report(
     };
     let use_pdf = matches!(q.format.as_deref(), Some("pdf"));
     run_report(
-        state.db, params, use_pdf,
+        state.db,
+        params,
+        use_pdf,
         "patch-history-report.csv",
         "patch-history-report.pdf",
-    ).await
+    )
+    .await
 }
 
 async fn vulnerability_report(
@@ -128,16 +135,16 @@ async fn vulnerability_report(
     };
     let use_pdf = matches!(q.format.as_deref(), Some("pdf"));
     run_report(
-        state.db, params, use_pdf,
+        state.db,
+        params,
+        use_pdf,
         "vulnerability-report.csv",
         "vulnerability-report.pdf",
-    ).await
+    )
+    .await
 }
 
-async fn audit_report(
-    State(state): State<AppState>,
-    Query(q): Query<ReportQuery>,
-) -> Response {
+async fn audit_report(State(state): State<AppState>, Query(q): Query<ReportQuery>) -> Response {
     let params = ReportParams {
         report_type: ReportType::Audit,
         from: q.from,
@@ -146,8 +153,11 @@ async fn audit_report(
     };
     let use_pdf = matches!(q.format.as_deref(), Some("pdf"));
     run_report(
-        state.db, params, use_pdf,
+        state.db,
+        params,
+        use_pdf,
         "audit-report.csv",
         "audit-report.pdf",
-    ).await
+    )
+    .await
 }

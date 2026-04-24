@@ -16,13 +16,11 @@ use axum::{
     routing::{delete, get, post},
     Router,
 };
+use pm_auth::rbac::AuthUser;
 use pm_core::{
     audit::{log_event, AuditAction},
-    models::{
-        CreateHostRequest, HostSummary, Group,
-    },
+    models::{CreateHostRequest, Group, HostSummary},
 };
-use pm_auth::rbac::AuthUser;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -88,12 +86,11 @@ async fn operator_can_access_host(
     }
 
     // Ungrouped hosts are accessible to any operator
-    let ungrouped: bool = sqlx::query_scalar(
-        "SELECT NOT EXISTS (SELECT 1 FROM host_groups WHERE host_id = $1)",
-    )
-    .bind(host_id)
-    .fetch_one(pool)
-    .await?;
+    let ungrouped: bool =
+        sqlx::query_scalar("SELECT NOT EXISTS (SELECT 1 FROM host_groups WHERE host_id = $1)")
+            .bind(host_id)
+            .fetch_one(pool)
+            .await?;
 
     Ok(ungrouped)
 }
@@ -162,7 +159,12 @@ async fn list_hosts(
         .await
         .unwrap_or(0);
 
-    Ok(Json(HostListResponse { hosts, total, limit, offset }))
+    Ok(Json(HostListResponse {
+        hosts,
+        total,
+        limit,
+        offset,
+    }))
 }
 
 // ── POST /api/v1/hosts ────────────────────────────────────────────────────────
@@ -244,7 +246,8 @@ async fn register_host(
         json!({ "fqdn": req.fqdn, "ip": ip_address }),
         None,
         None,
-    ).await;
+    )
+    .await;
 
     tracing::info!(host_id = %host_id, fqdn = %req.fqdn, "Host registered");
     Ok(Json(json!({ "id": host_id, "message": "Host registered" })))
@@ -291,10 +294,12 @@ async fn get_host(
         )
     })?;
 
-    host.map(Json).ok_or_else(|| (
-        StatusCode::NOT_FOUND,
-        Json(json!({ "error": { "code": "not_found", "message": "Host not found" } })),
-    ))
+    host.map(Json).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": { "code": "not_found", "message": "Host not found" } })),
+        )
+    })
 }
 
 // ── DELETE /api/v1/hosts/:id ──────────────────────────────────────────────────
@@ -347,7 +352,8 @@ async fn remove_host(
         json!({ "fqdn": fqdn }),
         None,
         None,
-    ).await;
+    )
+    .await;
 
     tracing::info!(host_id = %id, "Host removed");
     Ok(Json(json!({ "message": "Host removed" })))
@@ -362,10 +368,13 @@ async fn list_host_groups(
 ) -> Result<Json<Vec<Group>>, (StatusCode, Json<Value>)> {
     if !auth.role.is_admin() {
         let can_access = operator_can_access_host(&state.db, auth.user_id, id)
-            .await.unwrap_or(false);
+            .await
+            .unwrap_or(false);
         if !can_access {
-            return Err((StatusCode::FORBIDDEN,
-                Json(json!({ "error": { "code": "forbidden", "message": "Access denied" } }))));
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(json!({ "error": { "code": "forbidden", "message": "Access denied" } })),
+            ));
         }
     }
 
@@ -381,8 +390,10 @@ async fn list_host_groups(
     .await
     .map_err(|e| {
         tracing::error!(error = %e, "Failed to list host groups");
-        (StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+        )
     })?;
 
     Ok(Json(groups))
@@ -391,7 +402,9 @@ async fn list_host_groups(
 // ── POST /api/v1/hosts/:id/groups ─────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
-struct AddToGroupRequest { group_id: Uuid }
+struct AddToGroupRequest {
+    group_id: Uuid,
+}
 
 async fn add_host_to_group(
     State(state): State<AppState>,
@@ -400,8 +413,10 @@ async fn add_host_to_group(
     Json(req): Json<AddToGroupRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     if !auth.role.is_admin() {
-        return Err((StatusCode::FORBIDDEN,
-            Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } }))));
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } })),
+        ));
     }
 
     sqlx::query(
@@ -413,13 +428,24 @@ async fn add_host_to_group(
     .await
     .map_err(|e| {
         tracing::error!(error = %e, "Failed to add host to group");
-        (StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+        )
     })?;
 
-    log_event(&state.db, AuditAction::GroupMembershipChanged,
-        Some(auth.user_id), Some(&auth.username), Some("host"), Some(&id.to_string()),
-        json!({ "group_id": req.group_id, "action": "added" }), None, None).await;
+    log_event(
+        &state.db,
+        AuditAction::GroupMembershipChanged,
+        Some(auth.user_id),
+        Some(&auth.username),
+        Some("host"),
+        Some(&id.to_string()),
+        json!({ "group_id": req.group_id, "action": "added" }),
+        None,
+        None,
+    )
+    .await;
 
     Ok(Json(json!({ "message": "Host added to group" })))
 }
@@ -432,22 +458,37 @@ async fn remove_host_from_group(
     Path((id, group_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     if !auth.role.is_admin() {
-        return Err((StatusCode::FORBIDDEN,
-            Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } }))));
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } })),
+        ));
     }
 
     sqlx::query("DELETE FROM host_groups WHERE host_id = $1 AND group_id = $2")
-        .bind(id).bind(group_id)
-        .execute(&state.db).await
+        .bind(id)
+        .bind(group_id)
+        .execute(&state.db)
+        .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to remove host from group");
-            (StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })))
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+            )
         })?;
 
-    log_event(&state.db, AuditAction::GroupMembershipChanged,
-        Some(auth.user_id), Some(&auth.username), Some("host"), Some(&id.to_string()),
-        json!({ "group_id": group_id, "action": "removed" }), None, None).await;
+    log_event(
+        &state.db,
+        AuditAction::GroupMembershipChanged,
+        Some(auth.user_id),
+        Some(&auth.username),
+        Some("host"),
+        Some(&id.to_string()),
+        json!({ "group_id": group_id, "action": "removed" }),
+        None,
+        None,
+    )
+    .await;
 
     Ok(Json(json!({ "message": "Host removed from group" })))
 }

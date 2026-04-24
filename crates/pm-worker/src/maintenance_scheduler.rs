@@ -144,7 +144,7 @@ async fn dispatch_open_window_jobs(pool: PgPool, config: Arc<AppConfig>) {
                     "dispatch_open_window_jobs: queued jobs query failed"
                 );
                 continue;
-            }
+            },
         };
 
         for job in job_ids {

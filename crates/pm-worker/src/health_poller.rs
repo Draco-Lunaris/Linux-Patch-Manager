@@ -7,15 +7,9 @@
 use std::sync::Arc;
 
 use pm_agent_client::{AgentClient, AgentClientError};
-use pm_core::{
-    config::AppConfig,
-    models::HostHealthStatus,
-};
+use pm_core::{config::AppConfig, models::HostHealthStatus};
 use sqlx::{FromRow, PgPool};
-use tokio::{
-    sync::Semaphore,
-    time,
-};
+use tokio::{sync::Semaphore, time};
 use uuid::Uuid;
 
 use crate::agent_loader::load_agent_certs;
@@ -37,10 +31,7 @@ pub async fn run_health_poller(pool: PgPool, config: Arc<AppConfig>) {
     let interval_secs = config.worker.health_poll_interval_secs;
     let mut ticker = time::interval(std::time::Duration::from_secs(interval_secs));
 
-    tracing::info!(
-        interval_secs,
-        "Health poller started"
-    );
+    tracing::info!(interval_secs, "Health poller started");
 
     loop {
         ticker.tick().await;
@@ -51,7 +42,7 @@ pub async fn run_health_poller(pool: PgPool, config: Arc<AppConfig>) {
             Err(e) => {
                 tracing::error!(error = %e, "Health poller: failed to load agent certs — skipping cycle");
                 continue;
-            }
+            },
         };
 
         let client_cert = Arc::new(certs.client_cert);
@@ -69,7 +60,7 @@ pub async fn run_health_poller(pool: PgPool, config: Arc<AppConfig>) {
             Err(e) => {
                 tracing::error!(error = %e, "Health poller: failed to fetch hosts");
                 continue;
-            }
+            },
         };
 
         if hosts.is_empty() {
@@ -107,7 +98,7 @@ pub async fn run_health_poller(pool: PgPool, config: Arc<AppConfig>) {
                 Ok(HostHealthStatus::Healthy) => healthy += 1,
                 Ok(HostHealthStatus::Degraded) => degraded += 1,
                 Ok(HostHealthStatus::Unreachable) => unreachable += 1,
-                Ok(_) => {}
+                Ok(_) => {},
                 Err(e) => tracing::error!(error = %e, "Health poller task panicked"),
             }
         }
@@ -144,25 +135,37 @@ async fn poll_host_health(
                 error = %e,
                 "Health poller: failed to build AgentClient"
             );
-            (HostHealthStatus::Unreachable, serde_json::Value::Object(Default::default()))
-        }
+            (
+                HostHealthStatus::Unreachable,
+                serde_json::Value::Object(Default::default()),
+            )
+        },
         Ok(client) => match client.health().await {
             Ok(data) => {
                 let payload = serde_json::to_value(&data).unwrap_or_default();
                 (HostHealthStatus::Healthy, payload)
-            }
+            },
             Err(AgentClientError::Timeout) => {
                 tracing::warn!(host_id = %host.id, "Health poller: agent timed out");
-                (HostHealthStatus::Unreachable, serde_json::Value::Object(Default::default()))
-            }
+                (
+                    HostHealthStatus::Unreachable,
+                    serde_json::Value::Object(Default::default()),
+                )
+            },
             Err(AgentClientError::Connect(_)) => {
                 tracing::warn!(host_id = %host.id, "Health poller: agent connection refused");
-                (HostHealthStatus::Unreachable, serde_json::Value::Object(Default::default()))
-            }
+                (
+                    HostHealthStatus::Unreachable,
+                    serde_json::Value::Object(Default::default()),
+                )
+            },
             Err(e) => {
                 tracing::warn!(host_id = %host.id, error = %e, "Health poller: agent error");
-                (HostHealthStatus::Degraded, serde_json::Value::Object(Default::default()))
-            }
+                (
+                    HostHealthStatus::Degraded,
+                    serde_json::Value::Object(Default::default()),
+                )
+            },
         },
     };
 

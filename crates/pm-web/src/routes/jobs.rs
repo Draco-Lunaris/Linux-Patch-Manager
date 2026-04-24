@@ -149,7 +149,11 @@ async fn create_job(
     .await
     .map_err(|e| {
         tracing::error!(error = %e, "create_job: insert patch_jobs failed");
-        err(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", "Database error")
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            "Database error",
+        )
     })?;
 
     // Insert one patch_job_hosts row per requested host.
@@ -170,7 +174,11 @@ async fn create_job(
                 error = %e, %job_id, %host_id,
                 "create_job: insert patch_job_hosts failed"
             );
-            err(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", "Database error")
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                "Database error",
+            )
         })?;
     }
 
@@ -310,7 +318,12 @@ async fn list_jobs(
         .unwrap_or(0)
     };
 
-    Ok(Json(JobListResponse { jobs, total, limit, offset }))
+    Ok(Json(JobListResponse {
+        jobs,
+        total,
+        limit,
+        offset,
+    }))
 }
 // ── GET /api/v1/jobs/:id ─────────────────────────────────────────────────────
 
@@ -325,11 +338,7 @@ async fn get_job(
             .await
             .unwrap_or(false);
         if !allowed {
-            return Err(err(
-                StatusCode::FORBIDDEN,
-                "forbidden",
-                "Access denied",
-            ));
+            return Err(err(StatusCode::FORBIDDEN, "forbidden", "Access denied"));
         }
     }
 
@@ -350,12 +359,14 @@ async fn get_job(
     .await
     .map_err(|e| {
         tracing::error!(error = %e, %id, "get_job: failed to fetch job");
-        err(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", "Database error")
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            "Database error",
+        )
     })?;
 
-    let job = job.ok_or_else(|| {
-        err(StatusCode::NOT_FOUND, "not_found", "Job not found")
-    })?;
+    let job = job.ok_or_else(|| err(StatusCode::NOT_FOUND, "not_found", "Job not found"))?;
 
     // Fetch per-host status rows joined to the host display name.
     let hosts: Vec<JobHostRow> = sqlx::query_as(
@@ -383,7 +394,11 @@ async fn get_job(
     .await
     .map_err(|e| {
         tracing::error!(error = %e, %id, "get_job: failed to fetch host rows");
-        err(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", "Database error")
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            "Database error",
+        )
     })?;
 
     Ok(Json(json!({ "job": job, "hosts": hosts })))
@@ -397,20 +412,22 @@ async fn cancel_job(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     // Fetch the job to verify it exists and check ownership.
-    let row: Option<(String, Option<Uuid>)> = sqlx::query_as(
-        "SELECT status::text, created_by_user_id FROM patch_jobs WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| {
-        tracing::error!(error = %e, %id, "cancel_job: db fetch failed");
-        err(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", "Database error")
-    })?;
+    let row: Option<(String, Option<Uuid>)> =
+        sqlx::query_as("SELECT status::text, created_by_user_id FROM patch_jobs WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, %id, "cancel_job: db fetch failed");
+                err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal_error",
+                    "Database error",
+                )
+            })?;
 
-    let (status_str, creator_id) = row.ok_or_else(|| {
-        err(StatusCode::NOT_FOUND, "not_found", "Job not found")
-    })?;
+    let (status_str, creator_id) =
+        row.ok_or_else(|| err(StatusCode::NOT_FOUND, "not_found", "Job not found"))?;
 
     // Only admin or the job creator may cancel.
     if !auth.role.is_admin() {
@@ -437,16 +454,18 @@ async fn cancel_job(
     }
 
     // Cancel the parent job.
-    sqlx::query(
-        "UPDATE patch_jobs SET status = 'cancelled'::job_status WHERE id = $1",
-    )
-    .bind(id)
-    .execute(&state.db)
-    .await
-    .map_err(|e| {
-        tracing::error!(error = %e, %id, "cancel_job: update patch_jobs failed");
-        err(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", "Database error")
-    })?;
+    sqlx::query("UPDATE patch_jobs SET status = 'cancelled'::job_status WHERE id = $1")
+        .bind(id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, %id, "cancel_job: update patch_jobs failed");
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                "Database error",
+            )
+        })?;
 
     // Cancel all queued/pending host rows for this job.
     sqlx::query(
@@ -462,7 +481,11 @@ async fn cancel_job(
     .await
     .map_err(|e| {
         tracing::error!(error = %e, %id, "cancel_job: update patch_job_hosts failed");
-        err(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", "Database error")
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            "Database error",
+        )
     })?;
 
     log_event(
@@ -506,7 +529,11 @@ async fn rollback_job(
             .await
             .map_err(|e| {
                 tracing::error!(error = %e, %id, "rollback_job: existence check failed");
-                err(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", "Database error")
+                err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal_error",
+                    "Database error",
+                )
             })?;
 
     if !original_exists {
@@ -521,7 +548,11 @@ async fn rollback_job(
             .await
             .map_err(|e| {
                 tracing::error!(error = %e, %id, "rollback_job: host fetch failed");
-                err(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", "Database error")
+                err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal_error",
+                    "Database error",
+                )
             })?;
 
     if host_ids.is_empty() {
@@ -552,7 +583,11 @@ async fn rollback_job(
     .await
     .map_err(|e| {
         tracing::error!(error = %e, parent_job_id = %id, "rollback_job: insert failed");
-        err(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", "Database error")
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            "Database error",
+        )
     })?;
 
     // Replicate host list into the rollback job.
@@ -573,7 +608,11 @@ async fn rollback_job(
                 error = %e, %rollback_job_id, %host_id,
                 "rollback_job: insert patch_job_hosts failed"
             );
-            err(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", "Database error")
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                "Database error",
+            )
         })?;
     }
 

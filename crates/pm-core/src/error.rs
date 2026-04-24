@@ -86,9 +86,11 @@ impl IntoResponse for AppError {
             AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, "forbidden", msg.clone()),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, "bad_request", msg.clone()),
             AppError::Conflict(msg) => (StatusCode::CONFLICT, "conflict", msg.clone()),
-            AppError::UnprocessableEntity(msg) => {
-                (StatusCode::UNPROCESSABLE_ENTITY, "unprocessable_entity", msg.clone())
-            }
+            AppError::UnprocessableEntity(msg) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "unprocessable_entity",
+                msg.clone(),
+            ),
             AppError::Database(e) => {
                 tracing::error!(error = %e, "Database error");
                 (
@@ -96,7 +98,7 @@ impl IntoResponse for AppError {
                     "internal_error",
                     "An internal error occurred".to_string(),
                 )
-            }
+            },
             AppError::Internal(e) => {
                 tracing::error!(error = %e, "Internal error");
                 (
@@ -104,7 +106,7 @@ impl IntoResponse for AppError {
                     "internal_error",
                     "An internal error occurred".to_string(),
                 )
-            }
+            },
             AppError::Config(msg) => {
                 tracing::error!(error = %msg, "Configuration error");
                 (
@@ -112,7 +114,7 @@ impl IntoResponse for AppError {
                     "config_error",
                     "Server configuration error".to_string(),
                 )
-            }
+            },
         };
 
         let body = ErrorResponse::new(code, message);

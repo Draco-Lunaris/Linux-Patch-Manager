@@ -13,8 +13,8 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use rand::RngCore;
 use rcgen::{
     BasicConstraints, Certificate, CertificateParams, DistinguishedName, DnType,
-    ExtendedKeyUsagePurpose, Ia5String, IsCa, KeyPair, KeyUsagePurpose, SanType,
-    SerialNumber, PKCS_ECDSA_P256_SHA256,
+    ExtendedKeyUsagePurpose, Ia5String, IsCa, KeyPair, KeyUsagePurpose, SanType, SerialNumber,
+    PKCS_ECDSA_P256_SHA256,
 };
 use sqlx::{PgPool, Row};
 use time::{Duration as TimeDuration, OffsetDateTime};
@@ -83,10 +83,7 @@ fn chrono_offset_days(days: i64) -> DateTime<Utc> {
 
 /// Build a `CertificateParams` with common fields pre-filled.
 /// Caller still needs to set `is_ca`, `key_usages`, `extended_key_usages`, and `subject_alt_names`.
-fn base_params(
-    cn: &str,
-    validity_days: i64,
-) -> Result<(CertificateParams, String, DateTime<Utc>)> {
+fn base_params(cn: &str, validity_days: i64) -> Result<(CertificateParams, String, DateTime<Utc>)> {
     let (serial, serial_hex) = make_serial();
     let expires_at = chrono_offset_days(validity_days);
 
@@ -144,8 +141,7 @@ impl CertAuthority {
                 .context("read ca.crt")?;
 
             // Validate that both PEMs parse without error.
-            KeyPair::from_pem(&ca_key_pem)
-                .context("parse CA private-key PEM")?;
+            KeyPair::from_pem(&ca_key_pem).context("parse CA private-key PEM")?;
             CertificateParams::from_ca_cert_pem(&ca_cert_pem)
                 .context("parse CA certificate PEM")?;
 
@@ -166,8 +162,8 @@ impl CertAuthority {
             .await
             .context("create CA directory")?;
 
-        let ca_key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
-            .context("generate CA key pair")?;
+        let ca_key =
+            KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).context("generate CA key pair")?;
 
         let (serial, serial_hex) = make_serial();
         let expires_at = chrono_offset_days(365 * 10);
@@ -177,20 +173,18 @@ impl CertAuthority {
         params.not_after = odt_offset_days(365 * 10);
         params.serial_number = Some(serial);
         params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-        params.key_usages = vec![
-            KeyUsagePurpose::KeyCertSign,
-            KeyUsagePurpose::CrlSign,
-        ];
+        params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
 
         let mut dn = DistinguishedName::new();
         dn.push(DnType::CommonName, "Patch Manager Root CA");
         dn.push(DnType::OrganizationName, "Patch Manager");
         params.distinguished_name = dn;
 
-        let ca_cert_obj = params.self_signed(&ca_key)
+        let ca_cert_obj = params
+            .self_signed(&ca_key)
             .context("self-sign CA certificate")?;
         let ca_cert_pem = ca_cert_obj.pem();
-        let ca_key_pem  = ca_key.serialize_pem();
+        let ca_key_pem = ca_key.serialize_pem();
 
         write_protected(&key_path, &ca_key_pem)
             .await
@@ -256,8 +250,8 @@ impl CertAuthority {
     ) -> Result<IssuedCert> {
         tracing::info!(host_id = %host_id, hostname, "Issuing mTLS client certificate");
 
-        let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
-            .context("generate client key pair")?;
+        let key =
+            KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).context("generate client key pair")?;
 
         let (mut params, serial_hex, expires_at) = base_params(hostname, 365)?;
         params.is_ca = IsCa::ExplicitNoCa;
@@ -270,7 +264,7 @@ impl CertAuthority {
             .context("sign client cert with CA")?;
 
         let cert_pem = cert.pem();
-        let key_pem  = key.serialize_pem();
+        let key_pem = key.serialize_pem();
 
         sqlx::query(
             "INSERT INTO certificates \
@@ -294,7 +288,12 @@ impl CertAuthority {
             "Client certificate issued successfully"
         );
 
-        Ok(IssuedCert { cert_pem, key_pem, serial_number: serial_hex, expires_at })
+        Ok(IssuedCert {
+            cert_pem,
+            key_pem,
+            serial_number: serial_hex,
+            expires_at,
+        })
     }
 
     /// Revoke a certificate by database ID.
@@ -328,18 +327,16 @@ impl CertAuthority {
         tracing::info!(cert_id = %cert_id, "Renewing certificate");
 
         // Fetch the existing cert's host_id and common_name.
-        let row = sqlx::query(
-            "SELECT host_id, common_name FROM certificates WHERE id = $1",
-        )
-        .bind(cert_id)
-        .fetch_one(db)
-        .await
-        .context("fetch certificate for renewal")?;
+        let row = sqlx::query("SELECT host_id, common_name FROM certificates WHERE id = $1")
+            .bind(cert_id)
+            .fetch_one(db)
+            .await
+            .context("fetch certificate for renewal")?;
 
-        let host_id: Uuid = row.try_get("host_id")
+        let host_id: Uuid = row
+            .try_get("host_id")
             .context("certificate has no host_id (cannot renew root CA)")?;
-        let common_name: String = row.try_get("common_name")
-            .context("fetch common_name")?;
+        let common_name: String = row.try_get("common_name").context("fetch common_name")?;
 
         // Revoke the old cert first.
         self.revoke_cert(cert_id, db).await?;
@@ -364,14 +361,11 @@ impl CertAuthority {
     ///
     /// Returns `(cert_pem, key_pem)`. This certificate is **not** stored in the
     /// database; it is intended for runtime use only.
-    pub async fn issue_web_tls_cert(
-        &self,
-        hostname: &str,
-    ) -> Result<(String, String)> {
+    pub async fn issue_web_tls_cert(&self, hostname: &str) -> Result<(String, String)> {
         tracing::info!(hostname, "Issuing web TLS certificate");
 
-        let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
-            .context("generate web TLS key pair")?;
+        let key =
+            KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).context("generate web TLS key pair")?;
 
         let (mut params, serial_hex, expires_at) = base_params(hostname, 365)?;
         params.is_ca = IsCa::ExplicitNoCa;
@@ -387,7 +381,7 @@ impl CertAuthority {
             .context("sign web TLS cert with CA")?;
 
         let cert_pem = cert.pem();
-        let key_pem  = key.serialize_pem();
+        let key_pem = key.serialize_pem();
 
         tracing::info!(
             hostname,
@@ -408,8 +402,8 @@ impl CertAuthority {
     /// The returned `Certificate` is used solely as an issuer reference when
     /// signing leaf certificates; it is never distributed directly.
     fn ca_objects(&self) -> Result<(KeyPair, Certificate)> {
-        let key = KeyPair::from_pem(&self.ca_key_pem)
-            .context("reconstruct CA key pair from PEM")?;
+        let key =
+            KeyPair::from_pem(&self.ca_key_pem).context("reconstruct CA key pair from PEM")?;
         let params = CertificateParams::from_ca_cert_pem(&self.ca_cert_pem)
             .context("reconstruct CA params from PEM")?;
         let cert = params

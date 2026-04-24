@@ -38,9 +38,6 @@ pub use error::AgentClientError;
 
 /// Response envelope and all data types.
 pub use types::{
-    AgentEnvelope, AgentErrorBody,
-    HealthData,
-    Package, PackagesData,
-    Patch, PatchesData,
+    AgentEnvelope, AgentErrorBody, HealthData, Package, PackagesData, Patch, PatchesData,
     SystemInfoData,
 };

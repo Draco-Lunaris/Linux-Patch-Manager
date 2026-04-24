@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use config::{Config, ConfigError, Environment, File};
+use serde::{Deserialize, Serialize};
 
 /// Top-level application configuration.
 #[derive(Debug, Clone, Deserialize, Serialize)]
