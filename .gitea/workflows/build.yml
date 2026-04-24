@@ -14,6 +14,15 @@ jobs:
   build-and-package:
     runs-on: linux
     steps:
+      - name: Debug environment
+        run: |
+          echo "GITHUB_TOKEN=${GITHUB_TOKEN:-NOT_SET}"
+          echo "GITEA_TOKEN=${GITEA_TOKEN:-NOT_SET}"
+          echo "GITHUB_SERVER_URL=${GITHUB_SERVER_URL:-NOT_SET}"
+          echo "GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-NOT_SET}"
+          echo "GITHUB_SHA=${GITHUB_SHA:-NOT_SET}"
+          echo "GITHUB_REF=${GITHUB_REF:-NOT_SET}"
+          env | sort
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
