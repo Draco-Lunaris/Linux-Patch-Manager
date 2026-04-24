@@ -23,9 +23,10 @@ jobs:
 
       - name: Checkout repository
         run: |
-          # Use Gitea API archive download (avoids git auth issues with private repos)
-          # Token auth works reliably in HTTP headers, not in git URLs
-          curl -sf -H "Authorization: token ${GITHUB_TOKEN}" \
+          # Use Gitea API archive download with token auth
+          # GITHUB_TOKEN may not be injected in linux:host mode; fall back to GITEA_TOKEN
+          TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
+          curl -sf -H "Authorization: token ${TOKEN}" \
             "http://192.168.2.189:3000/api/v1/repos/${GITHUB_REPOSITORY}/archive/${GITHUB_SHA}.tar.gz" \
             -o repo.tar.gz
           tar xzf repo.tar.gz --strip-components=1
