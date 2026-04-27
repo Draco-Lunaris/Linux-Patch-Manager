@@ -162,7 +162,7 @@ jobs:
       - name: Install Node.js 18
         run: |
           # Remove conflicting packages from old Node.js installation
-          apt-get remove -y libnode-dev node-gyp npm || true
+          apt-get remove -y libnode-dev libnode72 node-gyp npm || true
           apt-get autoremove -y || true
           # Install Node.js 18 from NodeSource
           curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
