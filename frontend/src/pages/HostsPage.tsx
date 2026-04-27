@@ -41,7 +41,7 @@ export default function HostsPage() {
     }
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const filtered = hosts.filter(h =>
     h.fqdn.toLowerCase().includes(search.toLowerCase()) ||

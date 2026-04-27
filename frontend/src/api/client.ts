@@ -33,7 +33,7 @@ let failedQueue: Array<{ resolve: (v: string) => void; reject: (e: unknown) => v
 const processQueue = (error: unknown, token: string | null) => {
   failedQueue.forEach(({ resolve, reject }) => {
     if (error) reject(error)
-    else resolve(token!)
+    else resolve(token!) // eslint-disable-line @typescript-eslint/no-non-null-assertion
   })
   failedQueue = []
 }
