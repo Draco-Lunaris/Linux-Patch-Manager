@@ -689,3 +689,139 @@ HTTP status codes follow standard REST semantics (`400`, `401`, `403`, `404`, `4
 | C-21 | Added §14 Design Rationale, §15 Risks and Trade-offs, §16 Open Issues, §17 Future Considerations | IEEE 1016 §7 (Design Rationale) was missing; risks and open issues give reviewers a clear audit surface |
 | C-22 | Replaced the Email Notifier arrow that pointed back into the web server's mTLS client on the original diagram with a correct component placement in §4.2 | Original diagram implied email flowed through the mTLS client, which is not the design |
 | C-23 | Added C-X change IDs throughout this log | Enables traceability in future reviews |
+
+---
+
+## 6. Data Flow
+
+### 6.1 Host Registration
+
+```
+1. Admin enters FQDN / IP -> Web validates and resolves FQDN to IP.
+2. Web inserts row in `hosts` (status = pending).
+3. Web NOTIFYs `host_registered` -> Worker performs initial mTLS health check.
+4. Worker updates `hosts.health_status` and `host_health_data` -> visible in Dashboard.
+```
+
+### 6.2 Auto-Discovery (CIDR scan)
+
+```
+1. Admin triggers CIDR scan -> Web inserts a discovery job and NOTIFYs `discovery_enqueued`.
+2. Worker scans the subnet for agents listening on port 12443 (bounded concurrency, TLS probe).
+3. Discovered agents written to a transient `discovery_results` table.
+4. Admin reviews and selects which to register; each selection follows the 6.1 flow.
+```
+
+### 6.3 Patch Deployment — Queued
+
+```
+1. Operator selects hosts + patches -> "Queue for next window".
+2. Web creates `patch_jobs` row (status = queued) and `patch_job_hosts` rows.
+3. Job Scheduler detects the next applicable maintenance window per host.
+4. At window open, Worker calls the Agent API to start patch operations.
+5. Worker polls agent job status (and/or consumes WebSocket events) and updates rows.
+6. WebSocket Relay pushes updates to subscribed browsers in real time.
+7. Failed hosts are auto-retried once if still within the window (see §8).
+```
+
+### 6.4 Patch Deployment — Immediate
+
+```
+1. Operator selects hosts + patches -> "Apply Now".
+2. Web creates `patch_jobs` row (status = pending) and NOTIFYs `job_enqueued`.
+3. Worker wakes immediately and triggers the agent calls.
+4. Same monitoring and retry logic as the queued flow.
+```
+
+### 6.5 Rollback
+
+```
+1. Operator opens a completed or failed job and clicks "Rollback".
+2. Web creates a `patch_jobs` row with kind = rollback, parent_job_id = <original>.
+3. Worker calls `POST /api/v1/jobs/{id}/rollback` on each affected agent.
+4. Results are tracked like any other job; audit log records the rollback actor.
+```
+
+### 6.6 Health / Patch Polling
+
+```
+1. Worker polls each agent on schedule (5 min health, 30 min patches).
+2. Results cached in `host_health_data` and `host_patch_data`.
+3. Unhealthy agents are flagged with visual alerts in the Dashboard.
+4. On-demand refresh: operator clicks refresh -> Web NOTIFYs `refresh_requested`; Worker queries immediately.
+```
+
+---
+
+## 7. Security Architecture
+
+### 7.1 Authentication
+
+- **Local accounts:** Argon2id-hashed passwords; TOTP or WebAuthn for MFA (enforced).
+- **Azure SSO:** OAuth2 / OIDC Authorization Code flow with PKCE; Azure's built-in MFA satisfies the MFA requirement.
+- **Access tokens:** JWT, signed with a rotating HS256 or EdDSA key (implementation choice); 15-minute TTL.
+- **Refresh tokens:** Opaque, 256-bit, stored hashed in `refresh_tokens`; **1-hour sliding inactivity timeout** (rotated on use; revocable).
+- **Revocation:** Admins can force-revoke a user's refresh tokens; next access-token expiry terminates all sessions.
+
+### 7.2 Authorization (RBAC)
+
+- **Admin** — Full access to all resources and settings.
+- **Operator** — Can add / remove hosts and manage schedules / patches only for devices in their assigned groups.
+- **Group scoping** — Enforced by middleware at every API endpoint that touches host-scoped data.
+- **Ungrouped hosts** — Accessible by any operator or admin (explicit product decision).
+
+### 7.3 Agent Communication
+
+- **mTLS** — Client certificate authentication for every agent call and WebSocket.
+- **TLS 1.3 only** — Older TLS versions are refused at the Rustls configuration layer.
+- **Internal CA** — Manager issues and renews client certificates.
+- **Manual distribution** — Server administrators install certs on managed clients; the Manager holds no credentials for managed hosts and cannot push files to them.
+
+### 7.4 Data Protection
+
+- **Encryption at rest** — LUKS full-disk encryption, managed by the underlying infrastructure. This is the single mechanism of record; column-level encryption is **not** used (contrasts with an earlier `REQUIREMENTS.md` wording; see §14 Open Issues).
+- **Encryption in transit** — TLS 1.3 for all agent and browser connections.
+- **Audit log integrity** — Hash-chained rows (`audit_log.prev_hash`, `audit_log.row_hash`); integrity verified by a periodic check job and on-demand from the UI.
+- **Password storage** — Argon2id with per-user salt and parameters calibrated for ~250 ms on the deployment hardware.
+- **Secrets on disk** — Configuration secrets (JWT key, CA private key, DB password) are stored in `/etc/patch-manager/secrets/` with `0600` permissions, owned by the service user; not committed to the repository.
+
+### 7.5 Compliance Mapping
+
+- **HIPAA §164.312:** Audit controls (§7.4), access controls (§7.2 + MFA), integrity controls (hash-chained audit), transmission security (TLS 1.3 / mTLS), automatic logoff (1-hour inactivity).
+- **PCI-DSS:** Requirement 6 (vulnerability management — the core function), Requirement 7 (need-to-know via group scoping), Requirement 8 (MFA, unique IDs), Requirement 10 (audit with 6-month retention), Requirements 3 & 4 (encryption at rest and in transit).
+
+---
+
+## 8. Error Handling and Reliability
+
+### 8.1 Agent Communication Failures
+
+- Mark host as **unhealthy** in the Dashboard.
+- Retry with **exponential backoff**: up to **3 retries**, capped at **30 minutes** between attempts (example schedule: 1 min, 5 min, 30 min).
+- Continue processing other hosts without blocking.
+- After exhausting retries, the host is flagged and reported in the next compliance report.
+
+### 8.2 Patch Job Failures
+
+- Auto-retry a failed patch job **once** if still within the maintenance window.
+- If the retry fails, or the window has closed, surface the failure prominently in the Jobs view and in any configured email notifications.
+
+### 8.3 Batch Operations with Partial Failures
+
+- Auto-retry failed hosts **once**.
+- If retry fails, report the failed hosts in the job detail view and let the operator decide next steps.
+- Successful hosts complete normally regardless of failures elsewhere in the batch.
+
+### 8.4 API Error Response Format
+
+All Manager API errors use a consistent JSON envelope:
+
+```json
+{
+  "error": {
+    "code": "host_not_found",
+    "message": "No host with id 42 in any group you can access.",
+    "request_id": "01JF8Q…",
+    "details": {}
+  }
+}
