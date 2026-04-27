@@ -42,9 +42,7 @@ export default [
       'no-var': 'error',
       'eqeqeq': ['error', 'always'],
       'curly': ['error', 'multi-line'],
-
-      // Code quality
-      'no-console': ['warn', { allow: ['warn', 'error'] }],
+    },
   },
   {
     files: ['**/*.js'],
