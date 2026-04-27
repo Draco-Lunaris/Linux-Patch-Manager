@@ -267,4 +267,5 @@ jobs:
           DEB=$(ls linux-patch-manager_*.deb)
           python3 scripts/create-release.py \
             --tag "${GITHUB_REF_NAME}" \
-            --deb "${DEB}"
+            --deb "${DEB}" \
+            --version "${VERSION}"
