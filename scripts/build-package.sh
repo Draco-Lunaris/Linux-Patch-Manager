@@ -126,7 +126,7 @@ info ".deb package created: ${DEB_NAME}"
 info "Step 5/5: Verifying package..."
 dpkg-deb --info "${PROJECT_ROOT}/${DEB_NAME}"
 echo
-dpkg-deb --contents "${PROJECT_ROOT}/${DEB_NAME}" | head -20
+dpkg-deb --contents "${PROJECT_ROOT}/${DEB_NAME}" | head -20 || true
 echo
 
 PKG_SIZE=$(du -h "${PROJECT_ROOT}/${DEB_NAME}" | cut -f1)
