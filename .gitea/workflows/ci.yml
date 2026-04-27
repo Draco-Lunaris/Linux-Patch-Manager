@@ -161,15 +161,12 @@ jobs:
 
       - name: Install Node.js 18
         run: |
-          # Download and install Node.js 18 binary directly
-          NODE_VERSION="18.20.8"
-          curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.gz" -o /tmp/nodejs.tar.gz
-          tar -xzf /tmp/nodejs.tar.gz -C /usr/local --strip-components=1
-          rm -f /tmp/nodejs.tar.gz
-          # Create symlinks
-          ln -sf /usr/local/bin/node /usr/bin/node
-          ln -sf /usr/local/bin/npm /usr/bin/npm
-          ln -sf /usr/local/bin/npx /usr/bin/npx
+          # Install n (Node version manager) and use it to install Node.js 18
+          npm install -g n
+          n 18
+          # Ensure node and npm are in PATH
+          export PATH="/usr/local/bin:$PATH"
+          hash -r
           node --version
           npm --version
 
