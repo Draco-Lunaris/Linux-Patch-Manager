@@ -247,6 +247,7 @@ jobs:
 
       - name: Assemble .deb package
         run: |
+          . "$HOME/.cargo/env"
           chmod +x scripts/build-package.sh
           scripts/build-package.sh
 
