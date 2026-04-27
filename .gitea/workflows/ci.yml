@@ -16,7 +16,7 @@ jobs:
 
   rust-format:
     name: Rust Format Check
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Install checkout dependencies
         run: |
@@ -50,7 +50,7 @@ jobs:
 
   clippy:
     name: Clippy Lints
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Install system dependencies
         run: |
@@ -83,7 +83,7 @@ jobs:
 
   rust-test:
     name: Rust Unit Tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Install system dependencies
         run: |
@@ -115,7 +115,7 @@ jobs:
 
   security-audit:
     name: Security Audit
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Install checkout dependencies
         run: |
@@ -192,7 +192,7 @@ jobs:
 
   build-and-release:
     name: Build .deb & Release
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: [rust-format, clippy, rust-test, security-audit, frontend-lint]
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
