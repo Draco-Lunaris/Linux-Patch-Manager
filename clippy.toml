@@ -7,5 +7,5 @@ cognitive-complexity-threshold = 30
 # Type complexity limits
 type-complexity-threshold = 300
 
-# Single character binding names allowed for common patterns (i, j, k, e, f, etc.)
-allow-single-char-binding-names = ["i", "j", "k", "n", "e", "f", "r", "w", "x", "y", "z"]
+# Single character binding names threshold
+single-char-binding-names-threshold = 11
