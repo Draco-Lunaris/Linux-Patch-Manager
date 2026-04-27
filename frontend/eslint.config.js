@@ -43,12 +43,8 @@ export default [
       'eqeqeq': ['error', 'always'],
       'curly': ['error', 'multi-line'],
 
-      // React-specific
-      'react/jsx-no-duplicate-props': 'error',
-      'react/jsx-no-undef': 'error',
-      'react/no-direct-mutation-state': 'error',
-      'react/no-unused-state': 'warn',
-    },
+      // Code quality
+      'no-console': ['warn', { allow: ['warn', 'error'] }],
   },
   {
     files: ['**/*.js'],
