@@ -126,7 +126,7 @@ export default function ReportsPage() {
       link.click()
       link.remove()
       window.URL.revokeObjectURL(url)
-    } catch (_err: unknown) {
+    } catch {
       setError('Failed to generate report. Please try again.')
     } finally {
       setDownloading(false)
