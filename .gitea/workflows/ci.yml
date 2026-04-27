@@ -159,14 +159,11 @@ jobs:
           apt-get update -qq
           apt-get install -y --no-install-recommends curl ca-certificates
 
-      - name: Install Node.js 18
+      - name: Install Node.js from Ubuntu repos
         run: |
-          # Install n (Node version manager) and use it to install Node.js 18
-          npm install -g n
-          n 18
-          # Ensure node and npm are in PATH
-          export PATH="/usr/local/bin:$PATH"
-          hash -r
+          # Use only Ubuntu repository packages
+          apt-get update -qq
+          apt-get install -y --no-install-recommends nodejs npm
           node --version
           npm --version
 
