@@ -1,6 +1,6 @@
 name: CI Pipeline
 
-on:
+"on":
   push:
     branches: [master]
     tags: ["v*"]
@@ -25,13 +25,14 @@ jobs:
 
       - name: Checkout repository
         run: |
-          TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
+          TOKEN="${{ secrets.GITEATOKEN }}"
           REPO="${GITHUB_REPOSITORY:-echo/linux_patch_manager}"
           curl -sf -H "Authorization: token ${TOKEN}" \
-            "http://192.168.2.189:3000/api/v1/repos/${REPO}/archive/${GITHUB_SHA}.tar.gz" \
+            "https://gitea-lxc.moon-dragon.us/api/v1/repos/${REPO}/archive/${GITHUB_SHA}.tar.gz" \
             -o repo.tar.gz
           tar xzf repo.tar.gz --strip-components=1
           rm repo.tar.gz
+
 
       - name: Ensure Rust toolchain
         run: |
@@ -60,13 +61,14 @@ jobs:
 
       - name: Checkout repository
         run: |
-          TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
+          TOKEN="${{ secrets.GITEATOKEN }}"
           REPO="${GITHUB_REPOSITORY:-echo/linux_patch_manager}"
           curl -sf -H "Authorization: token ${TOKEN}" \
-            "http://192.168.2.189:3000/api/v1/repos/${REPO}/archive/${GITHUB_SHA}.tar.gz" \
+            "https://gitea-lxc.moon-dragon.us/api/v1/repos/${REPO}/archive/${GITHUB_SHA}.tar.gz" \
             -o repo.tar.gz
           tar xzf repo.tar.gz --strip-components=1
           rm repo.tar.gz
+
 
       - name: Ensure Rust toolchain
         run: |
@@ -94,13 +96,14 @@ jobs:
 
       - name: Checkout repository
         run: |
-          TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
+          TOKEN="${{ secrets.GITEATOKEN }}"
           REPO="${GITHUB_REPOSITORY:-echo/linux_patch_manager}"
           curl -sf -H "Authorization: token ${TOKEN}" \
-            "http://192.168.2.189:3000/api/v1/repos/${REPO}/archive/${GITHUB_SHA}.tar.gz" \
+            "https://gitea-lxc.moon-dragon.us/api/v1/repos/${REPO}/archive/${GITHUB_SHA}.tar.gz" \
             -o repo.tar.gz
           tar xzf repo.tar.gz --strip-components=1
           rm repo.tar.gz
+
 
       - name: Ensure Rust toolchain
         run: |
@@ -127,13 +130,14 @@ jobs:
 
       - name: Checkout repository
         run: |
-          TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
+          TOKEN="${{ secrets.GITEATOKEN }}"
           REPO="${GITHUB_REPOSITORY:-echo/linux_patch_manager}"
           curl -sf -H "Authorization: token ${TOKEN}" \
-            "http://192.168.2.189:3000/api/v1/repos/${REPO}/archive/${GITHUB_SHA}.tar.gz" \
+            "https://gitea-lxc.moon-dragon.us/api/v1/repos/${REPO}/archive/${GITHUB_SHA}.tar.gz" \
             -o repo.tar.gz
           tar xzf repo.tar.gz --strip-components=1
           rm repo.tar.gz
+
 
       - name: Ensure Rust toolchain
         run: |
@@ -165,13 +169,14 @@ jobs:
 
       - name: Checkout repository
         run: |
-          TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
+          TOKEN="${{ secrets.GITEATOKEN }}"
           REPO="${GITHUB_REPOSITORY:-echo/linux_patch_manager}"
           curl -sf -H "Authorization: token ${TOKEN}" \
-            "http://192.168.2.189:3000/api/v1/repos/${REPO}/archive/${GITHUB_SHA}.tar.gz" \
+            "https://gitea-lxc.moon-dragon.us/api/v1/repos/${REPO}/archive/${GITHUB_SHA}.tar.gz" \
             -o repo.tar.gz
           tar xzf repo.tar.gz --strip-components=1
           rm repo.tar.gz
+
 
       - name: Install Node.js dependencies
         working-directory: frontend
@@ -202,13 +207,14 @@ jobs:
 
       - name: Checkout repository
         run: |
-          TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
+          TOKEN="${{ secrets.GITEATOKEN }}"
           REPO="${GITHUB_REPOSITORY:-echo/linux_patch_manager}"
           curl -sf -H "Authorization: token ${TOKEN}" \
-            "http://192.168.2.189:3000/api/v1/repos/${REPO}/archive/${GITHUB_SHA}.tar.gz" \
+            "https://gitea-lxc.moon-dragon.us/api/v1/repos/${REPO}/archive/${GITHUB_SHA}.tar.gz" \
             -o repo.tar.gz
           tar xzf repo.tar.gz --strip-components=1
           rm repo.tar.gz
+
 
       - name: Ensure Rust toolchain
         run: |
@@ -265,6 +271,5 @@ jobs:
             --repo "${REPO}" \
             --tag "${REF_NAME}" \
             --title "Release ${REF_NAME}" \
-            --asset "${DEB}" \
-            --token "${GITHUB_TOKEN:-$GITEA_TOKEN}" \
-            --gitea-url "http://192.168.2.189:3000"
+            --token "${{ secrets.GITEATOKEN }}" \
+            --gitea-url "https://gitea-lxc.moon-dragon.us"
