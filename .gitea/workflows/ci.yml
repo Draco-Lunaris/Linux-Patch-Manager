@@ -258,15 +258,13 @@ jobs:
 
       - name: Create Gitea Release (tags only)
         if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GITEA_TOKEN: ${{ secrets.GITEATOKEN }}
+          GITEA_URL: https://gitea-lxc.moon-dragon.us
+          GITEA_REPO: echo/linux_patch_manager
         run: |
-          . "$HOME/.cargo/env"
           VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*=.*"\(.*\)"/\1/')
-          REPO="${GITHUB_REPOSITORY:-echo/linux_patch_manager}"
-          REF_NAME="${GITHUB_REF_NAME:-v${VERSION}}"
           DEB=$(ls linux-patch-manager_*.deb)
           python3 scripts/create-release.py \
-            --repo "${REPO}" \
-            --tag "${REF_NAME}" \
-            --title "Release ${REF_NAME}" \
-            --token "${{ secrets.GITEATOKEN }}" \
-            --gitea-url "https://gitea-lxc.moon-dragon.us"
+            --tag "${GITHUB_REF_NAME}" \
+            --deb "${DEB}"
