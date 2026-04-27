@@ -111,7 +111,7 @@ export function useJobWebSocket(options: JobWsOptions = {}): JobWsState {
 
     ws.onopen = () => {
       if (!mountedRef.current) { ws.close(); return }
-      console.debug('[JobWS] Connected')
+      console.warn('[JobWS] Connected')
       backoffRef.current = BACKOFF_INITIAL_MS // reset backoff on successful connect
       setConnected(true)
     }
@@ -134,7 +134,7 @@ export function useJobWebSocket(options: JobWsOptions = {}): JobWsState {
 
     ws.onclose = () => {
       if (!mountedRef.current) return
-      console.debug('[JobWS] Disconnected — scheduling reconnect')
+      console.warn('[JobWS] Disconnected — scheduling reconnect')
       setConnected(false)
       wsRef.current = null
       scheduleReconnect()
@@ -147,7 +147,7 @@ export function useJobWebSocket(options: JobWsOptions = {}): JobWsState {
     clearRetryTimer()
     const delay = backoffRef.current
     backoffRef.current = Math.min(delay * BACKOFF_FACTOR, BACKOFF_MAX_MS)
-    console.debug(`[JobWS] Reconnecting in ${delay} ms`)
+    console.warn(`[JobWS] Reconnecting in ${delay} ms`)
     retryTimerRef.current = setTimeout(() => {
       if (mountedRef.current) connect()
     }, delay)

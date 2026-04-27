@@ -1,5 +1,4 @@
-import axios, { type AxiosError } from 'axios'
-import type { InternalAxiosRequestConfig } from 'axios'
+import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios'
 import { useAuthStore } from '../store/authStore'
 import type {
   FleetStatus,

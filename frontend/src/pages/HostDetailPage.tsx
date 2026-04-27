@@ -64,11 +64,11 @@ function scheduleDescription(w: MaintenanceWindow): string {
     case 'daily':
       return `Every day at ${time} for ${dur}`
     case 'weekly': {
-      const day = w.recurrence_day != null ? DAY_NAMES[w.recurrence_day] ?? `Day ${w.recurrence_day}` : '?'
+      const day = w.recurrence_day !== null ? DAY_NAMES[w.recurrence_day] ?? `Day ${w.recurrence_day}` : '?'
       return `Every ${day} at ${time} for ${dur}`
     }
     case 'monthly': {
-      const day = w.recurrence_day != null ? w.recurrence_day : '?'
+      const day = w.recurrence_day !== null ? w.recurrence_day : '?'
       return `Monthly on day ${day} at ${time} for ${dur}`
     }
   }

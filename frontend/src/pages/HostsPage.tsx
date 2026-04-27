@@ -6,8 +6,7 @@ import {
 } from '@mui/material'
 import { Add as AddIcon, Refresh as RefreshIcon, Delete as DeleteIcon } from '@mui/icons-material'
 import { useNavigate } from 'react-router-dom'
-import { apiClient } from '../api/client'
-import { hostsApi } from '../api/client'
+import { apiClient, hostsApi } from '../api/client'
 import type { Host, HostHealthStatus } from '../types'
 
 const statusColor = (s: HostHealthStatus) =>
