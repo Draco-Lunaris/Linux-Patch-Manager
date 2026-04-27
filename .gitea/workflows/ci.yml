@@ -253,8 +253,8 @@ jobs:
 
       - name: Verify package
         run: |
-          ls -la target/package/*.deb
-          dpkg-deb -I target/package/linux-patch-manager_*.deb
+          ls -la *.deb
+          dpkg-deb -I linux-patch-manager_*.deb
 
       - name: Create Gitea Release (tags only)
         if: startsWith(github.ref, 'refs/tags/v')
@@ -263,7 +263,7 @@ jobs:
           VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*=.*"\(.*\)"/\1/')
           REPO="${GITHUB_REPOSITORY:-echo/linux_patch_manager}"
           REF_NAME="${GITHUB_REF_NAME:-v${VERSION}}"
-          DEB=$(ls target/package/linux-patch-manager_*.deb)
+          DEB=$(ls linux-patch-manager_*.deb)
           python3 scripts/create-release.py \
             --repo "${REPO}" \
             --tag "${REF_NAME}" \
