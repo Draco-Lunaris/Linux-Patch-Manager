@@ -161,15 +161,15 @@ jobs:
 
       - name: Install Node.js 18
         run: |
-          # Completely remove old Node.js packages
-          apt-get purge -y libnode72 libnode-dev nodejs || true
-          apt-get autoremove -y || true
-          apt-get clean
-          # Remove any remaining conflicting files
-          rm -rf /usr/share/systemtap/tapset/node.stp || true
-          # Install Node.js 18 from NodeSource
-          curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
-          apt-get install -y nodejs
+          # Download and install Node.js 18 binary directly
+          NODE_VERSION="18.20.8"
+          curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.gz" -o /tmp/nodejs.tar.gz
+          tar -xzf /tmp/nodejs.tar.gz -C /usr/local --strip-components=1
+          rm -f /tmp/nodejs.tar.gz
+          # Create symlinks
+          ln -sf /usr/local/bin/node /usr/bin/node
+          ln -sf /usr/local/bin/npm /usr/bin/npm
+          ln -sf /usr/local/bin/npx /usr/bin/npx
           node --version
           npm --version
 
