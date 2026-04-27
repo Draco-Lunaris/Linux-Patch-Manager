@@ -26,13 +26,11 @@ jobs:
       - name: Checkout repository
         run: |
           TOKEN="${{ secrets.GITEATOKEN }}"
-          REPO="${GITHUB_REPOSITORY:-echo/linux_patch_manager}"
           curl -sf -H "Authorization: token ${TOKEN}" \
-            "https://gitea-lxc.moon-dragon.us/api/v1/repos/${REPO}/archive/${GITHUB_SHA}.tar.gz" \
+            "https://gitea-lxc.moon-dragon.us/echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" \
             -o repo.tar.gz
           tar xzf repo.tar.gz --strip-components=1
           rm repo.tar.gz
-
 
       - name: Ensure Rust toolchain
         run: |
@@ -62,13 +60,11 @@ jobs:
       - name: Checkout repository
         run: |
           TOKEN="${{ secrets.GITEATOKEN }}"
-          REPO="${GITHUB_REPOSITORY:-echo/linux_patch_manager}"
           curl -sf -H "Authorization: token ${TOKEN}" \
-            "https://gitea-lxc.moon-dragon.us/api/v1/repos/${REPO}/archive/${GITHUB_SHA}.tar.gz" \
+            "https://gitea-lxc.moon-dragon.us/echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" \
             -o repo.tar.gz
           tar xzf repo.tar.gz --strip-components=1
           rm repo.tar.gz
-
 
       - name: Ensure Rust toolchain
         run: |
@@ -97,13 +93,11 @@ jobs:
       - name: Checkout repository
         run: |
           TOKEN="${{ secrets.GITEATOKEN }}"
-          REPO="${GITHUB_REPOSITORY:-echo/linux_patch_manager}"
           curl -sf -H "Authorization: token ${TOKEN}" \
-            "https://gitea-lxc.moon-dragon.us/api/v1/repos/${REPO}/archive/${GITHUB_SHA}.tar.gz" \
+            "https://gitea-lxc.moon-dragon.us/echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" \
             -o repo.tar.gz
           tar xzf repo.tar.gz --strip-components=1
           rm repo.tar.gz
-
 
       - name: Ensure Rust toolchain
         run: |
@@ -131,13 +125,11 @@ jobs:
       - name: Checkout repository
         run: |
           TOKEN="${{ secrets.GITEATOKEN }}"
-          REPO="${GITHUB_REPOSITORY:-echo/linux_patch_manager}"
           curl -sf -H "Authorization: token ${TOKEN}" \
-            "https://gitea-lxc.moon-dragon.us/api/v1/repos/${REPO}/archive/${GITHUB_SHA}.tar.gz" \
+            "https://gitea-lxc.moon-dragon.us/echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" \
             -o repo.tar.gz
           tar xzf repo.tar.gz --strip-components=1
           rm repo.tar.gz
-
 
       - name: Ensure Rust toolchain
         run: |
@@ -170,13 +162,11 @@ jobs:
       - name: Checkout repository
         run: |
           TOKEN="${{ secrets.GITEATOKEN }}"
-          REPO="${GITHUB_REPOSITORY:-echo/linux_patch_manager}"
           curl -sf -H "Authorization: token ${TOKEN}" \
-            "https://gitea-lxc.moon-dragon.us/api/v1/repos/${REPO}/archive/${GITHUB_SHA}.tar.gz" \
+            "https://gitea-lxc.moon-dragon.us/echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" \
             -o repo.tar.gz
           tar xzf repo.tar.gz --strip-components=1
           rm repo.tar.gz
-
 
       - name: Install Node.js dependencies
         working-directory: frontend
@@ -208,13 +198,11 @@ jobs:
       - name: Checkout repository
         run: |
           TOKEN="${{ secrets.GITEATOKEN }}"
-          REPO="${GITHUB_REPOSITORY:-echo/linux_patch_manager}"
           curl -sf -H "Authorization: token ${TOKEN}" \
-            "https://gitea-lxc.moon-dragon.us/api/v1/repos/${REPO}/archive/${GITHUB_SHA}.tar.gz" \
+            "https://gitea-lxc.moon-dragon.us/echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" \
             -o repo.tar.gz
           tar xzf repo.tar.gz --strip-components=1
           rm repo.tar.gz
-
 
       - name: Ensure Rust toolchain
         run: |
