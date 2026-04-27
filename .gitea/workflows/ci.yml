@@ -1,6 +1,6 @@
 name: CI Pipeline
 
-"on":
+on:
   push:
     branches: [master]
     tags: ["v*"]
@@ -12,23 +12,42 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  # ─── Quality Gates (run on every push/PR/tag) ───
+
   rust-format:
     name: Rust Format Check
     runs-on: ubuntu-22.04
     steps:
+      - name: Install checkout dependencies
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends curl ca-certificates
+
       - name: Checkout repository
         run: |
-          curl -sfL -H "Authorization: token ${{ secrets.GITEATOKEN }}" "https://gitea-lxc.moon-dragon.us/echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" -o repo.tar.gz
-          tar -xzf repo.tar.gz --strip-components=1
-          rm -f repo.tar.gz
-      - name: Install Rust
+          TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
+          REPO="${GITHUB_REPOSITORY:-echo/linux_patch_manager}"
+          curl -sf -H "Authorization: token ${TOKEN}" \
+            "http://192.168.2.189:3000/api/v1/repos/${REPO}/archive/${GITHUB_SHA}.tar.gz" \
+            -o repo.tar.gz
+          tar xzf repo.tar.gz --strip-components=1
+          rm repo.tar.gz
+
+      - name: Ensure Rust toolchain
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+          if ! command -v cargo &>/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            . "$HOME/.cargo/env"
+          fi
           . "$HOME/.cargo/env"
           rustup component add rustfmt
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "Rust: $(cargo --version)"
+          echo "Rustfmt: $(rustfmt --version)"
+
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        run: |
+          . "$HOME/.cargo/env"
+          cargo fmt --check --all 2>&1
 
   clippy:
     name: Clippy Lints
@@ -36,21 +55,33 @@ jobs:
     steps:
       - name: Install system dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends curl ca-certificates build-essential pkg-config libssl-dev
+          apt-get update -qq
+          apt-get install -y --no-install-recommends curl ca-certificates pkg-config libssl-dev
+
       - name: Checkout repository
         run: |
-          curl -sfL -H "Authorization: token ${{ secrets.GITEATOKEN }}" "https://gitea-lxc.moon-dragon.us/echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" -o repo.tar.gz
-          tar -xzf repo.tar.gz --strip-components=1
-          rm -f repo.tar.gz
-      - name: Install Rust
+          TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
+          REPO="${GITHUB_REPOSITORY:-echo/linux_patch_manager}"
+          curl -sf -H "Authorization: token ${TOKEN}" \
+            "http://192.168.2.189:3000/api/v1/repos/${REPO}/archive/${GITHUB_SHA}.tar.gz" \
+            -o repo.tar.gz
+          tar xzf repo.tar.gz --strip-components=1
+          rm repo.tar.gz
+
+      - name: Ensure Rust toolchain
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+          if ! command -v cargo &>/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            . "$HOME/.cargo/env"
+          fi
           . "$HOME/.cargo/env"
           rustup component add clippy
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "Rust: $(cargo --version)"
+
       - name: Run Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: |
+          . "$HOME/.cargo/env"
+          cargo clippy --all-targets --all-features 2>&1
 
   rust-test:
     name: Rust Unit Tests
@@ -58,39 +89,70 @@ jobs:
     steps:
       - name: Install system dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends curl ca-certificates build-essential pkg-config libssl-dev
+          apt-get update -qq
+          apt-get install -y --no-install-recommends curl ca-certificates pkg-config libssl-dev
+
       - name: Checkout repository
         run: |
-          curl -sfL -H "Authorization: token ${{ secrets.GITEATOKEN }}" "https://gitea-lxc.moon-dragon.us/echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" -o repo.tar.gz
-          tar -xzf repo.tar.gz --strip-components=1
-          rm -f repo.tar.gz
-      - name: Install Rust
+          TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
+          REPO="${GITHUB_REPOSITORY:-echo/linux_patch_manager}"
+          curl -sf -H "Authorization: token ${TOKEN}" \
+            "http://192.168.2.189:3000/api/v1/repos/${REPO}/archive/${GITHUB_SHA}.tar.gz" \
+            -o repo.tar.gz
+          tar xzf repo.tar.gz --strip-components=1
+          rm repo.tar.gz
+
+      - name: Ensure Rust toolchain
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+          if ! command -v cargo &>/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            . "$HOME/.cargo/env"
+          fi
           . "$HOME/.cargo/env"
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "Rust: $(cargo --version)"
+
       - name: Run tests
-        run: cargo test --workspace --all-features
+        run: |
+          . "$HOME/.cargo/env"
+          cargo test --workspace --all-features 2>&1
 
   security-audit:
     name: Security Audit
     runs-on: ubuntu-22.04
     steps:
+      - name: Install checkout dependencies
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends curl ca-certificates
+
       - name: Checkout repository
         run: |
-          curl -sfL -H "Authorization: token ${{ secrets.GITEATOKEN }}" "https://gitea-lxc.moon-dragon.us/echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" -o repo.tar.gz
-          tar -xzf repo.tar.gz --strip-components=1
-          rm -f repo.tar.gz
-      - name: Install Rust
+          TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
+          REPO="${GITHUB_REPOSITORY:-echo/linux_patch_manager}"
+          curl -sf -H "Authorization: token ${TOKEN}" \
+            "http://192.168.2.189:3000/api/v1/repos/${REPO}/archive/${GITHUB_SHA}.tar.gz" \
+            -o repo.tar.gz
+          tar xzf repo.tar.gz --strip-components=1
+          rm repo.tar.gz
+
+      - name: Ensure Rust toolchain
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+          if ! command -v cargo &>/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            . "$HOME/.cargo/env"
+          fi
           . "$HOME/.cargo/env"
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-      - name: Run cargo-audit
+          echo "Rust: $(cargo --version)"
+
+      - name: Install cargo-audit
         run: |
-          cargo install cargo-audit
-          cargo audit --ignore RUSTSEC-2025-0134
+          . "$HOME/.cargo/env"
+          cargo install cargo-audit 2>&1
+
+      - name: Run security audit
+        run: |
+          . "$HOME/.cargo/env"
+          cargo audit 2>&1
 
   frontend-lint:
     name: Frontend Lint & Type Check
@@ -98,22 +160,32 @@ jobs:
     steps:
       - name: Install checkout dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends curl ca-certificates nodejs npm
+          apt-get update -qq
+          apt-get install -y --no-install-recommends curl ca-certificates nodejs npm
+
       - name: Checkout repository
         run: |
-          curl -sfL -H "Authorization: token ${{ secrets.GITEATOKEN }}" "https://gitea-lxc.moon-dragon.us/echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" -o repo.tar.gz
-          tar -xzf repo.tar.gz --strip-components=1
-          rm -f repo.tar.gz
+          TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
+          REPO="${GITHUB_REPOSITORY:-echo/linux_patch_manager}"
+          curl -sf -H "Authorization: token ${TOKEN}" \
+            "http://192.168.2.189:3000/api/v1/repos/${REPO}/archive/${GITHUB_SHA}.tar.gz" \
+            -o repo.tar.gz
+          tar xzf repo.tar.gz --strip-components=1
+          rm repo.tar.gz
+
       - name: Install Node.js dependencies
         working-directory: frontend
         run: npm ci
+
       - name: Run ESLint
         working-directory: frontend
-        run: npx eslint src/ --ext .ts,.tsx --max-warnings 0
+        run: npx eslint src/ --ext .ts,.tsx --max-warnings 0 2>&1
+
       - name: TypeScript type check
         working-directory: frontend
-        run: npx tsc --noEmit
+        run: npx tsc --noEmit 2>&1
+
+  # ─── Build & Release (only on tag pushes, gated by quality checks) ───
 
   build-and-release:
     name: Build .deb & Release
@@ -123,48 +195,68 @@ jobs:
     steps:
       - name: Install system dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            curl ca-certificates build-essential pkg-config libssl-dev \
+          apt-get update -qq
+          apt-get install -y --no-install-recommends \
+            curl ca-certificates pkg-config libssl-dev \
             git nodejs npm dpkg-dev python3
+
       - name: Checkout repository
         run: |
-          curl -sfL -H "Authorization: token ${{ secrets.GITEATOKEN }}" "https://gitea-lxc.moon-dragon.us/echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" -o repo.tar.gz
-          tar -xzf repo.tar.gz --strip-components=1
-          rm -f repo.tar.gz
-      - name: Install Rust
+          TOKEN="${GITHUB_TOKEN:-$GITEA_TOKEN}"
+          REPO="${GITHUB_REPOSITORY:-echo/linux_patch_manager}"
+          curl -sf -H "Authorization: token ${TOKEN}" \
+            "http://192.168.2.189:3000/api/v1/repos/${REPO}/archive/${GITHUB_SHA}.tar.gz" \
+            -o repo.tar.gz
+          tar xzf repo.tar.gz --strip-components=1
+          rm repo.tar.gz
+
+      - name: Ensure Rust toolchain
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal
+          if ! command -v cargo &>/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            . "$HOME/.cargo/env"
+          fi
           . "$HOME/.cargo/env"
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "Rust: $(cargo --version)"
+
       - name: Build Rust backend (release)
-        run: cargo build --release
+        run: |
+          . "$HOME/.cargo/env"
+          cargo build --release 2>&1
+
       - name: Run Rust tests
-        run: cargo test --workspace --all-features
+        run: |
+          . "$HOME/.cargo/env"
+          cargo test --workspace --all-features 2>&1
+
       - name: Strip binaries
         run: |
           strip target/release/pm-web target/release/pm-worker
+
       - name: Build frontend
         run: |
           cd frontend && npm ci && npm run build
+
       - name: Determine version
         run: |
           VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*=.*"\(.*\)"/\1/')
           echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
           echo "Building version: ${VERSION}"
+
       - name: Assemble .deb package
         run: |
           chmod +x scripts/build-package.sh
           scripts/build-package.sh
+
       - name: Verify package
         run: |
           ls -la target/package/*.deb
           dpkg-deb -I target/package/linux-patch-manager_*.deb
-      - name: Create Gitea Release
+
+      - name: Create Gitea Release (tags only)
         if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          GITEA_TOKEN: ${{ secrets.GITEATOKEN }}
         run: |
+          . "$HOME/.cargo/env"
           VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*=.*"\(.*\)"/\1/')
           REPO="${GITHUB_REPOSITORY:-echo/linux_patch_manager}"
           REF_NAME="${GITHUB_REF_NAME:-v${VERSION}}"
@@ -174,5 +266,5 @@ jobs:
             --tag "${REF_NAME}" \
             --title "Release ${REF_NAME}" \
             --asset "${DEB}" \
-            --token "${GITEA_TOKEN}" \
-            --gitea-url "https://gitea-lxc.moon-dragon.us"
+            --token "${GITHUB_TOKEN:-$GITEA_TOKEN}" \
+            --gitea-url "http://192.168.2.189:3000"

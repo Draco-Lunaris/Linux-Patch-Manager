@@ -65,7 +65,3 @@ The Docker container intercepted some jobs and ran them in its Alpine environmen
 **Fix:** Stopped Docker container runner. Switched to runs-on: ubuntu-latest with docker://ubuntu:24.04 containers.
 
 **Lesson:** Check for multiple runners with same name. Stop after 2 attempts and diagnose root cause.
-
-## CI/CD Runner Dual-Registration Root Cause (2026-04-24)
-
-**Problem:** CI jobs kept failing with 
