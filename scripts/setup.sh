@@ -157,6 +157,7 @@ if [[ ! -f "${JWT_SIGNING}" ]]; then
     info "JWT keys generated."
 else
     warn "JWT signing key already exists at ${JWT_SIGNING}, skipping."
+fi
 
 # -----------------------------------------------------------------------
 # 6b. Generate self-signed TLS certificate for HTTPS
