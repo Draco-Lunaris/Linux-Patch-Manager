@@ -136,7 +136,7 @@ async fn write_audit_row(
             .await?;
 
     let prev = prev_hash.unwrap_or_default();
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true);
     let action_str = action.as_str();
     let uid_str = actor_user_id.map(|u| u.to_string()).unwrap_or_default();
     let uname = actor_username.unwrap_or("");
@@ -279,7 +279,7 @@ pub async fn verify_integrity(pool: &PgPool) -> IntegrityResult {
             .unwrap_or_default();
         let ip_str = row.ip_address.as_deref().unwrap_or("");
         let rid = row.request_id.as_deref().unwrap_or("");
-        let created_str = row.created_at.map(|c| c.to_rfc3339()).unwrap_or_default();
+        let created_str = row.created_at.map(|c| c.to_rfc3339_opts(chrono::SecondsFormat::Micros, true)).unwrap_or_default();
 
         let mut hasher = Sha256::new();
         hasher.update(row.prev_hash.as_bytes());
