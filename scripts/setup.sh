@@ -107,6 +107,7 @@ END
 
 SELECT 'CREATE DATABASE ${DB_NAME} OWNER ${DB_USER}'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '${DB_NAME}')\\gexec
+SQL
 
 # Grant schema permissions (PostgreSQL 15+ requires explicit grants)
 sudo -u postgres psql -v ON_ERROR_STOP=1 -d ${DB_NAME} <<SQL
