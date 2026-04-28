@@ -29,8 +29,8 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_users).post(create_user))
         .route("/me", get(get_current_user))
-        .route("/:id", get(get_user).put(update_user).delete(delete_user))
-        .route("/:id/revoke", post(revoke_user_sessions))
+        .route("/{id}", get(get_user).put(update_user).delete(delete_user))
+        .route("/{id}/revoke", post(revoke_user_sessions))
 }
 
 async fn list_users(

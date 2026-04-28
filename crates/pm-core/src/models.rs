@@ -38,12 +38,30 @@ pub enum UserRole {
     Operator,
 }
 
+impl std::fmt::Display for UserRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Admin => write!(f, "admin"),
+            Self::Operator => write!(f, "operator"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "auth_provider", rename_all = "snake_case")]
 pub enum AuthProvider {
     Local,
     #[sqlx(rename = "azure_sso")]
     AzureSso,
+}
+
+impl std::fmt::Display for AuthProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Local => write!(f, "local"),
+            Self::AzureSso => write!(f, "azure_sso"),
+        }
+    }
 }
 
 // ============================================================

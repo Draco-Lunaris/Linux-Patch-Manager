@@ -34,8 +34,8 @@ const PROBE_TIMEOUT_SECS: u64 = 2;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/cidr", post(start_cidr_scan))
-        .route("/:scan_id", get(get_scan_results))
-        .route("/:id/register", post(register_discovered_host))
+        .route("/{scan_id}", get(get_scan_results))
+        .route("/{id}/register", post(register_discovered_host))
 }
 
 // ── POST /api/v1/discovery/cidr ───────────────────────────────────────────────

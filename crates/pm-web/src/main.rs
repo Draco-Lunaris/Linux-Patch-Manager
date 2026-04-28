@@ -3,6 +3,7 @@
 mod routes;
 
 use axum::{extract::State, http::StatusCode, middleware, response::Json, routing::get, Router};
+use axum_server::tls_rustls::RustlsConfig;
 use dashmap::DashMap;
 use pm_auth::{
     jwt,
@@ -113,9 +114,37 @@ async fn main() -> anyhow::Result<()> {
         .parse()
         .expect("Invalid bind address");
 
-    tracing::info!(%addr, "Listening");
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    // Try to load TLS certificate and key; fall back to plain HTTP if missing.
+    let tls_cert = std::path::Path::new(&config.security.web_tls_cert_path);
+    let tls_key = std::path::Path::new(&config.security.web_tls_key_path);
+
+    if tls_cert.exists() && tls_key.exists() {
+        let tls_config = RustlsConfig::from_pem_file(
+            &config.security.web_tls_cert_path,
+            &config.security.web_tls_key_path,
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to load TLS certificates");
+            e
+        })?;
+
+        tracing::info!(%addr, "Listening (HTTPS)");
+        axum_server::bind_rustls(addr, tls_config)
+            .serve(app.into_make_service())
+            .await?;
+    } else {
+        tracing::warn!(
+            cert_path = %config.security.web_tls_cert_path,
+            key_path = %config.security.web_tls_key_path,
+            "TLS certificates not found — falling back to plain HTTP. \
+             This is insecure for production!"
+        );
+        tracing::info!(%addr, "Listening (HTTP — no TLS)");
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        axum::serve(listener, app).await?;
+    }
+
     Ok(())
 }
 
@@ -144,7 +173,7 @@ pub fn build_router(state: AppState) -> Router {
         .nest("/jobs", routes::jobs::router())
         // Maintenance windows (nested under hosts path param)
         .nest(
-            "/hosts/:host_id/maintenance-windows",
+            "/hosts/{host_id}/maintenance-windows",
             routes::maintenance_windows::router(),
         )
         // CA root certificate download

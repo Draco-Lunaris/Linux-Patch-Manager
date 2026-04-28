@@ -28,7 +28,7 @@ VALUES (
     'admin',
     'local',
     -- Argon2id hash of "ChangeMe123!" — REPLACE IN PRODUCTION
-    '$argon2id$v=19$m=65536,t=3,p=1$placeholder$placeholder',
+    '$argon2id$v=19$m=65536,t=3,p=1$Kv8bkGiE81yIuXARq9fwsw$NrBRFvgL1dVsW7bEK6NxEOzIX2q1p4B0K422idAVIDQ',
     FALSE,  -- MFA disabled by default; admin must set up on first login
     TRUE,
     TRUE    -- Force password reset on first login

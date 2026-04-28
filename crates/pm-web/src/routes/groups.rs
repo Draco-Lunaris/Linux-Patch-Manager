@@ -29,11 +29,11 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_groups).post(create_group))
         .route(
-            "/:id",
+            "/{id}",
             get(get_group).put(update_group).delete(delete_group),
         )
         .route(
-            "/:id/users/:user_id",
+            "/{id}/users/{user_id}",
             post(add_user_to_group).delete(remove_user_from_group),
         )
 }

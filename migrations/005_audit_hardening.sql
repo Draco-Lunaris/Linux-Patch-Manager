@@ -8,6 +8,11 @@
 -- ============================================================
 ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS prev_hash TEXT NOT NULL DEFAULT '';
 
+-- Reset the audit log so the hash chain starts clean.
+-- Existing rows were inserted before prev_hash existed, so their
+-- chain is broken. Truncating lets the worker build a valid chain.
+TRUNCATE audit_log;
+
 -- ============================================================
 -- 2. Add notification config defaults to system_config
 -- ============================================================

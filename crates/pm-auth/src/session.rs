@@ -5,6 +5,7 @@
 //! Force logout: revoke all tokens for a user
 
 use chrono::Utc;
+use pm_core::models::{AuthProvider, UserRole};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use thiserror::Error;
@@ -68,8 +69,8 @@ struct DbUser {
     id: Uuid,
     username: String,
     display_name: String,
-    role: String,
-    auth_provider: String,
+    role: UserRole,
+    auth_provider: AuthProvider,
     password_hash: Option<String>,
     totp_secret: Option<String>,
     mfa_enabled: bool,
@@ -157,7 +158,7 @@ pub async fn login(
     let access_token = jwt::issue_access_token(
         user.id,
         &user.username,
-        &user.role,
+        &user.role.to_string(),
         access_ttl_secs,
         signing_key_pem,
     )?;
@@ -182,7 +183,7 @@ pub async fn login(
             id: user.id.to_string(),
             username: user.username,
             display_name: user.display_name,
-            role: user.role,
+            role: user.role.to_string(),
             mfa_enabled: user.mfa_enabled,
         },
     })
@@ -223,7 +224,7 @@ pub async fn refresh_session(
     let access_token = jwt::issue_access_token(
         user.id,
         &user.username,
-        &user.role,
+        &user.role.to_string(),
         access_ttl_secs,
         signing_key_pem,
     )?;
@@ -237,7 +238,7 @@ pub async fn refresh_session(
             id: user.id.to_string(),
             username: user.username,
             display_name: user.display_name,
-            role: user.role,
+            role: user.role.to_string(),
             mfa_enabled: user.mfa_enabled,
         },
     })

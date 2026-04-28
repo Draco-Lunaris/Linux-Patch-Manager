@@ -29,8 +29,8 @@ StartLimitBurst=5
 TimeoutStartSec=90s
 TimeoutStopSec=30s
 
-# Watchdog — pm-web must report health within this interval
-WatchdogSec=120s
+# Watchdog disabled — pm-web does not currently implement sd_notify
+# WatchdogSec=120s
 
 # Security hardening
 NoNewPrivileges=true

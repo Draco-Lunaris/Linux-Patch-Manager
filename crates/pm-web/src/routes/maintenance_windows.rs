@@ -24,12 +24,12 @@ use crate::AppState;
 
 // ── Router ────────────────────────────────────────────────────────────────────
 
-/// Mount as a nested router under `/hosts/:host_id/maintenance-windows`.
-/// Axum will merge the `:host_id` path segment from the parent nest.
+/// Mount as a nested router under `/hosts/{host_id}/maintenance-windows`.
+/// Axum will merge the `{host_id}` path segment from the parent nest.
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_windows).post(create_window))
-        .route("/:win_id", put(update_window).delete(delete_window))
+        .route("/{win_id}", put(update_window).delete(delete_window))
 }
 
 // ── Error helper ──────────────────────────────────────────────────────────────

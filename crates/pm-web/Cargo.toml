@@ -16,6 +16,7 @@ pm-auth = { path = "../pm-auth" }
 pm-reports = { path = "../pm-reports" }
 tokio = { workspace = true }
 axum = { workspace = true }
+axum-server = { workspace = true }
 axum-extra = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
@@ -33,8 +34,8 @@ ipnet = { workspace = true }
 dashmap = { version = "6" }
 reqwest = { workspace = true }
 lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder"] }
-sha2 = { workspace = true }
+rand = { workspace = true }
 base64 = { workspace = true }
+sha2 = { workspace = true }
 url = { workspace = true }
 urlencoding = "2"
-rand = { workspace = true }

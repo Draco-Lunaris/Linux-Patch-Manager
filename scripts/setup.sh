@@ -107,6 +107,12 @@ END
 
 SELECT 'CREATE DATABASE ${DB_NAME} OWNER ${DB_USER}'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '${DB_NAME}')\\gexec
+
+# Grant schema permissions (PostgreSQL 15+ requires explicit grants)
+sudo -u postgres psql -v ON_ERROR_STOP=1 -d ${DB_NAME} <<SQL
+GRANT USAGE ON SCHEMA public TO ${DB_USER};
+GRANT CREATE ON SCHEMA public TO ${DB_USER};
+GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};
 SQL
 
 DB_URL="postgres://${DB_USER}:${DB_PASSWORD}@localhost/${DB_NAME}"
@@ -150,6 +156,31 @@ if [[ ! -f "${JWT_SIGNING}" ]]; then
     info "JWT keys generated."
 else
     warn "JWT signing key already exists at ${JWT_SIGNING}, skipping."
+
+# -----------------------------------------------------------------------
+# 6b. Generate self-signed TLS certificate for HTTPS
+# -----------------------------------------------------------------------
+TLS_CERT="${CONFIG_DIR}/tls/web.crt"
+TLS_KEY="${CONFIG_DIR}/tls/web.key"
+
+if [[ ! -f "${TLS_CERT}" ]]; then
+    info "Generating self-signed TLS certificate (valid 365 days)..."
+    # Generate ECDSA P-256 private key
+    openssl ecparam -genkey -name prime256v1 -noout -out "${TLS_KEY}"
+    # Generate self-signed cert with SAN for localhost and the host's FQDN
+    HOSTNAME_FQDN=$(hostname -f 2>/dev/null || echo "localhost")
+    HOSTNAME_SHORT=$(hostname -s 2>/dev/null || echo "localhost")
+    openssl req -new -x509 -key "${TLS_KEY}" -out "${TLS_CERT}" \
+        -days 365 \
+        -subj "/CN=${HOSTNAME_FQDN}/O=Linux Patch Manager" \
+        -addext "subjectAltName=DNS:${HOSTNAME_FQDN},DNS:${HOSTNAME_SHORT},DNS:localhost,IP:127.0.0.1,IP:::1"
+    chown "${SERVICE_USER}:${SERVICE_GROUP}" "${TLS_CERT}" "${TLS_KEY}"
+    chmod 644 "${TLS_CERT}"
+    chmod 600 "${TLS_KEY}"
+    info "TLS certificate generated for ${HOSTNAME_FQDN}."
+    warn "Self-signed certificate — replace with CA-signed cert for production!"
+else
+    warn "TLS certificate already exists at ${TLS_CERT}, skipping."
 fi
 
 # -----------------------------------------------------------------------

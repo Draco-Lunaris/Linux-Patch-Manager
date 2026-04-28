@@ -29,8 +29,8 @@ StartLimitBurst=5
 TimeoutStartSec=120s
 TimeoutStopSec=120s
 
-# Watchdog — worker must report heartbeat within this interval
-WatchdogSec=180s
+# Watchdog disabled — pm-worker does not currently implement sd_notify
+# WatchdogSec=180s
 
 # Security hardening
 NoNewPrivileges=true

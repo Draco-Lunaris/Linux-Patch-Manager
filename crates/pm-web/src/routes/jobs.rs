@@ -29,9 +29,9 @@ use crate::AppState;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_jobs).post(create_job))
-        .route("/:id", get(get_job))
-        .route("/:id/cancel", post(cancel_job))
-        .route("/:id/rollback", post(rollback_job))
+        .route("/{id}", get(get_job))
+        .route("/{id}/cancel", post(cancel_job))
+        .route("/{id}/rollback", post(rollback_job))
 }
 
 // ── Query params ──────────────────────────────────────────────────────────────

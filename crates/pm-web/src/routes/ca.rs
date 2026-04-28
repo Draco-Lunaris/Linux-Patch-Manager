@@ -40,16 +40,16 @@ pub fn ca_router() -> Router<AppState> {
 pub fn certs_router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_certificates))
-        .route("/:cert_id/renew", post(renew_cert))
-        .route("/:cert_id", delete(revoke_cert))
+        .route("/{cert_id}/renew", post(renew_cert))
+        .route("/{cert_id}", delete(revoke_cert))
 }
 
 /// Handles cert-specific paths merged under /api/v1/hosts.
 /// Only adds paths not already claimed by the hosts router.
 pub fn host_cert_router() -> Router<AppState> {
     Router::new()
-        .route("/:host_id/client.crt", get(download_client_cert))
-        .route("/:host_id/certificates", post(issue_client_cert))
+        .route("/{host_id}/client.crt", get(download_client_cert))
+        .route("/{host_id}/certificates", post(issue_client_cert))
 }
 
 // ── Shared types ──────────────────────────────────────────────────────────────
