@@ -62,6 +62,16 @@ sudo apt install -y postgresql-16 libssl3
 
 ### 3. Install the Package
 
+```bash
+sudo dpkg -i linux-patch-manager_1.0.0-1_amd64.deb
+```
+
+Or with automatic dependency resolution:
+
+```bash
+sudo apt install ./linux-patch-manager_1.0.0-1_amd64.deb
+```
+
 ## Configuration
 
 ### 1. Database Setup
@@ -77,7 +87,16 @@ GRANT ALL PRIVILEGES ON DATABASE patch_manager TO patch_manager;
 EOF
 ```
 
-### 2. Configure the Application
+### 2. Generate JWT Keys
+
+```bash
+sudo mkdir -p /etc/patch-manager/jwt
+sudo openssl genpkey -algorithm ed25519 -out /etc/patch-manager/jwt/signing.pem
+sudo openssl pkey -in /etc/patch-manager/jwt/signing.pem -pubout -out /etc/patch-manager/jwt/verify.pem
+sudo chmod 600 /etc/patch-manager/jwt/signing.pem
+```
+
+### 3. Configure the Application
 
 Edit the configuration file:
 
@@ -89,18 +108,19 @@ Example configuration:
 
 ```toml
 [database]
-url = "postgresql://patch_manager:your_secure_password@localhost/patch_manager"
+url = "postgres://patch_manager:your_secure_password@localhost/patch_manager"
 
 [server]
 host = "0.0.0.0"
-port = 8080
+port = 443
 
 [security]
-# Generate a secure key for session encryption
-session_key = "generate-a-secure-random-key-here"
+ip_whitelist = []
+jwt_signing_key_path = "/etc/patch-manager/jwt/signing.pem"
+jwt_verify_key_path = "/etc/patch-manager/jwt/verify.pem"
 ```
 
-### 3. Run Database Migrations
+### 4. Run Database Migrations
 
 ```bash
 sudo -u postgres psql patch_manager < /usr/share/patch-manager/migrations/001_initial_schema.sql
