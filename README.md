@@ -55,10 +55,38 @@ wget https://gitea-lxc.moon-dragon.us/echo/linux_patch_manager/releases/download
 
 ### 2. Install Dependencies
 
+**Option A: Ubuntu 24.04 (has PostgreSQL 16 in repositories)**
+
 ```bash
 sudo apt update
 sudo apt install -y postgresql-16 libssl3
 ```
+
+**Option B: Older Ubuntu versions (add PostgreSQL official repository)**
+
+```bash
+# Add PostgreSQL official repo
+sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+
+# Import signing key
+wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+
+# Update and install
+sudo apt update
+sudo apt install -y postgresql-16 libssl3
+```
+
+**Check your Ubuntu version:**
+
+```bash
+lsb_release -a
+```
+
+| Ubuntu Version | Default PostgreSQL | Use Option |
+|----------------|-------------------|------------|
+| 24.04 LTS (Noble) | 16 | A |
+| 22.04 LTS (Jammy) | 14 | B |
+| 20.04 LTS (Focal) | 12 | B |
 
 ### 3. Install the Package
 
