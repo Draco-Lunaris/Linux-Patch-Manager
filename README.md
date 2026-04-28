@@ -37,8 +37,8 @@ Linux Patch Manager is a web application that acts as a management plane, commun
 
 | Component | Requirement |
 |-----------|-------------|
-| **Operating System** | Ubuntu 22.04 LTS or 24.04 LTS |
-| **Database** | PostgreSQL 16 (via official PostgreSQL repository) |
+| **Operating System** | Ubuntu 24.04 LTS (Noble) |
+| **Database** | PostgreSQL 16 |
 | **Memory** | 2 GB RAM minimum, 4 GB recommended |
 | **Storage** | 1 GB for application + database space |
 | **Network** | HTTPS access (port 443 recommended) |
@@ -53,35 +53,14 @@ Download the latest `.deb` package from the [Gitea Releases](https://gitea-lxc.m
 wget https://gitea-lxc.moon-dragon.us/echo/linux_patch_manager/releases/download/v0.0.2/linux-patch-manager_1.0.0-1_amd64.deb
 ```
 
-### 2. Install PostgreSQL 16
-
-**Important:** PostgreSQL 16 is NOT available in Ubuntu's default repositories. You MUST add the official PostgreSQL repository.
+### 2. Install Dependencies
 
 ```bash
-# Add PostgreSQL official repository
-sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
-
-# Import signing key
-wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
-
-# Update package list
 sudo apt update
-
-# Install PostgreSQL 16 and SSL library
 sudo apt install -y postgresql-16 libssl3
 ```
 
 ### 3. Install the Package
-
-```bash
-sudo dpkg -i linux-patch-manager_1.0.0-1_amd64.deb
-```
-
-Or with automatic dependency resolution:
-
-```bash
-sudo apt install ./linux-patch-manager_1.0.0-1_amd64.deb
-```
 
 ## Configuration
 
