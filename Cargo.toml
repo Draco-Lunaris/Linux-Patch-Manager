@@ -53,8 +53,7 @@ chrono = { version = "0.4", features = ["serde"] }
 # HTTP client
 reqwest = { version = "0.12", features = ["rustls-tls", "json"] }
 
-# TLS
-rustls = { version = "0.23" }
+rustls = { version = "0.23", features = ["ring"] }
 tokio-rustls = { version = "0.26" }
 rustls-pemfile = { version = "2" }
 
