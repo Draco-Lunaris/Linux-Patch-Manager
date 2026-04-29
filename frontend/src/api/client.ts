@@ -60,10 +60,8 @@ apiClient.interceptors.response.use(
     isRefreshing = true
 
     const { refreshToken, setTokens, logout } = useAuthStore.getState()
-
     if (!refreshToken) {
       logout()
-      window.location.href = '/login'
       return Promise.reject(error)
     }
 
@@ -78,7 +76,6 @@ apiClient.interceptors.response.use(
     } catch (refreshError) {
       processQueue(refreshError, null)
       logout()
-      window.location.href = '/login'
       return Promise.reject(refreshError)
     } finally {
       isRefreshing = false
