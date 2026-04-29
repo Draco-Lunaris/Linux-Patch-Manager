@@ -12,6 +12,7 @@ use uuid::Uuid;
 // ============================================================
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "host_health_status", rename_all = "lowercase")]
 pub enum HostHealthStatus {
     Pending,
@@ -32,6 +33,7 @@ impl std::fmt::Display for HostHealthStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "user_role", rename_all = "lowercase")]
 pub enum UserRole {
     Admin,
@@ -48,6 +50,7 @@ impl std::fmt::Display for UserRole {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[serde(rename_all = "snake_case")]
 #[sqlx(type_name = "auth_provider", rename_all = "snake_case")]
 pub enum AuthProvider {
     Local,
@@ -216,6 +219,7 @@ pub struct RegisterDiscoveredRequest {
 // ============================================================
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "job_status", rename_all = "lowercase")]
 pub enum JobStatus {
     Queued,
@@ -240,6 +244,7 @@ impl std::fmt::Display for JobStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[serde(rename_all = "snake_case")]
 #[sqlx(type_name = "job_kind", rename_all = "snake_case")]
 pub enum JobKind {
     #[sqlx(rename = "patch_apply")]
@@ -324,6 +329,7 @@ pub struct PatchJobSummary {
 /// Recurrence type for a maintenance window.
 /// Mirrors the `window_recurrence` PostgreSQL ENUM.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "window_recurrence", rename_all = "lowercase")]
 pub enum WindowRecurrence {
     /// Single one-time window (at `start_at` for `duration_minutes` minutes).
