@@ -109,7 +109,7 @@ async fn list_hosts(
     let hosts: Vec<HostSummary> = if auth.role.is_admin() {
         sqlx::query_as(
             r#"
-            SELECT id, fqdn, ip_address::text AS ip_address, display_name,
+            SELECT id, fqdn, host(ip_address)::text AS ip_address, display_name,
                    os_family, os_name, health_status, agent_version, registered_at
             FROM hosts
             ORDER BY fqdn
@@ -123,7 +123,7 @@ async fn list_hosts(
     } else {
         sqlx::query_as(
             r#"
-            SELECT DISTINCT h.id, h.fqdn, h.ip_address::text AS ip_address,
+            SELECT DISTINCT h.id, h.fqdn, host(h.ip_address)::text AS ip_address,
                    h.display_name, h.os_family, h.os_name,
                    h.health_status, h.agent_version, h.registered_at
             FROM hosts h
@@ -275,7 +275,7 @@ async fn get_host(
     let host: Option<Value> = sqlx::query_scalar(
         r#"
         SELECT row_to_json(h) FROM (
-            SELECT id, fqdn, ip_address::text AS ip_address, display_name,
+            SELECT id, fqdn, host(ip_address)::text AS ip_address, display_name,
                    os_family, os_name, arch, agent_version, health_status,
                    last_health_at, last_patch_at, agent_port, notes,
                    registered_at, updated_at

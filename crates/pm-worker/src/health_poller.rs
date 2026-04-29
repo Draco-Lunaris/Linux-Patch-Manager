@@ -51,7 +51,7 @@ pub async fn run_health_poller(pool: PgPool, config: Arc<AppConfig>) {
 
         // Fetch all hosts.
         let hosts: Vec<HostRow> = match sqlx::query_as(
-            "SELECT id, ip_address::text AS ip_address, agent_port FROM hosts ORDER BY id",
+            "SELECT id, host(ip_address)::text AS ip_address, agent_port FROM hosts ORDER BY id",
         )
         .fetch_all(&pool)
         .await

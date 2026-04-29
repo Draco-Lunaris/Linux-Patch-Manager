@@ -194,7 +194,7 @@ async fn get_scan_results(
     Path(scan_id): Path<Uuid>,
 ) -> Result<Json<Vec<DiscoveryResult>>, (StatusCode, Json<Value>)> {
     sqlx::query_as::<_, DiscoveryResult>(
-        r#"SELECT id, scan_id, ip_address::text AS ip_address, fqdn,
+        r#"SELECT id, scan_id, host(ip_address)::text AS ip_address, fqdn,
                   agent_version, os_name, agent_port, discovered_at, registered
            FROM discovery_results
            WHERE scan_id = $1
@@ -230,7 +230,7 @@ async fn register_discovered_host(
 
     // Fetch discovery result
     let result: Option<DiscoveryResult> = sqlx::query_as(
-        r#"SELECT id, scan_id, ip_address::text AS ip_address, fqdn,
+        r#"SELECT id, scan_id, host(ip_address)::text AS ip_address, fqdn,
                   agent_version, os_name, agent_port, discovered_at, registered
            FROM discovery_results WHERE id = $1"#,
     )

@@ -69,7 +69,7 @@ async fn listen_loop(pool: &PgPool, config: &AppConfig) -> anyhow::Result<()> {
 
         // Fetch the host from the database.
         let host: Option<HostRow> = sqlx::query_as(
-            "SELECT id, ip_address::text AS ip_address, agent_port FROM hosts WHERE id = $1",
+            "SELECT id, host(ip_address)::text AS ip_address, agent_port FROM hosts WHERE id = $1",
         )
         .bind(host_id)
         .fetch_optional(pool)

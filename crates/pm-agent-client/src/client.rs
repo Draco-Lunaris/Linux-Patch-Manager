@@ -107,8 +107,8 @@ impl AgentClient {
             .build()
             .map_err(|e| AgentClientError::Request(e))?;
 
-        let base_url = format!("https://{}:{}/api/v1", host_ip, port);
-        tracing::debug!(base_url = %base_url, "AgentClient created");
+        let clean_ip = host_ip.split('/').next().unwrap_or(host_ip);
+        let base_url = format!("https://{}:{}/api/v1", clean_ip, port);
 
         Ok(Self { inner, base_url })
     }

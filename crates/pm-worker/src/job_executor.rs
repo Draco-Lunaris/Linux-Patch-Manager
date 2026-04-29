@@ -344,7 +344,7 @@ async fn execute_host_job(
 
     // ── 1. Fetch host connection details ─────────────────────────────────────
     let host: HostRow = match sqlx::query_as(
-        "SELECT ip_address::text AS ip_address, agent_port FROM hosts WHERE id = $1",
+        "SELECT host(ip_address)::text AS ip_address, agent_port FROM hosts WHERE id = $1",
     )
     .bind(host_id)
     .fetch_optional(&pool)
@@ -480,7 +480,7 @@ pub async fn poll_running_jobs(pool: PgPool, config: Arc<AppConfig>) {
         SELECT pjh.id,
                pjh.agent_job_id,
                pjh.job_id,
-               h.ip_address::text AS ip_address,
+               host(h.ip_address)::text AS ip_address,
                h.agent_port
         FROM   patch_job_hosts pjh
         JOIN   hosts h ON h.id = pjh.host_id

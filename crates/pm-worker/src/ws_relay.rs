@@ -138,7 +138,7 @@ async fn query_running_jobs(pool: &PgPool) -> anyhow::Result<Vec<RunningHostJob>
             pjh.job_id,
             pjh.host_id,
             pjh.agent_job_id,
-            COALESCE(h.fqdn, h.ip_address::text) AS host_address
+             COALESCE(h.fqdn, host(h.ip_address)::text) AS host_address
         FROM patch_job_hosts pjh
         JOIN hosts h ON h.id = pjh.host_id
         WHERE pjh.status = 'running'::job_status

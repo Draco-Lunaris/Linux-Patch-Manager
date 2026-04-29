@@ -49,7 +49,7 @@ pub async fn run_patch_poller(pool: PgPool, config: Arc<AppConfig>) {
         let ca_cert = Arc::new(certs.ca_cert);
 
         let hosts: Vec<HostRow> = match sqlx::query_as(
-            "SELECT id, ip_address::text AS ip_address, agent_port FROM hosts ORDER BY id",
+            "SELECT id, host(ip_address)::text AS ip_address, agent_port FROM hosts ORDER BY id",
         )
         .fetch_all(&pool)
         .await
