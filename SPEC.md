@@ -153,6 +153,50 @@ Management plane web application communicating with Linux Patch API agents on ea
     - Web UI TLS certificate strategy (internal CA vs. operator-supplied)
     - IP whitelist management
 
+### Navigation
+
+All authenticated pages share a persistent sidebar navigation layout:
+
+**Layout Structure:**
+- **AppBar** (top): Page title, user avatar with role display, dropdown menu (profile info, sign out)
+- **Sidebar** (left, 240px): Grouped navigation menu with icons, version label at bottom
+- **Main content** (center): Routed page content with padding and scroll
+
+**Menu Groups:**
+
+| Group | Items | RBAC |
+|-------|-------|------|
+| Overview | Dashboard | All users |
+| Fleet | Hosts, Groups, Deploy | All users |
+| Operations | Jobs, Maintenance | All users |
+| Administration | Users, Certificates, Settings | Admin only |
+| Administration | Reports | All users |
+
+**Behavior:**
+- Active page highlighted with primary color background on sidebar item
+- Admin-only items hidden from operators (entire group hidden if all items are admin-only)
+- Mobile responsive: collapsible drawer with hamburger toggle on small screens, permanent drawer on desktop
+- User menu: avatar shows first letter of display name, dropdown shows display name + role, sign out action clears tokens and navigates to login via React Router
+- Login page renders without sidebar (standalone layout)
+
+**Theme:** Dark mode (MUI dark palette). Primary: #42A5F5, Secondary: #26C6DA.
+
+### Frontend Error Handling
+
+**Login Errors:**
+- Network errors (server unreachable): "Unable to connect to the server. Please check your network connection and try again."
+- Rate limiting (HTTP 429): "Too many login attempts. Please wait a moment and try again."
+- Invalid credentials (HTTP 401): "Invalid username or password."
+- Account disabled: "This account has been disabled. Contact your administrator."
+- MFA required: Show TOTP input field with info alert
+- Server errors (5xx): "A server error occurred. Please try again later."
+- All errors displayed as dismissible MUI Alert components (no blank error pages)
+
+**Auth Token Expiry:**
+- 401 responses trigger automatic token refresh using stored refresh token
+- If refresh fails, auth state is cleared via Zustand store (no `window.location` hard redirects)
+- React Router `<RequireAuth>` guard redirects unauthenticated users to `/login`
+
 ## Error Handling
 
 **Agent Communication Failures:**
