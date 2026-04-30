@@ -156,12 +156,18 @@ async fn poll_host_patches(
         .filter(|p| !p.cve_ids.is_empty())
         .count() as i32;
 
-    // Insert into host_patch_data.
+    // Upsert into host_patch_data (one row per host, latest poll wins).
     if let Err(e) = sqlx::query(
         r#"
         INSERT INTO host_patch_data
             (host_id, available_patches, installed_packages, patch_count, cve_count)
         VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (host_id) DO UPDATE SET
+            available_patches  = EXCLUDED.available_patches,
+            installed_packages = EXCLUDED.installed_packages,
+            patch_count        = EXCLUDED.patch_count,
+            cve_count          = EXCLUDED.cve_count,
+            polled_at          = NOW()
         "#,
     )
     .bind(host.id)
