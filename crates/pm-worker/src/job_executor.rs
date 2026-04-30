@@ -388,8 +388,48 @@ async fn execute_host_job(
             },
         };
 
-    let packages: Vec<String> =
+    let mut packages: Vec<String> =
         serde_json::from_value(patch_sel.patch_selection).unwrap_or_default();
+
+    // ── 2b. Expand empty packages to all available patches ─────────────────
+    // Per SPEC: "empty = all available patches".  The agent treats an empty
+    // list as "apply nothing", so we must expand it here.
+    if packages.is_empty() {
+        match sqlx::query_scalar::<_, serde_json::Value>(
+            r#"
+            SELECT available_patches
+            FROM   host_patch_data
+            WHERE  host_id = $1
+            ORDER  BY polled_at DESC
+            LIMIT  1
+            "#,
+        )
+        .bind(host_id)
+        .fetch_optional(&pool)
+        .await
+        {
+            Ok(Some(val)) => {
+                if let Ok(patches) = serde_json::from_value::<Vec<serde_json::Value>>(val) {
+                    for p in &patches {
+                        if let Some(name) = p.get("name").and_then(|n| n.as_str()) {
+                            packages.push(name.to_string());
+                        }
+                    }
+                    tracing::info!(
+                        %pjh_id,
+                        count = packages.len(),
+                        "execute_host_job: expanded empty packages to all available patches"
+                    );
+                }
+            },
+            Ok(None) => {
+                tracing::warn!(%pjh_id, "execute_host_job: no patch data for host, sending empty packages");
+            },
+            Err(e) => {
+                tracing::error!(%pjh_id, error = %e, "execute_host_job: failed to fetch patch data for expansion");
+            },
+        }
+    }
 
     // ── 3. Load mTLS certs ───────────────────────────────────────────────────
     let certs = match load_agent_certs(&config.security) {
