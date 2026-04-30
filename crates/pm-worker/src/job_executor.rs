@@ -552,7 +552,7 @@ async fn poll_single_host(pool: PgPool, config: Arc<AppConfig>, row: PatchJobHos
     };
 
     match status.status.as_str() {
-        "succeeded" => {
+        "succeeded" | "completed" => {
             tracing::info!(pjh_id = %row.id, "poll_single_host: agent job succeeded");
             if let Err(e) = sqlx::query(
                 r#"
@@ -586,6 +586,13 @@ async fn poll_single_host(pool: PgPool, config: Arc<AppConfig>, row: PatchJobHos
                 agent_status = %status.status,
                 "poll_single_host: job still in progress"
             );
+        },
+        "cancelled" => {
+            tracing::info!(pjh_id = %row.id, "poll_single_host: agent job cancelled");
+            let err_msg = status
+                .error
+                .unwrap_or_else(|| "Agent job was cancelled".to_string());
+            handle_host_failure(pool, row.id, err_msg).await;
         },
         other => {
             tracing::warn!(

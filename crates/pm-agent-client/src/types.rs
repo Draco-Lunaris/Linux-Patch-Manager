@@ -184,7 +184,7 @@ pub struct ApplyPatchesResponse {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AgentJobStatus {
     pub job_id: String,
-    /// Current status: `"running"`, `"succeeded"`, `"failed"`, or `"cancelled"`.
+    /// Current status: `"queued"`, `"running"`, `"succeeded"`, `"completed"`, `"failed"`, or `"cancelled"`.
     pub status: String,
     pub progress_percent: Option<u8>,
     pub output: Option<String>,
