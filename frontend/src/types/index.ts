@@ -159,12 +159,17 @@ export interface UpdateMaintenanceWindowRequest {
 // ── WebSocket event types (M7) ────────────────────────────────────────────────
 
 export interface JobWsEvent {
+  event_type?: 'host' | 'job'  // defaults to 'host' for backward compat
   job_id: string
   host_id: string
   status: JobStatus
   output?: string
   error_message?: string
   agent_job_id?: string
+  // Job-level fields (only present when event_type === 'job')
+  succeeded_count?: number
+  failed_count?: number
+  host_count?: number
 }
 
 // ── Certificates (M8) ────────────────────────────────────────────────────────

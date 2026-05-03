@@ -345,36 +345,59 @@ export default function JobsPage() {
 
   // ── WS event handler — surgical state updates ─────────────────────────────
   const handleWsEvent = useCallback((event: JobWsEvent) => {
-    // Update matching job summary row status.
-    setJobs((prev) =>
-      prev.map((job) => {
-        if (job.id !== event.job_id) return job
-        const updated = { ...job, status: event.status }
-        // Increment counters when a host reaches a terminal state.
-        if (event.status === 'succeeded') {
-          updated.succeeded_count = job.succeeded_count + 1
-        } else if (event.status === 'failed') {
-          updated.failed_count = job.failed_count + 1
-        }
-        return updated
-      })
-    )
+    if (event.event_type === 'job') {
+      // ── Job-level event: authoritative status + counts from backend ──
+      setJobs((prev) =>
+        prev.map((job) => {
+          if (job.id !== event.job_id) return job
+          return {
+            ...job,
+            status: event.status,
+            succeeded_count: event.succeeded_count ?? job.succeeded_count,
+            failed_count: event.failed_count ?? job.failed_count,
+            host_count: event.host_count ?? job.host_count,
+          }
+        })
+      )
+    } else {
+      // ── Host-level event: update detail row + optimistic counters only ──
+      setJobs((prev) =>
+        prev.map((job) => {
+          if (job.id !== event.job_id) return job
+          const updated = { ...job }
+          // Optimistically increment counters when a host reaches a terminal state.
+          // The authoritative rollup will arrive as a job-level event later.
+          if (event.status === 'succeeded') {
+            updated.succeeded_count = job.succeeded_count + 1
+          } else if (event.status === 'failed') {
+            updated.failed_count = job.failed_count + 1
+          }
+          // If any host is still running, ensure the job shows 'running'.
+          // Do NOT promote host status to job status — only the job-level
+          // event can set the parent job to a terminal state.
+          if (event.status === 'running' && job.status === 'queued') {
+            updated.status = 'running'
+          }
+          return updated
+        })
+      )
 
-    // Also update the host row in the expanded detail panel if loaded.
-    setDetails((prev) => {
-      const detail = prev[event.job_id]
-      if (!detail) return prev
-      const updatedHosts = detail.hosts.map((h) => {
-        if (h.host_id !== event.host_id) return h
-        return {
-          ...h,
-          status: event.status,
-          ...(event.error_message ? { error_message: event.error_message } : {}),
-          ...(event.agent_job_id  ? { agent_job_id:  event.agent_job_id  } : {}),
-        }
+      // Update the host row in the expanded detail panel if loaded.
+      setDetails((prev) => {
+        const detail = prev[event.job_id]
+        if (!detail) return prev
+        const updatedHosts = detail.hosts.map((h) => {
+          if (h.host_id !== event.host_id) return h
+          return {
+            ...h,
+            status: event.status,
+            ...(event.error_message ? { error_message: event.error_message } : {}),
+            ...(event.agent_job_id  ? { agent_job_id:  event.agent_job_id  } : {}),
+          }
+        })
+        return { ...prev, [event.job_id]: { ...detail, hosts: updatedHosts } }
       })
-      return { ...prev, [event.job_id]: { ...detail, hosts: updatedHosts } }
-    })
+    }
   }, [])
 
   // ── WebSocket connection ──────────────────────────────────────────────────

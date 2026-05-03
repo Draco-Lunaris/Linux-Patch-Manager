@@ -488,6 +488,28 @@ async fn cancel_job(
         )
     })?;
 
+    // Fire job-level pg_notify so the frontend can update the job row.
+    let notify_payload = json!({
+        "event_type": "job",
+        "job_id": id.to_string(),
+        "host_id": "",
+        "status": "cancelled",
+        "succeeded_count": 0,
+        "failed_count": 0,
+        "host_count": 0,
+    });
+    if let Ok(payload_str) = serde_json::to_string(&notify_payload) {
+        if let Err(e) = sqlx::query("SELECT pg_notify('job_update', $1)")
+            .bind(&payload_str)
+            .execute(&state.db)
+            .await
+        {
+            tracing::error!(error = %e, %id, "cancel_job: job-level pg_notify failed");
+        } else {
+            tracing::info!(%id, "cancel_job: job-level pg_notify sent");
+        }
+    }
+
     log_event(
         &state.db,
         AuditAction::PatchJobCancelled,

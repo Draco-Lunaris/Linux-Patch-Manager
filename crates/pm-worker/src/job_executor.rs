@@ -17,6 +17,7 @@ use std::sync::Arc;
 use chrono::{Duration as ChronoDuration, Utc};
 use pm_agent_client::{types::ApplyPatchesRequest, AgentClient};
 use pm_core::config::AppConfig;
+use serde_json::json;
 use sqlx::{FromRow, PgPool};
 use tokio::{sync::Semaphore, time};
 use uuid::Uuid;
@@ -838,6 +839,28 @@ async fn sync_job_status(pool: &PgPool, job_id: Uuid) {
 
     if let Err(e) = result {
         tracing::error!(%job_id, error = %e, "sync_job_status: failed to update parent job");
+    }
+
+    // Fire job-level pg_notify so the frontend can update the job row.
+    let notify_payload = json!({
+        "event_type": "job",
+        "job_id": job_id.to_string(),
+        "host_id": "",
+        "status": new_status,
+        "succeeded_count": counts.succeeded_count,
+        "failed_count": counts.failed_count,
+        "host_count": counts.total_count,
+    });
+    if let Ok(payload_str) = serde_json::to_string(&notify_payload) {
+        if let Err(e) = sqlx::query("SELECT pg_notify('job_update', $1)")
+            .bind(&payload_str)
+            .execute(pool)
+            .await
+        {
+            tracing::error!(%job_id, error = %e, "sync_job_status: job-level pg_notify failed");
+        } else {
+            tracing::info!(%job_id, status = %new_status, "sync_job_status: job-level pg_notify sent");
+        }
     }
 
     // Send email notifications for completed/failed jobs

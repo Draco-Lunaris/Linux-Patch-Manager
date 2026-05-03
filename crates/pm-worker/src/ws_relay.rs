@@ -47,12 +47,17 @@ struct AgentWsEvent {
 /// Payload broadcast via `pg_notify('job_update', …)`.
 #[derive(Debug, Serialize)]
 struct NotifyPayload {
+    event_type: String,  // "host" or "job"
     job_id: String,
     host_id: String,
     status: String,
     output: Option<String>,
     error_message: Option<String>,
     agent_job_id: String,
+    // Job-level fields (only present when event_type === "job")
+    succeeded_count: Option<i64>,
+    failed_count: Option<i64>,
+    host_count: Option<i64>,
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -351,14 +356,18 @@ async fn process_event(pool: &PgPool, row: &RunningHostJob, event: &AgentWsEvent
         update_parent_job_status(pool, row.job_id).await;
     }
 
-    // Fire pg_notify so browser WS handlers forward the event.
+    // Fire pg_notify so browser WS handlers forward the host-level event.
     let payload = NotifyPayload {
+        event_type: "host".to_string(),
         job_id: row.job_id.to_string(),
         host_id: row.host_id.to_string(),
         status: db_status.to_string(),
         output: event.output.clone(),
         error_message: event.error.clone(),
         agent_job_id: row.agent_job_id.clone(),
+        succeeded_count: None,
+        failed_count: None,
+        host_count: None,
     };
 
     let payload_json = match serde_json::to_string(&payload) {
@@ -394,6 +403,9 @@ async fn process_event(pool: &PgPool, row: &RunningHostJob, event: &AgentWsEvent
 
 /// After a host-level job reaches a terminal state, check whether ALL hosts for
 /// that job are now terminal and update the parent `patch_jobs` row accordingly.
+///
+/// If the parent job transitions to a terminal status, also fires a `job_update`
+/// pg_notify with `event_type: "job"` so the frontend can update the job row.
 async fn update_parent_job_status(pool: &PgPool, job_id: Uuid) {
     // Count hosts that are still in a non-terminal state.
     let pending: i64 = match sqlx::query_scalar(
@@ -423,22 +435,36 @@ async fn update_parent_job_status(pool: &PgPool, job_id: Uuid) {
         return; // still hosts running — parent stays running
     }
 
-    // All hosts terminal — determine final parent status.
-    let failed_count: i64 = match sqlx::query_scalar(
-        "SELECT COUNT(*) FROM patch_job_hosts WHERE job_id = $1 AND status = 'failed'::job_status",
+    // All hosts terminal — determine final parent status and counts.
+    #[derive(sqlx::FromRow)]
+    struct RollupCounts {
+        total: i64,
+        succeeded: i64,
+        failed: i64,
+    }
+
+    let counts: RollupCounts = match sqlx::query_as(
+        r#"
+        SELECT
+            COUNT(*) AS total,
+            COUNT(*) FILTER (WHERE status = 'succeeded') AS succeeded,
+            COUNT(*) FILTER (WHERE status = 'failed') AS failed
+        FROM patch_job_hosts
+        WHERE job_id = $1
+        "#,
     )
     .bind(job_id)
     .fetch_one(pool)
     .await
     {
-        Ok(n) => n,
+        Ok(c) => c,
         Err(e) => {
-            tracing::error!(error = %e, %job_id, "update_parent_job_status: failed-count query failed");
+            tracing::error!(error = %e, %job_id, "update_parent_job_status: rollup query failed");
             return;
         },
     };
 
-    let final_status = if failed_count > 0 {
+    let final_status = if counts.failed > 0 {
         "failed"
     } else {
         "succeeded"
@@ -458,11 +484,52 @@ async fn update_parent_job_status(pool: &PgPool, job_id: Uuid) {
             status = %final_status,
             "update_parent_job_status: UPDATE failed"
         );
+        return;
+    }
+
+    tracing::info!(
+        %job_id,
+        status = %final_status,
+        "Parent job status updated"
+    );
+
+    // Fire job-level pg_notify so the frontend can update the job row.
+    let payload = NotifyPayload {
+        event_type: "job".to_string(),
+        job_id: job_id.to_string(),
+        host_id: String::new(),  // no specific host for job-level events
+        status: final_status.to_string(),
+        output: None,
+        error_message: None,
+        agent_job_id: String::new(),
+        succeeded_count: Some(counts.succeeded),
+        failed_count: Some(counts.failed),
+        host_count: Some(counts.total),
+    };
+
+    let payload_json = match serde_json::to_string(&payload) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(error = %e, %job_id, "update_parent_job_status: failed to serialize job-level notify payload");
+            return;
+        },
+    };
+
+    if let Err(e) = sqlx::query("SELECT pg_notify('job_update', $1)")
+        .bind(&payload_json)
+        .execute(pool)
+        .await
+    {
+        tracing::error!(
+            error  = %e,
+            %job_id,
+            "update_parent_job_status: job-level pg_notify failed"
+        );
     } else {
         tracing::info!(
             %job_id,
             status = %final_status,
-            "Parent job status updated"
+            "Job-level pg_notify sent"
         );
     }
 }
