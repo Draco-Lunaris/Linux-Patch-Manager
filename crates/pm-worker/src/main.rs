@@ -36,6 +36,11 @@ const SCHEMA_CHECK_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Install the default crypto provider for rustls (required since 0.23)
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
+
     // Load configuration
     let config_path = std::env::var("PATCH_MANAGER_CONFIG")
         .unwrap_or_else(|_| "/etc/patch-manager/config.toml".to_string());
