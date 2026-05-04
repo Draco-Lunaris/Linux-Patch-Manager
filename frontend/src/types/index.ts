@@ -24,6 +24,7 @@ export interface Host {
   os_family?: string
   os_name?: string
   agent_version?: string
+  patches_missing: number
   registered_at: string
 }
 

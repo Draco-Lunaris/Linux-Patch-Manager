@@ -109,10 +109,13 @@ async fn list_hosts(
     let hosts: Vec<HostSummary> = if auth.role.is_admin() {
         sqlx::query_as(
             r#"
-            SELECT id, fqdn, host(ip_address)::text AS ip_address, display_name,
-                   os_family, os_name, health_status, agent_version, registered_at
-            FROM hosts
-            ORDER BY fqdn
+            SELECT h.id, h.fqdn, host(h.ip_address)::text AS ip_address, h.display_name,
+                   h.os_family, h.os_name, h.health_status, h.agent_version,
+                   COALESCE(hpd.patch_count, 0) AS patches_missing,
+                   h.registered_at
+            FROM hosts h
+            LEFT JOIN host_patch_data hpd ON hpd.host_id = h.id
+            ORDER BY h.fqdn
             LIMIT $1 OFFSET $2
             "#,
         )
@@ -125,8 +128,11 @@ async fn list_hosts(
             r#"
             SELECT DISTINCT h.id, h.fqdn, host(h.ip_address)::text AS ip_address,
                    h.display_name, h.os_family, h.os_name,
-                   h.health_status, h.agent_version, h.registered_at
+                   h.health_status, h.agent_version,
+                   COALESCE(hpd.patch_count, 0) AS patches_missing,
+                   h.registered_at
             FROM hosts h
+            LEFT JOIN host_patch_data hpd ON hpd.host_id = h.id
             WHERE
                 -- Hosts in operator's groups
                 EXISTS (

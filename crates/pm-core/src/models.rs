@@ -112,6 +112,7 @@ pub struct HostSummary {
     pub os_name: Option<String>,
     pub health_status: HostHealthStatus,
     pub agent_version: Option<String>,
+    pub patches_missing: i64,
     pub registered_at: DateTime<Utc>,
 }
 

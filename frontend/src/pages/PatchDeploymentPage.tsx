@@ -52,6 +52,7 @@ export default function PatchDeploymentPage() {
   const [hostsError, setHostsError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [healthFilter, setHealthFilter] = useState<HostHealthStatus | ''>('')
+  const [patchesFilter, setPatchesFilter] = useState<'all' | 'missing' | 'uptodate'>('all')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
   // Step 1 state
@@ -89,7 +90,11 @@ export default function PatchDeploymentPage() {
       h.display_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       h.fqdn.toLowerCase().includes(searchQuery.toLowerCase())
     const matchesHealth = healthFilter === '' || h.health_status === healthFilter
-    return matchesSearch && matchesHealth
+    const matchesPatches =
+      patchesFilter === 'all' ||
+      (patchesFilter === 'missing' && h.patches_missing > 0) ||
+      (patchesFilter === 'uptodate' && h.patches_missing === 0)
+    return matchesSearch && matchesHealth && matchesPatches
   })
 
   const handleToggleHost = (id: string) => {
@@ -209,6 +214,19 @@ export default function PatchDeploymentPage() {
               <option value="unreachable">Unreachable</option>
               <option value="pending">Pending</option>
             </TextField>
+            <TextField
+              select
+              size="small"
+              label="Patches Missing"
+              value={patchesFilter}
+              onChange={(e) => setPatchesFilter(e.target.value as 'all' | 'missing' | 'uptodate')}
+              SelectProps={{ native: true }}
+              sx={{ minWidth: 160 }}
+            >
+              <option value="all">All</option>
+              <option value="missing">Missing (&gt;0)</option>
+              <option value="uptodate">Up to date (0)</option>
+            </TextField>
           </Box>
 
           {hostsLoading ? (
@@ -238,13 +256,14 @@ export default function PatchDeploymentPage() {
                     <TableCell>FQDN</TableCell>
                     <TableCell>IP Address</TableCell>
                     <TableCell>Health</TableCell>
+                    <TableCell>Patches</TableCell>
                     <TableCell>OS</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {filteredHosts.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={6} align="center">
+                      <TableCell colSpan={7} align="center">
                         <Typography variant="body2" color="text.secondary" py={2}>
                           No hosts found
                         </Typography>
@@ -271,6 +290,13 @@ export default function PatchDeploymentPage() {
                         <TableCell>{host.ip_address}</TableCell>
                         <TableCell>
                           <HealthChip status={host.health_status} />
+                        </TableCell>
+                        <TableCell>
+                          <Chip
+                            label={host.patches_missing}
+                            color={host.patches_missing > 0 ? 'error' : 'success'}
+                            size="small"
+                          />
                         </TableCell>
                         <TableCell>
                           {host.os_name ?? host.os_family ?? '—'}
