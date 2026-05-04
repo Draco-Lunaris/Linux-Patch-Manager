@@ -7,6 +7,13 @@ USING host_patch_data b
 WHERE a.host_id = b.host_id
   AND a.polled_at < b.polled_at;
 
--- Step 2: Add UNIQUE constraint on host_id
-ALTER TABLE host_patch_data
-  ADD CONSTRAINT host_patch_data_host_id_key UNIQUE (host_id);
+-- Step 2: Add UNIQUE constraint on host_id (idempotent)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'host_patch_data_host_id_key'
+  ) THEN
+    ALTER TABLE host_patch_data
+      ADD CONSTRAINT host_patch_data_host_id_key UNIQUE (host_id);
+  END IF;
+END $$;

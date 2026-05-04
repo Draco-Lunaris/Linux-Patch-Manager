@@ -1,59 +1,37 @@
 # WebSocket + Polling Fallback Implementation Plan
 
 ## Problem
-The linux-patch-api agent's `/api/v1/ws/jobs` endpoint is a stub that returns HTTP 101
-with a JSON body but doesn't compute the required `Sec-WebSocket-Accept` header. This
-causes the pm-worker WS relay to fail with "Key mismatch in Sec-WebSocket-Accept header".
+The linux-patch-api agent's `/api/v1/ws/jobs` endpoint was a stub that returned HTTP 101
+with a JSON body but didn't compute the required `Sec-WebSocket-Accept` header. This
+caused the pm-worker WS relay to fail with "Key mismatch in Sec-WebSocket-Accept header".
 
 Additionally, the pm-worker WS relay's rustls ClientConfig didn't set ALPN to http/1.1,
 causing HTTP/2 negotiation which also breaks WebSocket upgrades.
 
 ## Root Causes
-1. **Agent WS handler is a stub** — doesn't implement RFC 6455 WebSocket handshake
+1. **Agent WS handler was a stub** — didn't implement RFC 6455 WebSocket handshake
 2. **WS relay missing ALPN** — rustls ClientConfig didn't set `alpn_protocols` to `http/1.1`
-3. **No fallback** — WS relay has no fallback if WebSocket fails
+3. **No fallback** — WS relay had no fallback if WebSocket connection failed
 
 ## Completed
 - [x] ALPN fix in pm-worker ws_relay.rs (forces HTTP/1.1 for WebSocket)
 - [x] Error chain logging in pm-worker ws_relay.rs (for future debugging)
 - [x] Job-level WS event_type fix (frontend + backend)
+- [x] Implement proper WebSocket in linux-patch-api using actix-web-actors
+- [x] Add WsJobActor with broadcast channel for real-time status updates
+- [x] Add HTTP polling fallback in pm-worker WS relay
+- [x] Deploy both binaries to dev LXC
+- [x] Push both projects to Gitea
+- [x] Fix config file (ws_relay_poll_interval_secs in [worker] section)
 
-## Remaining Tasks
+## Deployment Notes
+- linux-patch-api binary deployed to /usr/bin/linux-patch-api on dev LXC (VMID 131)
+- pm-worker binary deployed to /usr/local/bin/pm-worker on dev LXC (VMID 131)
+- Config file: /etc/patch-manager/config.toml (added ws_relay_poll_interval_secs = 10)
+- Both services running: patch-manager-web, patch-manager-worker, linux-patch-api
 
-### Phase 1: Implement proper WebSocket in linux-patch-api
-- [ ] Replace stub `websocket_handler` in `src/api/handlers/websocket.rs` with proper actix-web-actors WebSocket
-- [ ] Create `WsJobActor` that:
-  - Accepts WebSocket connections via `actix_web_actors::ws::start()`
-  - Subscribes to job status updates from `JobManager`
-  - Streams job status events to connected clients
-  - Handles subscribe/unsubscribe messages
-- [ ] Wire up broadcast channel from JobManager to WebSocket actors
-- [ ] Build and deploy to dev LXC
-
-### Phase 2: Add polling fallback in pm-worker WS relay
-- [ ] In `relay_one_job()`, if WebSocket connection fails, fall back to HTTP polling
-- [ ] Use existing `AgentClient` (reqwest + mTLS) to poll `/api/v1/jobs/{id}`
-- [ ] Poll interval: configurable, default 5-10 seconds
-- [ ] Convert polled job status to same event format as WebSocket messages
-- [ ] Fire `pg_notify('job_update')` for polled status changes
-
-### Phase 3: Testing & Deployment
-- [ ] Test WebSocket connection on dev LXC
-- [ ] Test polling fallback on dev LXC
-- [ ] Verify job completion status updates in UI
-- [ ] Push to Gitea
-- [ ] Update dev LXC deployment
-
-## Architecture Notes
-
-### linux-patch-api WebSocket (Phase 1)
-- Uses `actix-web-actors::ws` for proper RFC 6455 WebSocket handshake
-- `WsJobActor` implements `actix::Actor` + `StreamHandler<ws::Message>`
-- JobManager has a `tokio::sync::broadcast` channel for status updates
-- WsJobActor subscribes to this channel and forwards events to clients
-
-### pm-worker WS relay fallback (Phase 2)
-- `relay_one_job()` tries WebSocket first
-- On connection failure, falls back to `poll_job_status()` using AgentClient
-- Poll interval configurable via `[worker]` config (default: 10s)
-- Status changes trigger `pg_notify('job_update')` same as WebSocket events
+## Verified Working
+- WebSocket connections to linux-patch-manager-dev (agent with proper WS handler)
+- HTTP polling fallback to gitea-runner-u2404 (agent with stub WS)
+- Job completion status updates via pg_notify
+- Frontend real-time updates via WebSocket events
