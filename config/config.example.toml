@@ -46,7 +46,11 @@ patch_poll_interval_secs = 1800
 max_concurrent_agent_calls = 64
 
 # Worker heartbeat write interval (seconds)
-heartbeat_interval_secs = 30
+
+# WS relay HTTP polling fallback interval (seconds). When WebSocket connection to
+# an agent fails, the relay falls back to polling the agent's HTTP API at this
+# interval. Default: 10
+ws_relay_poll_interval_secs = 10
 
 # ============================================================
 # Logging

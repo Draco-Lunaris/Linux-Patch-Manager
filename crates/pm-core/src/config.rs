@@ -43,6 +43,8 @@ pub struct WorkerConfig {
     pub max_concurrent_agent_calls: usize,
     /// Worker heartbeat interval in seconds
     pub heartbeat_interval_secs: u64,
+    /// WS relay HTTP polling fallback interval in seconds (default: 10)
+    pub ws_relay_poll_interval_secs: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -115,6 +117,7 @@ impl Default for AppConfig {
                 patch_poll_interval_secs: 1800,
                 max_concurrent_agent_calls: 64,
                 heartbeat_interval_secs: 30,
+                ws_relay_poll_interval_secs: 10,
             },
             logging: LoggingConfig {
                 level: "info".to_string(),
