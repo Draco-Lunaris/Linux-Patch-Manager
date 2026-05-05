@@ -11,6 +11,7 @@
 //! host_cert_router() → merged under /api/v1/hosts
 //!   GET  /:host_id/client.crt                download_client_cert  (admin only)
 //!   POST /:host_id/certificates              issue_client_cert     (admin only)
+//!   POST /:host_id/certificates/reissue      reissue_host_cert     (admin only)
 
 use axum::{
     body::Body,
@@ -50,6 +51,7 @@ pub fn host_cert_router() -> Router<AppState> {
     Router::new()
         .route("/{host_id}/client.crt", get(download_client_cert))
         .route("/{host_id}/certificates", post(issue_client_cert))
+        .route("/{host_id}/certificates/reissue", post(reissue_host_cert))
 }
 
 // ── Shared types ──────────────────────────────────────────────────────────────
@@ -311,6 +313,7 @@ async fn issue_client_cert(
         "key_pem":       issued.key_pem,
         "serial_number": issued.serial_number,
         "expires_at":    issued.expires_at,
+        "ca_root_pem":   state.ca.root_cert_pem(),
     })))
 }
 
@@ -360,6 +363,82 @@ async fn renew_cert(
         "key_pem":       issued.key_pem,
         "serial_number": issued.serial_number,
         "expires_at":    issued.expires_at,
+        "ca_root_pem":   state.ca.root_cert_pem(),
+    })))
+}
+
+// ── POST /api/v1/hosts/:host_id/certificates/reissue ────────────────────────
+
+/// Revoke ALL active certificates for a host and issue a new one.
+/// The private key is returned only once — the caller must save it.
+async fn reissue_host_cert(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(host_id): Path<Uuid>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
+
+    // Look up the host's FQDN for the new certificate CN.
+    let fqdn: String = sqlx::query_scalar("SELECT fqdn FROM hosts WHERE id = $1")
+        .bind(host_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, %host_id, "Failed to fetch host FQDN");
+            if e.to_string().contains("no rows") {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({ "error": { "code": "not_found", "message": "Host not found" } })),
+                )
+            } else {
+                db_error(e)
+            }
+        })?;
+
+    // Revoke all active certificates for this host.
+    let revoked = sqlx::query(
+        "UPDATE certificates SET status = 'revoked'::cert_status, revoked_at = NOW() \
+         WHERE host_id = $1 AND status = 'active'::cert_status",
+    )
+    .bind(host_id)
+    .execute(&state.db)
+    .await
+    .map_err(db_error)?;
+
+    tracing::info!(%host_id, rows_revoked = revoked.rows_affected(), "Revoked all active certs for host");
+
+    // Issue a new certificate using the host's FQDN.
+    let issued = state
+        .ca
+        .issue_client_cert(host_id, &fqdn, &state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, %host_id, "Failed to issue new cert during reissue");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": e.to_string() } })),
+            )
+        })?;
+
+    log_event(
+        &state.db,
+        AuditAction::CertificateReissued,
+        Some(auth.user_id),
+        Some(&auth.username),
+        Some("certificate"),
+        Some(&host_id.to_string()),
+        json!({ "hostname": &fqdn, "serial_number": issued.serial_number, "rows_revoked": revoked.rows_affected() }),
+        None,
+        None,
+    )
+    .await;
+
+    Ok(Json(json!({
+        "cert_pem":      issued.cert_pem,
+        "key_pem":       issued.key_pem,
+        "serial_number": issued.serial_number,
+        "expires_at":    issued.expires_at,
+        "ca_root_pem":   state.ca.root_cert_pem(),
     })))
 }
 

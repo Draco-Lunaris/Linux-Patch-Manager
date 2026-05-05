@@ -50,6 +50,7 @@ pub enum AuditAction {
     HealthCheckCreated,
     HealthCheckUpdated,
     HealthCheckDeleted,
+    CertificateReissued,
 }
 
 impl AuditAction {
@@ -86,6 +87,7 @@ impl AuditAction {
             Self::HealthCheckCreated => "health_check_created",
             Self::HealthCheckUpdated => "health_check_updated",
             Self::HealthCheckDeleted => "health_check_deleted",
+            Self::CertificateReissued => "certificate_reissued",
         }
     }
 }

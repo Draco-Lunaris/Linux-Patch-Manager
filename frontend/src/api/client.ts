@@ -176,6 +176,10 @@ export const certsApi = {
   // Download host client cert as blob
   downloadClientCert: (hostId: string) =>
     apiClient.get(`/hosts/${hostId}/client.crt`, { responseType: 'blob' }),
+
+  // Re-issue all certs for a host — revokes all active certs and issues a new one
+  reissue: (hostId: string) =>
+    apiClient.post<IssuedCert>(`/hosts/${hostId}/certificates/reissue`),
 }
 
 // ── Reports API (M9) ─────────────────────────────────────────────────────────

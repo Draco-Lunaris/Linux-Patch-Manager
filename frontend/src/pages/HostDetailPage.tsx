@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import JSZip from 'jszip'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Alert,
@@ -314,16 +315,38 @@ function HealthCheckFormDialog({ open, title, initial, onClose, onSubmit }: Heal
 interface KeyDisplayDialogProps {
   open: boolean
   cert: IssuedCert | null
+  hostname?: string
   onClose: () => void
 }
 
-function KeyDisplayDialog({ open, cert, onClose }: KeyDisplayDialogProps) {
-  const [copiedField, setCopiedField] = useState<'cert' | 'key' | null>(null)
+function KeyDisplayDialog({ open, cert, hostname, onClose }: KeyDisplayDialogProps) {
+  const [copiedField, setCopiedField] = useState<'cert' | 'key' | 'ca' | null>(null)
+  const [downloading, setDownloading] = useState(false)
 
-  const handleCopy = async (text: string, field: 'cert' | 'key') => {
+  const handleCopy = async (text: string, field: 'cert' | 'key' | 'ca') => {
     await navigator.clipboard.writeText(text)
     setCopiedField(field)
     setTimeout(() => setCopiedField(null), 2000)
+  }
+
+  const handleDownloadBundle = async () => {
+    if (!cert) return
+    setDownloading(true)
+    try {
+      const zip = new JSZip()
+      zip.file('ca.crt', cert.ca_root_pem)
+      zip.file('client.crt', cert.cert_pem)
+      zip.file('client.key', cert.key_pem)
+      const blob = await zip.generateAsync({ type: 'blob' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${hostname || 'host'}-certs.zip`
+      a.click()
+      URL.revokeObjectURL(url)
+    } finally {
+      setDownloading(false)
+    }
   }
 
   return (
@@ -341,7 +364,38 @@ function KeyDisplayDialog({ open, cert, onClose }: KeyDisplayDialogProps) {
             </Typography>
             <Box>
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
-                <Typography variant="subtitle2">Certificate (cert.pem)</Typography>
+                <Typography variant="subtitle2">CA Root Certificate (ca.crt)</Typography>
+                <Tooltip title={copiedField === 'ca' ? 'Copied!' : 'Copy CA root cert to clipboard'}>
+                  <Button
+                    size="small"
+                    startIcon={<CopyIcon />}
+                    onClick={() => handleCopy(cert.ca_root_pem, 'ca')}
+                    variant="outlined"
+                  >
+                    {copiedField === 'ca' ? 'Copied!' : 'Copy CA Root'}
+                  </Button>
+                </Tooltip>
+              </Box>
+              <Box
+                component="pre"
+                sx={{
+                  p: 2,
+                  bgcolor: 'grey.100',
+                  borderRadius: 1,
+                  fontSize: 12,
+                  overflow: 'auto',
+                  maxHeight: 150,
+                  fontFamily: 'monospace',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-all',
+                }}
+              >
+                {cert.ca_root_pem}
+              </Box>
+            </Box>
+            <Box>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+                <Typography variant="subtitle2">Certificate (client.crt)</Typography>
                 <Tooltip title={copiedField === 'cert' ? 'Copied!' : 'Copy certificate to clipboard'}>
                   <Button
                     size="small"
@@ -372,7 +426,7 @@ function KeyDisplayDialog({ open, cert, onClose }: KeyDisplayDialogProps) {
             </Box>
             <Box>
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
-                <Typography variant="subtitle2" color="error">Private Key (key.pem)</Typography>
+                <Typography variant="subtitle2" color="error">Private Key (client.key)</Typography>
                 <Tooltip title={copiedField === 'key' ? 'Copied!' : 'Copy private key to clipboard'}>
                   <Button
                     size="small"
@@ -405,7 +459,14 @@ function KeyDisplayDialog({ open, cert, onClose }: KeyDisplayDialogProps) {
           </>
         )}
       </DialogContent>
-      <DialogActions>
+      <DialogActions sx={{ justifyContent: 'space-between' }}>
+        <Button
+          variant="outlined"
+          onClick={handleDownloadBundle}
+          disabled={downloading || !cert}
+        >
+          {downloading ? <CircularProgress size={20} /> : 'Download Bundle (.zip)'}
+        </Button>
         <Button variant="contained" onClick={onClose}>I Have Saved the Key</Button>
       </DialogActions>
     </Dialog>
@@ -567,6 +628,11 @@ export default function HostDetailPage() {
   const [issueCertHostname, setIssueCertHostname] = useState('')
   const [issueCertError, setIssueCertError] = useState<string | null>(null)
 
+  // Re-issue certificate state
+  const [reissueConfirmOpen, setReissueConfirmOpen] = useState(false)
+  const [reissueLoading, setReissueLoading] = useState(false)
+  const [reissueError, setReissueError] = useState<string | null>(null)
+
   // ── Fetch host ────────────────────────────────────────────────────────────
   useEffect(() => {
     if (id === 'new') { setLoading(false); return }
@@ -717,6 +783,26 @@ export default function HostDetailPage() {
     }
   }
 
+  // ── Re-issue certificate ────────────────────────────────────────────────
+  const handleReissue = async () => {
+    if (!id) return
+    setReissueLoading(true)
+    setReissueError(null)
+    try {
+      const res = await certsApi.reissue(id)
+      setIssuedCert(res.data)
+      setReissueConfirmOpen(false)
+      setKeyDialogOpen(true)
+      setCertExists(true)
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { error?: { message?: string } } } })
+        ?.response?.data?.error?.message ?? 'Failed to re-issue certificate'
+      setReissueError(msg)
+    } finally {
+      setReissueLoading(false)
+    }
+  }
+
   // ── Create health check ──────────────────────────────────────────────────
   const handleHcCreateSubmit = async (values: HealthCheckFormValues) => {
     if (!id) return
@@ -848,7 +934,18 @@ export default function HostDetailPage() {
                 Issue Certificate
               </Button>
             )}
-            <Tooltip title="Download mTLS Client Certificate">
+            {certExists && (
+              <Button
+                variant="outlined"
+                size="small"
+                color="warning"
+                startIcon={<VpnKeyIcon />}
+                onClick={() => { setReissueError(null); setReissueConfirmOpen(true) }}
+              >
+                Re-issue Certificate
+              </Button>
+            )}
+            <Tooltip title="Download Client Certificate (public cert only)">
               <IconButton onClick={handleDownloadClientCert} color="primary">
                 <VpnKeyIcon />
               </IconButton>
@@ -1147,10 +1244,29 @@ export default function HostDetailPage() {
         </DialogActions>
       </Dialog>
       
+      {/* Re-issue Certificate Confirmation Dialog */}
+      <Dialog open={reissueConfirmOpen} onClose={() => setReissueConfirmOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Re-issue Certificate</DialogTitle>
+        <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
+          {reissueError && <Alert severity="error">{reissueError}</Alert>}
+          <Alert severity="warning">
+            <strong>This will revoke all existing certificates for this host and issue a new set.</strong>
+            {' '}The new private key will only be shown once. Continue?
+          </Alert>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setReissueConfirmOpen(false)} disabled={reissueLoading}>Cancel</Button>
+          <Button color="warning" variant="contained" onClick={handleReissue} disabled={reissueLoading}>
+            {reissueLoading ? <CircularProgress size={20} /> : 'Re-issue Certificate'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+      
       {/* One-time key display dialog */}
       <KeyDisplayDialog
         open={keyDialogOpen}
         cert={issuedCert}
+        hostname={String(host?.fqdn ?? '')}
         onClose={() => setKeyDialogOpen(false)}
       />
 

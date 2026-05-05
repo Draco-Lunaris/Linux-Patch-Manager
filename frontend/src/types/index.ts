@@ -203,6 +203,7 @@ export interface IssuedCert {
   key_pem: string
   serial_number: string
   expires_at: string
+  ca_root_pem: string
 }
 
 // ── Reports (M9) ─────────────────────────────────────────────────────────────
