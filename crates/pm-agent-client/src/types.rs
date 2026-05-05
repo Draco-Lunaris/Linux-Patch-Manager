@@ -194,6 +194,23 @@ pub struct AgentJobStatus {
 }
 
 // ============================================================
+// GET /api/v1/system/services/{name}
+// ============================================================
+
+/// Payload returned by `GET /api/v1/system/services/{name}`.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ServiceStatusData {
+    /// Service name.
+    pub name: String,
+    /// Service status string (e.g. `"running"`, `"stopped"`, `"failed"`).
+    pub status: String,
+    /// Whether the service is considered healthy.
+    pub healthy: bool,
+    /// Seconds elapsed since the service started (`null` if not running).
+    pub uptime_secs: Option<u64>,
+}
+
+// ============================================================
 // POST /api/v1/jobs/{id}/rollback
 // ============================================================
 

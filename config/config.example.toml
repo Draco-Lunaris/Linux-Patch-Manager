@@ -42,6 +42,10 @@ health_poll_interval_secs = 300
 # Agent patch data poll interval (seconds). Default: 1800 = 30 minutes
 patch_poll_interval_secs = 1800
 
+# Health check poll interval (seconds). Default: 300 = 5 minutes
+# Controls how often configured service/HTTP health checks are evaluated.
+health_check_poll_interval_secs = 300
+
 # Maximum concurrent mTLS agent calls (Tokio Semaphore)
 max_concurrent_agent_calls = 64
 

@@ -113,7 +113,77 @@ pub struct HostSummary {
     pub health_status: HostHealthStatus,
     pub agent_version: Option<String>,
     pub patches_missing: i32,
+    pub health_check_status: Option<String>,
     pub registered_at: DateTime<Utc>,
+}
+
+// ============================================================
+// Health Checks
+// ============================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct HealthCheck {
+    pub id: Uuid,
+    pub host_id: Uuid,
+    pub name: String,
+    pub check_type: String, // "service" or "http"
+    pub enabled: bool,
+    // Service check fields
+    pub service_name: Option<String>,
+    // HTTP check fields
+    pub url: Option<String>,
+    pub expected_body: Option<String>,
+    pub ignore_cert_errors: bool,
+    pub basic_auth_user: Option<String>,
+    // basic_auth_pass_encrypted and nonce NOT exposed in API responses
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HealthCheckWithResult {
+    #[serde(flatten)]
+    pub check: HealthCheck,
+    pub last_result: Option<HealthCheckResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct HealthCheckResult {
+    pub id: Uuid,
+    pub check_id: Uuid,
+    pub healthy: bool,
+    pub detail: Option<String>,
+    pub latency_ms: Option<i32>,
+    pub checked_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateHealthCheckRequest {
+    pub name: String,
+    pub check_type: String, // "service" or "http"
+    pub service_name: Option<String>,
+    pub url: Option<String>,
+    pub expected_body: Option<String>,
+    #[serde(default = "default_true")]
+    pub ignore_cert_errors: bool,
+    pub basic_auth_user: Option<String>,
+    pub basic_auth_pass: Option<String>, // plaintext in request, encrypted before storage
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateHealthCheckRequest {
+    pub name: Option<String>,
+    pub enabled: Option<bool>,
+    pub service_name: Option<String>,
+    pub url: Option<String>,
+    pub expected_body: Option<String>,
+    pub ignore_cert_errors: Option<bool>,
+    pub basic_auth_user: Option<String>,
+    pub basic_auth_pass: Option<String>, // if provided, re-encrypt
+}
+
+fn default_true() -> bool {
+    true
 }
 
 // ============================================================

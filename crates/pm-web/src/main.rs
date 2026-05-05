@@ -189,6 +189,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(routes::ws::ticket_router())
         // Reports
         .nest("/reports", routes::reports::router())
+        .nest("/hosts/{host_id}/health-checks", routes::health_checks::router())
         // Settings (admin-only)
         .nest("/settings", routes::settings::router())
         // Apply auth middleware to all the above

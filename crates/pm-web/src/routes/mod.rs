@@ -11,5 +11,6 @@ pub mod settings;
 pub mod status;
 pub mod users;
 pub mod ws;
+pub mod health_checks;
 
 pub mod reports;

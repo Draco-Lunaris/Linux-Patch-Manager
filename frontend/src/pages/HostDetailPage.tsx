@@ -34,13 +34,25 @@ import {
 import {
   Add as AddIcon,
   ArrowBack,
+  Cancel as CancelIcon,
+  CheckCircle as CheckCircleIcon,
   Delete as DeleteIcon,
   Edit as EditIcon,
+  MonitorHeart as MonitorHeartIcon,
+  PlayArrow as PlayArrowIcon,
+  Remove as RemoveIcon,
   Schedule as ScheduleIcon,
   VpnKey as VpnKeyIcon,
 } from '@mui/icons-material'
-import { apiClient, maintenanceWindowsApi, certsApi } from '../api/client'
-import type { MaintenanceWindow, WindowRecurrence } from '../types'
+import { apiClient, maintenanceWindowsApi, healthChecksApi, certsApi } from '../api/client'
+import type {
+  MaintenanceWindow,
+  WindowRecurrence,
+  HealthCheckType,
+  HealthCheckWithResult,
+  CreateHealthCheckRequest,
+  UpdateHealthCheckRequest,
+} from '../types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -74,7 +86,7 @@ function scheduleDescription(w: MaintenanceWindow): string {
   }
 }
 
-// ── Form value type ───────────────────────────────────────────────────────────
+// ── Window form value type ────────────────────────────────────────────────────
 
 interface FormValues {
   label: string
@@ -185,6 +197,114 @@ function WindowFormDialog({ open, title, initial, onClose, onSubmit }: WindowFor
   )
 }
 
+// ── Health Check form value type ─────────────────────────────────────────────
+
+interface HealthCheckFormValues {
+  name: string
+  check_type: HealthCheckType
+  service_name: string
+  url: string
+  expected_body: string
+  ignore_cert_errors: boolean
+  basic_auth_user: string
+  basic_auth_pass: string
+  enabled: boolean
+}
+
+function defaultHealthCheckForm(): HealthCheckFormValues {
+  return {
+    name: '',
+    check_type: 'service',
+    service_name: '',
+    url: '',
+    expected_body: '',
+    ignore_cert_errors: false,
+    basic_auth_user: '',
+    basic_auth_pass: '',
+    enabled: true,
+  }
+}
+
+// ── Health Check form dialog ──────────────────────────────────────────────────
+
+interface HealthCheckFormDialogProps {
+  open: boolean
+  title: string
+  initial: HealthCheckFormValues
+  onClose: () => void
+  onSubmit: (values: HealthCheckFormValues) => Promise<void>
+}
+
+function HealthCheckFormDialog({ open, title, initial, onClose, onSubmit }: HealthCheckFormDialogProps) {
+  const [form, setForm] = useState<HealthCheckFormValues>(initial)
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  useEffect(() => { setForm(initial); setErr(null) }, [open, initial])
+
+  const set = (field: keyof HealthCheckFormValues, value: HealthCheckFormValues[keyof HealthCheckFormValues]) =>
+    setForm(prev => ({ ...prev, [field]: value }))
+
+  const handleSubmit = async () => {
+    if (!form.name.trim()) { setErr('Name is required'); return }
+    if (form.check_type === 'service' && !form.service_name.trim()) { setErr('Service name is required'); return }
+    if (form.check_type === 'http' && !form.url.trim()) { setErr('URL is required'); return }
+    setSaving(true); setErr(null)
+    try { await onSubmit(form) }
+    catch (e: unknown) {
+      const msg = (e as { response?: { data?: { error?: { message?: string } } } })
+        ?.response?.data?.error?.message ?? 'Failed to save'
+      setErr(msg)
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle>{title}</DialogTitle>
+      <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
+        {err && <Alert severity="error">{err}</Alert>}
+        <TextField label="Name" value={form.name} onChange={e => set('name', e.target.value)} required fullWidth />
+        <FormControl fullWidth>
+          <InputLabel>Check Type</InputLabel>
+          <Select label="Check Type" value={form.check_type} onChange={e => set('check_type', e.target.value as HealthCheckType)}>
+            <MenuItem value="service">Service</MenuItem>
+            <MenuItem value="http">HTTP</MenuItem>
+          </Select>
+        </FormControl>
+        {form.check_type === 'service' && (
+          <TextField label="Service Name" value={form.service_name} onChange={e => set('service_name', e.target.value)} required fullWidth
+            helperText="Systemd service unit name to check" />
+        )}
+        {form.check_type === 'http' && (
+          <>
+            <TextField label="URL" value={form.url} onChange={e => set('url', e.target.value)} required fullWidth
+              helperText="Full URL to check (e.g. https://example.com/health)" />
+            <TextField label="Expected Body (optional)" value={form.expected_body} onChange={e => set('expected_body', e.target.value)} fullWidth
+              helperText="Substring expected in response body" />
+            <FormControlLabel
+              control={<Switch checked={form.ignore_cert_errors} onChange={e => set('ignore_cert_errors', e.target.checked)} />}
+              label="Ignore Certificate Errors"
+            />
+            <TextField label="Basic Auth User (optional)" value={form.basic_auth_user} onChange={e => set('basic_auth_user', e.target.value)} fullWidth />
+            <TextField label="Basic Auth Password (optional)" type="password" value={form.basic_auth_pass} onChange={e => set('basic_auth_pass', e.target.value)} fullWidth
+              helperText="Leave blank to keep existing password" />
+          </>
+        )}
+        <FormControlLabel
+          control={<Switch checked={form.enabled} onChange={e => set('enabled', e.target.checked)} />}
+          label="Enabled"
+        />
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose} disabled={saving}>Cancel</Button>
+        <Button variant="contained" onClick={handleSubmit} disabled={saving}>
+          {saving ? <CircularProgress size={20} /> : 'Save'}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  )
+}
+
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function HostDetailPage() {
@@ -201,18 +321,36 @@ export default function HostDetailPage() {
     open: false, message: '', severity: 'success',
   })
 
-  // Create dialog
+  // Create window dialog
   const [createOpen, setCreateOpen] = useState(false)
   const [createForm, setCreateForm] = useState<FormValues>(defaultForm())
 
-  // Edit dialog
+  // Edit window dialog
   const [editOpen, setEditOpen] = useState(false)
   const [editWindow, setEditWindow] = useState<MaintenanceWindow | null>(null)
   const [editForm, setEditForm] = useState<FormValues>(defaultForm())
 
-  // Delete dialog
+  // Delete window dialog
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<MaintenanceWindow | null>(null)
+
+  // Health checks state
+  const [healthChecks, setHealthChecks] = useState<HealthCheckWithResult[]>([])
+  const [hcLoading, setHcLoading] = useState(false)
+  const [testingId, setTestingId] = useState<string | null>(null)
+
+  // Create health check dialog
+  const [hcCreateOpen, setHcCreateOpen] = useState(false)
+  const [hcCreateForm, setHcCreateForm] = useState<HealthCheckFormValues>(defaultHealthCheckForm())
+
+  // Edit health check dialog
+  const [hcEditOpen, setHcEditOpen] = useState(false)
+  const [hcEditTarget, setHcEditTarget] = useState<HealthCheckWithResult | null>(null)
+  const [hcEditForm, setHcEditForm] = useState<HealthCheckFormValues>(defaultHealthCheckForm())
+
+  // Delete health check dialog
+  const [hcDeleteOpen, setHcDeleteOpen] = useState(false)
+  const [hcDeleteTarget, setHcDeleteTarget] = useState<HealthCheckWithResult | null>(null)
 
   // ── Fetch host ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -234,6 +372,19 @@ export default function HostDetailPage() {
   }, [id])
 
   useEffect(() => { fetchWindows() }, [fetchWindows])
+
+  // ── Fetch health checks ───────────────────────────────────────────────────
+  const fetchHealthChecks = useCallback(async () => {
+    if (!id) return
+    setHcLoading(true)
+    try {
+      const res = await healthChecksApi.list(id)
+      setHealthChecks(Array.isArray(res.data) ? res.data : [])
+    } catch { /* ignore */ }
+    finally { setHcLoading(false) }
+  }, [id])
+
+  useEffect(() => { fetchHealthChecks() }, [fetchHealthChecks])
 
   const showSnack = (message: string, severity: 'success' | 'error') =>
     setSnackbar({ open: true, message, severity })
@@ -312,6 +463,105 @@ export default function HostDetailPage() {
     }
   }
 
+  // ── Create health check ──────────────────────────────────────────────────
+  const handleHcCreateSubmit = async (values: HealthCheckFormValues) => {
+    if (!id) return
+    const body: CreateHealthCheckRequest = {
+      name: values.name,
+      check_type: values.check_type,
+    }
+    if (values.check_type === 'service') {
+      body.service_name = values.service_name || undefined
+    } else {
+      body.url = values.url || undefined
+      body.expected_body = values.expected_body || undefined
+      body.ignore_cert_errors = values.ignore_cert_errors || undefined
+      body.basic_auth_user = values.basic_auth_user || undefined
+      body.basic_auth_pass = values.basic_auth_pass || undefined
+    }
+    await healthChecksApi.create(id, body)
+    setHcCreateOpen(false)
+    showSnack('Health check created', 'success')
+    await fetchHealthChecks()
+  }
+
+  // ── Edit health check ────────────────────────────────────────────────────
+  const handleHcEditClick = (check: HealthCheckWithResult) => {
+    setHcEditTarget(check)
+    setHcEditForm({
+      name: check.name,
+      check_type: check.check_type,
+      service_name: check.service_name ?? '',
+      url: check.url ?? '',
+      expected_body: check.expected_body ?? '',
+      ignore_cert_errors: check.ignore_cert_errors,
+      basic_auth_user: check.basic_auth_user ?? '',
+      basic_auth_pass: '',
+      enabled: check.enabled,
+    })
+    setHcEditOpen(true)
+  }
+
+  const handleHcEditSubmit = async (values: HealthCheckFormValues) => {
+    if (!id || !hcEditTarget) return
+    const body: UpdateHealthCheckRequest = {
+      name: values.name,
+      enabled: values.enabled,
+    }
+    if (values.check_type === 'service') {
+      body.service_name = values.service_name || undefined
+    } else {
+      body.url = values.url || undefined
+      body.expected_body = values.expected_body || undefined
+      body.ignore_cert_errors = values.ignore_cert_errors
+      body.basic_auth_user = values.basic_auth_user || undefined
+      body.basic_auth_pass = values.basic_auth_pass || undefined
+    }
+    await healthChecksApi.update(id, hcEditTarget.id, body)
+    setHcEditOpen(false)
+    showSnack('Health check updated', 'success')
+    await fetchHealthChecks()
+  }
+
+  // ── Delete health check ──────────────────────────────────────────────────
+  const handleHcDeleteConfirm = async () => {
+    if (!id || !hcDeleteTarget) return
+    try {
+      await healthChecksApi.delete(id, hcDeleteTarget.id)
+      setHcDeleteOpen(false)
+      showSnack('Health check deleted', 'success')
+      await fetchHealthChecks()
+    } catch {
+      showSnack('Failed to delete health check', 'error')
+    }
+  }
+
+  // ── Toggle health check enabled ──────────────────────────────────────────
+  const handleToggleEnabled = async (check: HealthCheckWithResult) => {
+    if (!id) return
+    try {
+      await healthChecksApi.update(id, check.id, { enabled: !check.enabled })
+      await fetchHealthChecks()
+    } catch {
+      showSnack('Failed to toggle health check', 'error')
+    }
+  }
+
+  // ── Test health check ────────────────────────────────────────────────────
+  const handleTestCheck = async (check: HealthCheckWithResult) => {
+    if (!id) return
+    setTestingId(check.id)
+    try {
+      await healthChecksApi.test(id, check.id)
+      await fetchHealthChecks()
+      showSnack('Health check test completed', 'success')
+    } catch {
+      showSnack('Health check test failed', 'error')
+    } finally {
+      setTestingId(null)
+    }
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
   if (loading) return <Box display="flex" justifyContent="center" mt={8}><CircularProgress /></Box>
   if (error) return <Container sx={{ mt: 4 }}><Alert severity="error">{error}</Alert></Container>
@@ -350,7 +600,7 @@ export default function HostDetailPage() {
       </Paper>
 
       {/* ── Maintenance Windows ──────────────────────────────────────────── */}
-      <Paper sx={{ p: 3 }}>
+      <Paper sx={{ p: 3, mb: 3 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <ScheduleIcon color="primary" />
@@ -427,6 +677,127 @@ export default function HostDetailPage() {
         )}
       </Paper>
 
+      {/* ── Health Checks ────────────────────────────────────────────────── */}
+      <Paper sx={{ p: 3, mb: 3 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <MonitorHeartIcon color="primary" />
+            <Typography variant="h6" fontWeight={600}>Health Checks</Typography>
+          </Box>
+          <Button
+            startIcon={<AddIcon />}
+            variant="outlined"
+            size="small"
+            disabled={healthChecks.length >= 5}
+            onClick={() => { setHcCreateForm(defaultHealthCheckForm()); setHcCreateOpen(true) }}
+          >
+            Add Health Check
+          </Button>
+        </Box>
+        <Divider sx={{ mb: 2 }} />
+
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Monitor host health with service and HTTP checks. Maximum 5 checks per host.
+        </Typography>
+
+        {hcLoading ? (
+          <Box display="flex" justifyContent="center" py={3}><CircularProgress size={28} /></Box>
+        ) : healthChecks.length === 0 ? (
+          <Alert severity="info">
+            No health checks configured. Add a check to monitor this host&apos;s health.
+          </Alert>
+        ) : (
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Name</TableCell>
+                <TableCell>Type</TableCell>
+                <TableCell>Status</TableCell>
+                <TableCell>Enabled</TableCell>
+                <TableCell>Detail</TableCell>
+                <TableCell>Latency</TableCell>
+                <TableCell>Last Checked</TableCell>
+                <TableCell align="right">Actions</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {healthChecks.map(check => (
+                <TableRow key={check.id} hover>
+                  <TableCell>{check.name}</TableCell>
+                  <TableCell>
+                    <Chip label={check.check_type} size="small" variant="outlined" />
+                  </TableCell>
+                  <TableCell>
+                    {check.last_result ? (
+                      check.last_result.healthy ? (
+                        <Tooltip title="Healthy">
+                          <CheckCircleIcon color="success" fontSize="small" />
+                        </Tooltip>
+                      ) : (
+                        <Tooltip title="Unhealthy">
+                          <CancelIcon color="error" fontSize="small" />
+                        </Tooltip>
+                      )
+                    ) : (
+                      <Tooltip title="No result yet">
+                        <RemoveIcon color="disabled" fontSize="small" />
+                      </Tooltip>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Switch
+                      size="small"
+                      checked={check.enabled}
+                      onChange={() => handleToggleEnabled(check)}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2" sx={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {check.last_result?.detail ?? '—'}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    {check.last_result?.latency_ms != null ? `${check.last_result.latency_ms} ms` : '—'}
+                  </TableCell>
+                  <TableCell>
+                    {check.last_result?.checked_at
+                      ? new Date(check.last_result.checked_at).toLocaleString()
+                      : '—'}
+                  </TableCell>
+                  <TableCell align="right">
+                    <Tooltip title="Test now">
+                      <IconButton
+                        size="small"
+                        color="primary"
+                        disabled={testingId === check.id}
+                        onClick={() => handleTestCheck(check)}
+                      >
+                        {testingId === check.id
+                          ? <CircularProgress size={16} />
+                          : <PlayArrowIcon fontSize="small" />}
+                      </IconButton>
+                    </Tooltip>
+                    <Tooltip title="Edit">
+                      <IconButton size="small" onClick={() => handleHcEditClick(check)}>
+                        <EditIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                    <Tooltip title="Delete">
+                      <IconButton
+                        size="small" color="error"
+                        onClick={() => { setHcDeleteTarget(check); setHcDeleteOpen(true) }}
+                      >
+                        <DeleteIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </Paper>
+
       {/* ── Dialogs ─────────────────────────────────────────────────────── */}
       <WindowFormDialog
         open={createOpen}
@@ -452,6 +823,34 @@ export default function HostDetailPage() {
         <DialogActions>
           <Button onClick={() => setDeleteOpen(false)}>Cancel</Button>
           <Button color="error" variant="contained" onClick={handleDeleteConfirm}>Delete</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Health Check Dialogs */}
+      <HealthCheckFormDialog
+        open={hcCreateOpen}
+        title="Add Health Check"
+        initial={hcCreateForm}
+        onClose={() => setHcCreateOpen(false)}
+        onSubmit={handleHcCreateSubmit}
+      />
+      <HealthCheckFormDialog
+        open={hcEditOpen}
+        title="Edit Health Check"
+        initial={hcEditForm}
+        onClose={() => setHcEditOpen(false)}
+        onSubmit={handleHcEditSubmit}
+      />
+      <Dialog open={hcDeleteOpen} onClose={() => setHcDeleteOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Delete Health Check</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Delete <strong>{hcDeleteTarget?.name}</strong>? This cannot be undone.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setHcDeleteOpen(false)}>Cancel</Button>
+          <Button color="error" variant="contained" onClick={handleHcDeleteConfirm}>Delete</Button>
         </DialogActions>
       </Dialog>
 

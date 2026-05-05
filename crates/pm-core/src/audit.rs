@@ -47,6 +47,9 @@ pub enum AuditAction {
     PatchJobCompleted,
     PatchJobFailed,
     MaintenanceWindowReminder,
+    HealthCheckCreated,
+    HealthCheckUpdated,
+    HealthCheckDeleted,
 }
 
 impl AuditAction {
@@ -80,6 +83,9 @@ impl AuditAction {
             Self::PatchJobCompleted => "patch_job_completed",
             Self::PatchJobFailed => "patch_job_failed",
             Self::MaintenanceWindowReminder => "maintenance_window_reminder",
+            Self::HealthCheckCreated => "health_check_created",
+            Self::HealthCheckUpdated => "health_check_updated",
+            Self::HealthCheckDeleted => "health_check_deleted",
         }
     }
 }

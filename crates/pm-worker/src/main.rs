@@ -6,6 +6,7 @@
 mod agent_loader;
 mod audit_verifier;
 mod email;
+mod health_check_poller;
 mod health_poller;
 mod job_executor;
 mod maintenance_scheduler;
@@ -19,6 +20,7 @@ use std::{sync::Arc, time::Duration};
 use tokio::time;
 
 use audit_verifier::run_audit_verifier;
+use health_check_poller::run_health_check_poller;
 use health_poller::run_health_poller;
 use job_executor::run_job_executor;
 use maintenance_scheduler::run_maintenance_scheduler;
@@ -29,7 +31,7 @@ use ws_relay::run_ws_relay;
 /// Minimum number of applied migrations the worker requires before
 /// accepting work. Prevents the worker from running against a schema
 /// that hasn't been migrated yet.
-const REQUIRED_MIGRATION_COUNT: i64 = 5;
+const REQUIRED_MIGRATION_COUNT: i64 = 8;
 
 /// How long to wait between schema-version checks before giving up.
 const SCHEMA_CHECK_TIMEOUT: Duration = Duration::from_secs(120);
@@ -88,6 +90,9 @@ async fn main() -> anyhow::Result<()> {
 
     // M11: audit integrity verification (runs every 24 hours)
     let audit_verifier_handle = tokio::spawn(run_audit_verifier(pool.clone(), config.clone()));
+
+    // Health check poller — runs configured service/HTTP health checks
+    let health_check_handle = tokio::spawn(run_health_check_poller(pool.clone(), config.clone()));
 
     tracing::info!("Worker tasks started");
 

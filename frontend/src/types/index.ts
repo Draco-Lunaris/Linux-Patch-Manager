@@ -26,6 +26,7 @@ export interface Host {
   agent_version?: string
   patches_missing: number
   registered_at: string
+  health_check_status?: 'all_healthy' | 'some_unhealthy' | 'none'
 }
 
 export interface Group {
@@ -253,3 +254,57 @@ export interface AuditIntegrityResult {
 }
 
 export type ReportFormat = 'csv' | 'pdf'
+
+// ── Health Checks ────────────────────────────────────────────────────────────
+
+export type HealthCheckType = 'service' | 'http'
+
+export interface HealthCheck {
+  id: string
+  host_id: string
+  name: string
+  check_type: HealthCheckType
+  enabled: boolean
+  service_name?: string
+  url?: string
+  expected_body?: string
+  ignore_cert_errors: boolean
+  basic_auth_user?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface HealthCheckResult {
+  id: string
+  check_id: string
+  healthy: boolean
+  detail?: string
+  latency_ms?: number
+  checked_at: string
+}
+
+export interface HealthCheckWithResult extends HealthCheck {
+  last_result?: HealthCheckResult
+}
+
+export interface CreateHealthCheckRequest {
+  name: string
+  check_type: HealthCheckType
+  service_name?: string
+  url?: string
+  expected_body?: string
+  ignore_cert_errors?: boolean
+  basic_auth_user?: string
+  basic_auth_pass?: string
+}
+
+export interface UpdateHealthCheckRequest {
+  name?: string
+  enabled?: boolean
+  service_name?: string
+  url?: string
+  expected_body?: string
+  ignore_cert_errors?: boolean
+  basic_auth_user?: string
+  basic_auth_pass?: string
+}

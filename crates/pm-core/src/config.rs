@@ -39,6 +39,9 @@ pub struct WorkerConfig {
     pub health_poll_interval_secs: u64,
     /// Patch data poll interval in seconds (default: 1800 = 30 min)
     pub patch_poll_interval_secs: u64,
+    /// Health check poll interval in seconds (default: 300 = 5 min)
+    #[serde(default = "default_health_check_poll_interval")]
+    pub health_check_poll_interval_secs: u64,
     /// Maximum concurrent agent calls
     pub max_concurrent_agent_calls: usize,
     /// Worker heartbeat interval in seconds
@@ -98,6 +101,8 @@ impl AppConfig {
     }
 }
 
+fn default_health_check_poll_interval() -> u64 { 300 }
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -115,6 +120,7 @@ impl Default for AppConfig {
             worker: WorkerConfig {
                 health_poll_interval_secs: 300,
                 patch_poll_interval_secs: 1800,
+                health_check_poll_interval_secs: 300,
                 max_concurrent_agent_calls: 64,
                 heartbeat_interval_secs: 30,
                 ws_relay_poll_interval_secs: 10,

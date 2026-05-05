@@ -112,6 +112,7 @@ async fn list_hosts(
             SELECT h.id, h.fqdn, host(h.ip_address)::text AS ip_address, h.display_name,
                    h.os_family, h.os_name, h.health_status, h.agent_version,
                    COALESCE(hpd.patch_count, 0) AS patches_missing,
+                   " + hc_subquery + ",
                    h.registered_at
             FROM hosts h
             LEFT JOIN host_patch_data hpd ON hpd.host_id = h.id
@@ -130,6 +131,7 @@ async fn list_hosts(
                    h.display_name, h.os_family, h.os_name,
                    h.health_status, h.agent_version,
                    COALESCE(hpd.patch_count, 0) AS patches_missing,
+                   " + hc_subquery + ",
                    h.registered_at
             FROM hosts h
             LEFT JOIN host_patch_data hpd ON hpd.host_id = h.id

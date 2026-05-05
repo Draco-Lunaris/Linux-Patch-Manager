@@ -7,6 +7,9 @@ import type {
   UpdateMaintenanceWindowRequest,
   Certificate,
   IssuedCert,
+  HealthCheckWithResult,
+  CreateHealthCheckRequest,
+  UpdateHealthCheckRequest,
 } from '../types'
 
 const BASE_URL = '/api/v1'
@@ -258,4 +261,26 @@ export const settingsApi = {
   getIpWhitelist: () => apiClient.get<{ entries: string[] }>('/settings/ip-whitelist'),
   updateIpWhitelist: (entries: string[]) => apiClient.put<{ entries: string[] }>('/settings/ip-whitelist', { entries }),
   auditIntegrity: () => apiClient.post<AuditIntegrityResult>('/settings/audit-integrity'),
+}
+
+// ── Health Checks API ─────────────────────────────────────────────────────────
+
+export const healthChecksApi = {
+  list: (hostId: string) =>
+    apiClient.get<HealthCheckWithResult[]>(`/hosts/${hostId}/health-checks`),
+
+  get: (hostId: string, checkId: string) =>
+    apiClient.get<HealthCheckWithResult>(`/hosts/${hostId}/health-checks/${checkId}`),
+
+  create: (hostId: string, body: CreateHealthCheckRequest) =>
+    apiClient.post<HealthCheckWithResult>(`/hosts/${hostId}/health-checks`, body),
+
+  update: (hostId: string, checkId: string, body: UpdateHealthCheckRequest) =>
+    apiClient.put<HealthCheckWithResult>(`/hosts/${hostId}/health-checks/${checkId}`, body),
+
+  delete: (hostId: string, checkId: string) =>
+    apiClient.delete(`/hosts/${hostId}/health-checks/${checkId}`),
+
+  test: (hostId: string, checkId: string) =>
+    apiClient.post<HealthCheckWithResult>(`/hosts/${hostId}/health-checks/${checkId}/test`),
 }

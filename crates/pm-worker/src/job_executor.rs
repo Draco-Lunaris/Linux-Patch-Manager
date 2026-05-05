@@ -24,6 +24,7 @@ use uuid::Uuid;
 
 use crate::agent_loader::load_agent_certs;
 use crate::email;
+use crate::health_check_poller::check_host_health_checks;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal DB row types
@@ -78,6 +79,7 @@ struct StatusCounts {
     succeeded_count: i64,
     failed_count: i64,
     cancelled_count: i64,
+    waiting_health_check_count: i64,
     total_count: i64,
 }
 
@@ -368,6 +370,89 @@ async fn execute_host_job(
             return;
         },
     };
+
+    // ── 1b. Health check gate ──────────────────────────────────────────────
+    // All enabled health checks for this host must be healthy before we proceed.
+    match check_host_health_checks(&pool, host_id).await {
+        Ok(true) => {
+            tracing::debug!(%host_id, "execute_host_job: health checks passed");
+        },
+        Ok(false) => {
+            tracing::info!(%host_id, %pjh_id, "execute_host_job: health checks not passed, setting waiting_health_check");
+            // Check if the maintenance window is still open for this host.
+            let window_open: bool = sqlx::query_scalar(
+                r#"
+                SELECT EXISTS(
+                    SELECT 1 FROM maintenance_windows mw
+                    WHERE mw.host_id = $1
+                      AND mw.enabled = TRUE
+                      AND (
+                        (mw.recurrence = 'once'
+                         AND mw.start_at <= NOW()
+                         AND NOW() < mw.start_at + (mw.duration_minutes * INTERVAL '1 minute'))
+                        OR
+                        (mw.recurrence = 'daily'
+                         AND (NOW() AT TIME ZONE 'UTC')::time >= (mw.start_at AT TIME ZONE 'UTC')::time
+                         AND (NOW() AT TIME ZONE 'UTC')::time < ((mw.start_at AT TIME ZONE 'UTC')::time
+                                                                 + (mw.duration_minutes * INTERVAL '1 minute')))
+                        OR
+                        (mw.recurrence = 'weekly'
+                         AND EXTRACT(DOW FROM NOW() AT TIME ZONE 'UTC') = mw.recurrence_day
+                         AND (NOW() AT TIME ZONE 'UTC')::time >= (mw.start_at AT TIME ZONE 'UTC')::time
+                         AND (NOW() AT TIME ZONE 'UTC')::time < ((mw.start_at AT TIME ZONE 'UTC')::time
+                                                                 + (mw.duration_minutes * INTERVAL '1 minute')))
+                        OR
+                        (mw.recurrence = 'monthly'
+                         AND EXTRACT(DAY FROM NOW() AT TIME ZONE 'UTC') = mw.recurrence_day
+                         AND (NOW() AT TIME ZONE 'UTC')::time >= (mw.start_at AT TIME ZONE 'UTC')::time
+                         AND (NOW() AT TIME ZONE 'UTC')::time < ((mw.start_at AT TIME ZONE 'UTC')::time
+                                                                 + (mw.duration_minutes * INTERVAL '1 minute')))
+                      )
+                )
+                "#,
+            )
+            .bind(host_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap_or(Some(true))
+            .unwrap_or(true); // Default to true if no window configured
+
+            if !window_open {
+                tracing::warn!(%host_id, %pjh_id, "execute_host_job: health checks not passed and maintenance window closed");
+                handle_host_failure(
+                    pool,
+                    pjh_id,
+                    "Health checks did not pass before maintenance window closed".to_string(),
+                )
+                .await;
+                return;
+            }
+
+            // Set status to waiting_health_check and retry in 5 minutes.
+            let retry_at = Utc::now() + ChronoDuration::minutes(5);
+            if let Err(e) = sqlx::query(
+                r#"
+                UPDATE patch_job_hosts
+                SET    status        = 'waiting_health_check',
+                       retry_next_at = $2,
+                       last_error    = 'Waiting for health checks to pass'
+                WHERE  id = $1
+                "#,
+            )
+            .bind(pjh_id)
+            .bind(retry_at)
+            .execute(&pool)
+            .await
+            {
+                tracing::error!(%pjh_id, error = %e, "execute_host_job: failed to set waiting_health_check status");
+            }
+            return;
+        },
+        Err(e) => {
+            tracing::warn!(%host_id, error = %e, "execute_host_job: health check query failed, proceeding anyway");
+            // If we can't query health checks, proceed with the job rather than blocking.
+        },
+    }
 
     // ── 2. Fetch the job's patch_selection ──────────────────────────────────
     let patch_sel: JobPatchSelection =
@@ -764,6 +849,7 @@ async fn sync_job_status(pool: &PgPool, job_id: Uuid) {
             COUNT(*) FILTER (WHERE status = 'succeeded') AS succeeded_count,
             COUNT(*) FILTER (WHERE status = 'failed')    AS failed_count,
             COUNT(*) FILTER (WHERE status = 'cancelled') AS cancelled_count,
+            COUNT(*) FILTER (WHERE status = 'waiting_health_check') AS waiting_health_check_count,
             COUNT(*)                                     AS total_count
         FROM patch_job_hosts
         WHERE job_id = $1
@@ -784,7 +870,7 @@ async fn sync_job_status(pool: &PgPool, job_id: Uuid) {
     let new_status: &str;
     let set_completed: bool;
 
-    if counts.running_count > 0 || counts.pending_count > 0 || counts.queued_count > 0 {
+    if counts.running_count > 0 || counts.pending_count > 0 || counts.queued_count > 0 || counts.waiting_health_check_count > 0 {
         // Still work in flight — keep parent running.
         new_status = "running";
         set_completed = false;
@@ -912,17 +998,18 @@ async fn sync_job_status(pool: &PgPool, job_id: Uuid) {
 
 /// Find pending host entries whose back-off window has elapsed, reset them to
 /// `queued`, and dispatch them immediately.
+///
+/// Also retries `waiting_health_check` entries whose retry window has elapsed.
 pub async fn retry_pending_jobs(pool: PgPool, config: Arc<AppConfig>) {
     let rows: Vec<PatchJobHostPending> = match sqlx::query_as(
         r#"
         SELECT pjh.id, pjh.host_id, pjh.job_id
         FROM   patch_job_hosts pjh
         JOIN   patch_jobs j ON j.id = pjh.job_id
-        WHERE  pjh.status        = 'pending'
+        WHERE  pjh.status IN ('pending', 'waiting_health_check')
           AND  pjh.retry_next_at <= NOW()
-          AND  j.status         != 'cancelled'
-        "#,
-    )
+          AND  j.status != 'cancelled'
+        "#,)
     .fetch_all(&pool)
     .await
     {

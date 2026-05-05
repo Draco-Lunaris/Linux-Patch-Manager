@@ -5,6 +5,7 @@ import {
   TableRow, TextField, Toolbar, Tooltip, Typography,
 } from '@mui/material'
 import { Add as AddIcon, Refresh as RefreshIcon, Delete as DeleteIcon } from '@mui/icons-material'
+import { CheckCircle as CheckCircleIcon, Cancel as CancelIcon, Remove as RemoveIcon } from '@mui/icons-material'
 import { useNavigate } from 'react-router-dom'
 import { apiClient, hostsApi } from '../api/client'
 import type { Host, HostHealthStatus } from '../types'
@@ -67,6 +68,7 @@ export default function HostsPage() {
                 <TableCell>IP Address</TableCell>
                 <TableCell>OS</TableCell>
                 <TableCell>Health</TableCell>
+                <TableCell>Checks</TableCell>
                 <TableCell>Agent</TableCell>
                 <TableCell>Actions</TableCell>
               </TableRow>
@@ -81,6 +83,15 @@ export default function HostsPage() {
                   <TableCell>{h.os_name ?? h.os_family ?? '—'}</TableCell>
                   <TableCell>
                     <Chip size="small" label={h.health_status} color={statusColor(h.health_status)} />
+                  </TableCell>
+                  <TableCell>
+                    {h.health_check_status === 'all_healthy' ? (
+                      <Tooltip title="All checks healthy"><CheckCircleIcon color="success" fontSize="small" /></Tooltip>
+                    ) : h.health_check_status === 'some_unhealthy' ? (
+                      <Tooltip title="Some checks unhealthy"><CancelIcon color="error" fontSize="small" /></Tooltip>
+                    ) : (
+                      <Tooltip title="No checks configured"><RemoveIcon color="disabled" fontSize="small" /></Tooltip>
+                    )}
                   </TableCell>
                   <TableCell>{h.agent_version ?? '—'}</TableCell>
                   <TableCell onClick={e => e.stopPropagation()}>

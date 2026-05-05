@@ -22,8 +22,10 @@ import {
   TextField,
   Toolbar,
   Typography,
+  Tooltip,
 } from '@mui/material'
 import { Search as SearchIcon } from '@mui/icons-material'
+import { CheckCircle as CheckCircleIcon, Cancel as CancelIcon, Remove as RemoveIcon } from '@mui/icons-material'
 import { useNavigate } from 'react-router-dom'
 import { hostsApi, jobsApi } from '../api/client'
 import type { Host, HostHealthStatus } from '../types'
@@ -256,6 +258,7 @@ export default function PatchDeploymentPage() {
                     <TableCell>FQDN</TableCell>
                     <TableCell>IP Address</TableCell>
                     <TableCell>Health</TableCell>
+                    <TableCell>Checks</TableCell>
                     <TableCell>Patches</TableCell>
                     <TableCell>OS</TableCell>
                   </TableRow>
@@ -263,7 +266,7 @@ export default function PatchDeploymentPage() {
                 <TableBody>
                   {filteredHosts.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} align="center">
+                      <TableCell colSpan={8} align="center">
                         <Typography variant="body2" color="text.secondary" py={2}>
                           No hosts found
                         </Typography>
@@ -290,6 +293,15 @@ export default function PatchDeploymentPage() {
                         <TableCell>{host.ip_address}</TableCell>
                         <TableCell>
                           <HealthChip status={host.health_status} />
+                        </TableCell>
+                        <TableCell>
+                          {host.health_check_status === 'all_healthy' ? (
+                            <Tooltip title="All checks healthy"><CheckCircleIcon color="success" fontSize="small" /></Tooltip>
+                          ) : host.health_check_status === 'some_unhealthy' ? (
+                            <Tooltip title="Some checks unhealthy"><CancelIcon color="error" fontSize="small" /></Tooltip>
+                          ) : (
+                            <Tooltip title="No checks configured"><RemoveIcon color="disabled" fontSize="small" /></Tooltip>
+                          )}
                         </TableCell>
                         <TableCell>
                           <Chip
