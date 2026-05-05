@@ -112,7 +112,21 @@ async fn list_hosts(
             SELECT h.id, h.fqdn, host(h.ip_address)::text AS ip_address, h.display_name,
                    h.os_family, h.os_name, h.health_status, h.agent_version,
                    COALESCE(hpd.patch_count, 0) AS patches_missing,
-                   " + hc_subquery + ",
+                   CASE
+                   WHEN NOT EXISTS (SELECT 1 FROM host_health_checks hc WHERE hc.host_id = h.id AND hc.enabled = TRUE)
+                     THEN NULL
+                   WHEN EXISTS (
+                     SELECT 1 FROM host_health_checks hc
+                     LEFT JOIN LATERAL (
+                       SELECT healthy FROM host_health_check_results r
+                       WHERE r.check_id = hc.id ORDER BY r.checked_at DESC LIMIT 1
+                     ) lr ON TRUE
+                     WHERE hc.host_id = h.id AND hc.enabled = TRUE
+                       AND (lr.healthy IS NULL OR lr.healthy = FALSE)
+                   )
+                     THEN 'some_unhealthy'
+                   ELSE 'all_healthy'
+                 END AS health_check_status,
                    h.registered_at
             FROM hosts h
             LEFT JOIN host_patch_data hpd ON hpd.host_id = h.id
@@ -131,7 +145,21 @@ async fn list_hosts(
                    h.display_name, h.os_family, h.os_name,
                    h.health_status, h.agent_version,
                    COALESCE(hpd.patch_count, 0) AS patches_missing,
-                   " + hc_subquery + ",
+                   CASE
+                   WHEN NOT EXISTS (SELECT 1 FROM host_health_checks hc WHERE hc.host_id = h.id AND hc.enabled = TRUE)
+                     THEN NULL
+                   WHEN EXISTS (
+                     SELECT 1 FROM host_health_checks hc
+                     LEFT JOIN LATERAL (
+                       SELECT healthy FROM host_health_check_results r
+                       WHERE r.check_id = hc.id ORDER BY r.checked_at DESC LIMIT 1
+                     ) lr ON TRUE
+                     WHERE hc.host_id = h.id AND hc.enabled = TRUE
+                       AND (lr.healthy IS NULL OR lr.healthy = FALSE)
+                   )
+                     THEN 'some_unhealthy'
+                   ELSE 'all_healthy'
+                 END AS health_check_status,
                    h.registered_at
             FROM hosts h
             LEFT JOIN host_patch_data hpd ON hpd.host_id = h.id
