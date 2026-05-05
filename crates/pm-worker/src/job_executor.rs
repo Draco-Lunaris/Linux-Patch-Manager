@@ -690,7 +690,7 @@ async fn poll_single_host(pool: PgPool, config: Arc<AppConfig>, row: PatchJobHos
                 "#,
             )
             .bind(row.id)
-            .bind(status.output.as_deref())
+            .bind(status.output.as_deref().unwrap_or(""))
             .execute(&pool)
             .await
             {
@@ -906,7 +906,7 @@ async fn sync_job_status(pool: &PgPool, job_id: Uuid) {
         sqlx::query(
             r#"
             UPDATE patch_jobs
-            SET    status       = $2,
+            SET    status       = $2::job_status,
                    completed_at = COALESCE(completed_at, NOW())
             WHERE  id = $1
             "#,
@@ -916,7 +916,7 @@ async fn sync_job_status(pool: &PgPool, job_id: Uuid) {
         .execute(pool)
         .await
     } else {
-        sqlx::query("UPDATE patch_jobs SET status = $2 WHERE id = $1")
+        sqlx::query("UPDATE patch_jobs SET status = $2::job_status WHERE id = $1")
             .bind(job_id)
             .bind(new_status)
             .execute(pool)
