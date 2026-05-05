@@ -2,6 +2,7 @@ import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios'
 import { useAuthStore } from '../store/authStore'
 import type {
   FleetStatus,
+  CreateHostRequest,
   CreateJobRequest,
   CreateMaintenanceWindowRequest,
   UpdateMaintenanceWindowRequest,
@@ -110,6 +111,7 @@ export const fleetApi = {
 export const hostsApi = {
   list: (params?: Record<string, unknown>) => apiClient.get('/hosts', { params }),
   get: (id: string) => apiClient.get(`/hosts/${id}`),
+  register: (body: CreateHostRequest) => apiClient.post('/hosts', body),
   delete: (id: string) => apiClient.delete(`/hosts/${id}`),
   refresh: (id: string) => apiClient.post(`/hosts/${id}/refresh`),
 }

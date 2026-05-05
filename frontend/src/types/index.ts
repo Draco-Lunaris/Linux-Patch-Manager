@@ -29,6 +29,14 @@ export interface Host {
   health_check_status?: 'all_healthy' | 'some_unhealthy' | 'none'
 }
 
+export interface CreateHostRequest {
+  fqdn: string
+  display_name?: string
+  agent_port?: number
+  notes?: string
+  group_ids?: string[]
+}
+
 export interface Group {
   id: string
   name: string

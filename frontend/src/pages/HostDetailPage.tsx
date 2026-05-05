@@ -44,8 +44,9 @@ import {
   Schedule as ScheduleIcon,
   VpnKey as VpnKeyIcon,
 } from '@mui/icons-material'
-import { apiClient, maintenanceWindowsApi, healthChecksApi, certsApi } from '../api/client'
+import { apiClient, hostsApi, maintenanceWindowsApi, healthChecksApi, certsApi } from '../api/client'
 import type {
+  CreateHostRequest,
   MaintenanceWindow,
   WindowRecurrence,
   HealthCheckType,
@@ -305,6 +306,105 @@ function HealthCheckFormDialog({ open, title, initial, onClose, onSubmit }: Heal
   )
 }
 
+// ── Create Host Form ──────────────────────────────────────────────────────────
+
+function CreateHostForm() {
+  const navigate = useNavigate()
+  const [form, setForm] = useState<CreateHostRequest>({
+    fqdn: '',
+    display_name: '',
+    agent_port: 12443,
+    notes: '',
+  })
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  const set = (field: keyof CreateHostRequest, value: CreateHostRequest[keyof CreateHostRequest]) =>
+    setForm(prev => ({ ...prev, [field]: value }))
+
+  const handleSubmit = async () => {
+    if (!form.fqdn.trim()) { setErr('FQDN is required'); return }
+    setSaving(true); setErr(null)
+    try {
+      const body: CreateHostRequest = {
+        fqdn: form.fqdn.trim(),
+      }
+      if (form.display_name?.trim()) body.display_name = form.display_name.trim()
+      if (form.agent_port) body.agent_port = form.agent_port
+      if (form.notes?.trim()) body.notes = form.notes.trim()
+      const res = await hostsApi.register(body)
+      const newId = res.data?.id ?? res.data?.host?.id
+      if (newId) {
+        navigate(`/hosts/${newId}`)
+      } else {
+        navigate('/hosts')
+      }
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { error?: { message?: string } } } })
+        ?.response?.data?.error?.message ?? 'Failed to register host'
+      setErr(msg)
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <Container maxWidth="sm" sx={{ mt: 3, mb: 6 }}>
+      <Button startIcon={<ArrowBack />} onClick={() => navigate('/hosts')} sx={{ mb: 2 }}>
+        Back to Hosts
+      </Button>
+      <Paper sx={{ p: 3 }}>
+        <Typography variant="h5" fontWeight={700} gutterBottom>
+          Register New Host
+        </Typography>
+        <Divider sx={{ mb: 3 }} />
+        {err && <Alert severity="error" sx={{ mb: 2 }}>{err}</Alert>}
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <TextField
+            label="FQDN"
+            value={form.fqdn}
+            onChange={e => set('fqdn', e.target.value)}
+            required
+            fullWidth
+            helperText="Fully qualified domain name (IP address resolved automatically)"
+          />
+          <TextField
+            label="Display Name"
+            value={form.display_name ?? ''}
+            onChange={e => set('display_name', e.target.value)}
+            fullWidth
+            helperText="Optional friendly name for this host"
+          />
+          <TextField
+            label="Agent Port"
+            type="number"
+            value={form.agent_port ?? 12443}
+            onChange={e => set('agent_port', parseInt(e.target.value, 10) || 12443)}
+            fullWidth
+            slotProps={{ htmlInput: { min: 1, max: 65535 } }}
+            helperText="Port the patch agent listens on (default 12443)"
+          />
+          <TextField
+            label="Notes"
+            value={form.notes ?? ''}
+            onChange={e => set('notes', e.target.value)}
+            fullWidth
+            multiline
+            rows={3}
+            helperText="Optional notes about this host"
+          />
+        </Box>
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, mt: 3 }}>
+          <Button onClick={() => navigate('/hosts')} disabled={saving}>
+            Cancel
+          </Button>
+          <Button variant="contained" onClick={handleSubmit} disabled={saving}>
+            {saving ? <CircularProgress size={20} /> : 'Register Host'}
+          </Button>
+        </Box>
+      </Paper>
+    </Container>
+  )
+}
+
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function HostDetailPage() {
@@ -354,6 +454,7 @@ export default function HostDetailPage() {
 
   // ── Fetch host ────────────────────────────────────────────────────────────
   useEffect(() => {
+    if (id === 'new') { setLoading(false); return }
     apiClient.get(`/hosts/${id}`)
       .then(r => setHost(r.data))
       .catch(() => setError('Host not found or access denied.'))
@@ -565,6 +666,11 @@ export default function HostDetailPage() {
   // ── Render ────────────────────────────────────────────────────────────────
   if (loading) return <Box display="flex" justifyContent="center" mt={8}><CircularProgress /></Box>
   if (error) return <Container sx={{ mt: 4 }}><Alert severity="error">{error}</Alert></Container>
+
+  // ── New host creation form ─────────────────────────────────────────────────
+  if (id === 'new') {
+    return <CreateHostForm />
+  }
 
   return (
     <Container maxWidth="lg" sx={{ mt: 3, mb: 6 }}>
