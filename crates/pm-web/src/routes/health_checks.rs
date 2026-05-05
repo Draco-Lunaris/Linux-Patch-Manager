@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use uuid::Uuid;
+use reqwest::tls::Version;
 
 use crate::AppState;
 
@@ -1011,32 +1012,56 @@ async fn run_http_check(check: &HealthCheck, state: &AppState) -> CheckResult {
 
 fn build_agent_http_client(state: &AppState) -> Result<reqwest::Client, String> {
     let mut builder = reqwest::Client::builder()
+        .use_rustls_tls()
         .timeout(std::time::Duration::from_secs(10))
-        .danger_accept_invalid_certs(true); // Agent uses self-signed certs
+        .tls_built_in_root_certs(false) // Only trust internal CA
+        .min_tls_version(Version::TLS_1_3);
 
     // Load mTLS client certificates
     let ca_cert_path = &state.config.security.ca_cert_path;
     let client_cert_path = &state.config.security.agent_client_cert_path;
     let client_key_path = &state.config.security.agent_client_key_path;
 
-    // Add CA cert
-    if std::path::Path::new(ca_cert_path).exists() {
-        let ca_pem = std::fs::read(ca_cert_path).map_err(|e| format!("Read CA cert: {}", e))?;
-        let ca = reqwest::Certificate::from_pem(&ca_pem).map_err(|e| format!("Parse CA cert: {}", e))?;
-        builder = builder.add_root_certificate(ca);
-    }
+    tracing::info!(
+        ca_cert_path = %ca_cert_path,
+        client_cert_path = %client_cert_path,
+        client_key_path = %client_key_path,
+        "Building agent HTTP client"
+    );
+
+    // Add CA cert (mandatory since we disabled built-in root certs)
+    let ca_pem = std::fs::read(ca_cert_path).map_err(|e| format!("Read CA cert {}: {}", ca_cert_path, e))?;
+    tracing::info!(ca_pem_len = ca_pem.len(), "CA cert read");
+    let ca = reqwest::Certificate::from_pem(&ca_pem).map_err(|e| format!("Parse CA cert: {}", e))?;
+    builder = builder.add_root_certificate(ca);
 
     // Add client cert + key for mTLS
-    if std::path::Path::new(client_cert_path).exists() && std::path::Path::new(client_key_path).exists() {
+    let client_cert_exists = std::path::Path::new(client_cert_path).exists();
+    let client_key_exists = std::path::Path::new(client_key_path).exists();
+    tracing::info!(client_cert_exists, client_key_exists, "Checking client cert files");
+
+    if client_cert_exists && client_key_exists {
         let client_pem = std::fs::read(client_cert_path).map_err(|e| format!("Read client cert: {}", e))?;
         let key_pem = std::fs::read(client_key_path).map_err(|e| format!("Read client key: {}", e))?;
+        tracing::info!(cert_len = client_pem.len(), key_len = key_pem.len(), "Client cert/key read");
         let mut combined = Vec::new();
         combined.extend_from_slice(&client_pem);
         combined.extend_from_slice(&key_pem);
         let identity = reqwest::Identity::from_pem(&combined)
             .map_err(|e| format!("Parse client identity: {}", e))?;
         builder = builder.identity(identity);
+        tracing::info!("Client identity added to builder");
     }
 
-    builder.build().map_err(|e| format!("Build client: {}", e))
+    tracing::info!("Building reqwest client...");
+    match builder.build() {
+        Ok(client) => {
+            tracing::info!("reqwest client built successfully");
+            Ok(client)
+        },
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to build reqwest client");
+            Err(format!("Build client: {}", e))
+        }
+    }
 }
