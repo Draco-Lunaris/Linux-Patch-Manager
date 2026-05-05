@@ -202,12 +202,20 @@ pub struct AgentJobStatus {
 pub struct ServiceStatusData {
     /// Service name.
     pub name: String,
-    /// Service status string (e.g. `"running"`, `"stopped"`, `"failed"`).
-    pub status: String,
+    /// Human-readable service name.
+    pub display_name: String,
+    /// Active state (e.g. `"active"`, `"inactive"`, `"failed"`).
+    pub active_state: String,
+    /// Sub state (e.g. `"running"`, `"dead"`, `"exited"`).
+    pub sub_state: String,
+    /// Load state (e.g. `"loaded"`, `"not-found"`).
+    pub load_state: String,
+    /// Enabled state (e.g. `"enabled"`, `"disabled"`).
+    pub enabled_state: String,
+    /// Main PID of the service process.
+    pub main_pid: Option<u32>,
     /// Whether the service is considered healthy.
     pub healthy: bool,
-    /// Seconds elapsed since the service started (`null` if not running).
-    pub uptime_secs: Option<u64>,
 }
 
 // ============================================================

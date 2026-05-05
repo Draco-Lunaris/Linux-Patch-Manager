@@ -262,15 +262,18 @@ async fn run_service_check(
         Ok(data) => {
             let detail = if data.healthy {
                 format!(
-                    "Service '{}' is {} (uptime: {}s)",
+                    "Service '{}' is {}/{} (enabled: {})",
                     data.name,
-                    data.status,
-                    data.uptime_secs.map_or("N/A".to_string(), |s| s.to_string())
+                    data.active_state,
+                    data.sub_state,
+                    data.enabled_state
                 )
             } else {
                 format!(
-                    "Service '{}' status: {} (unhealthy)",
-                    data.name, data.status
+                    "Service '{}' status: {}/{} (unhealthy, enabled: {})",
+                    data.name, data.active_state,
+                    data.sub_state,
+                    data.enabled_state
                 )
             };
             (data.healthy, detail)
