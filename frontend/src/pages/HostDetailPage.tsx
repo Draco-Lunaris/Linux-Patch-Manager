@@ -43,10 +43,12 @@ import {
   Remove as RemoveIcon,
   Schedule as ScheduleIcon,
   VpnKey as VpnKeyIcon,
+  ContentCopy as CopyIcon,
 } from '@mui/icons-material'
 import { apiClient, hostsApi, maintenanceWindowsApi, healthChecksApi, certsApi } from '../api/client'
 import type {
   CreateHostRequest,
+  IssuedCert,
   MaintenanceWindow,
   WindowRecurrence,
   HealthCheckType,
@@ -307,6 +309,110 @@ function HealthCheckFormDialog({ open, title, initial, onClose, onSubmit }: Heal
 }
 
 // ── Create Host Form ──────────────────────────────────────────────────────────
+// ── One-Time Key Display Dialog ───────────────────────────────────────────────
+
+interface KeyDisplayDialogProps {
+  open: boolean
+  cert: IssuedCert | null
+  onClose: () => void
+}
+
+function KeyDisplayDialog({ open, cert, onClose }: KeyDisplayDialogProps) {
+  const [copiedField, setCopiedField] = useState<'cert' | 'key' | null>(null)
+
+  const handleCopy = async (text: string, field: 'cert' | 'key') => {
+    await navigator.clipboard.writeText(text)
+    setCopiedField(field)
+    setTimeout(() => setCopiedField(null), 2000)
+  }
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+      <DialogTitle>Certificate Issued — Save Your Private Key</DialogTitle>
+      <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
+        <Alert severity="warning">
+          <strong>This private key will NOT be shown again.</strong> Copy and store it securely
+          before closing this dialog.
+        </Alert>
+        {cert && (
+          <>
+            <Typography variant="caption" color="text.secondary">
+              Serial: {cert.serial_number} &nbsp;|&nbsp; Expires: {new Date(cert.expires_at).toLocaleDateString()}
+            </Typography>
+            <Box>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+                <Typography variant="subtitle2">Certificate (cert.pem)</Typography>
+                <Tooltip title={copiedField === 'cert' ? 'Copied!' : 'Copy certificate to clipboard'}>
+                  <Button
+                    size="small"
+                    startIcon={<CopyIcon />}
+                    onClick={() => handleCopy(cert.cert_pem, 'cert')}
+                    variant="outlined"
+                  >
+                    {copiedField === 'cert' ? 'Copied!' : 'Copy Cert'}
+                  </Button>
+                </Tooltip>
+              </Box>
+              <Box
+                component="pre"
+                sx={{
+                  p: 2,
+                  bgcolor: 'grey.100',
+                  borderRadius: 1,
+                  fontSize: 12,
+                  overflow: 'auto',
+                  maxHeight: 200,
+                  fontFamily: 'monospace',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-all',
+                }}
+              >
+                {cert.cert_pem}
+              </Box>
+            </Box>
+            <Box>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+                <Typography variant="subtitle2" color="error">Private Key (key.pem)</Typography>
+                <Tooltip title={copiedField === 'key' ? 'Copied!' : 'Copy private key to clipboard'}>
+                  <Button
+                    size="small"
+                    startIcon={<CopyIcon />}
+                    onClick={() => handleCopy(cert.key_pem, 'key')}
+                    variant="outlined"
+                    color="error"
+                  >
+                    {copiedField === 'key' ? 'Copied!' : 'Copy Key'}
+                  </Button>
+                </Tooltip>
+              </Box>
+              <Box
+                component="pre"
+                sx={{
+                  p: 2,
+                  bgcolor: 'grey.100',
+                  borderRadius: 1,
+                  fontSize: 12,
+                  overflow: 'auto',
+                  maxHeight: 200,
+                  fontFamily: 'monospace',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-all',
+                }}
+              >
+                {cert.key_pem}
+              </Box>
+            </Box>
+          </>
+        )}
+      </DialogContent>
+      <DialogActions>
+        <Button variant="contained" onClick={onClose}>I Have Saved the Key</Button>
+      </DialogActions>
+    </Dialog>
+  )
+}
+
+// ── Create Host Form ──────────────────────────────────────────────────────────
 
 function CreateHostForm() {
   const navigate = useNavigate()
@@ -451,6 +557,15 @@ export default function HostDetailPage() {
   // Delete health check dialog
   const [hcDeleteOpen, setHcDeleteOpen] = useState(false)
   const [hcDeleteTarget, setHcDeleteTarget] = useState<HealthCheckWithResult | null>(null)
+  
+  // Certificate state
+  const [certExists, setCertExists] = useState(false)
+  const [issueCertOpen, setIssueCertOpen] = useState(false)
+  const [issuedCert, setIssuedCert] = useState<IssuedCert | null>(null)
+  const [issueCertLoading, setIssueCertLoading] = useState(false)
+  const [keyDialogOpen, setKeyDialogOpen] = useState(false)
+  const [issueCertHostname, setIssueCertHostname] = useState('')
+  const [issueCertError, setIssueCertError] = useState<string | null>(null)
 
   // ── Fetch host ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -459,6 +574,18 @@ export default function HostDetailPage() {
       .then(r => setHost(r.data))
       .catch(() => setError('Host not found or access denied.'))
       .finally(() => setLoading(false))
+  }, [id])
+  
+  // ── Check cert existence ───────────────────────────────────────────────────
+  useEffect(() => {
+    if (!id || id === 'new') return
+    certsApi.list({ host_id: id })
+      .then(res => {
+        const certs = res.data
+        const hasActive = Array.isArray(certs) && certs.some((c: { status: string }) => c.status === 'active')
+        setCertExists(hasActive)
+      })
+      .catch(() => setCertExists(false))
   }, [id])
 
   // ── Fetch windows ─────────────────────────────────────────────────────────
@@ -561,6 +688,32 @@ export default function HostDetailPage() {
       URL.revokeObjectURL(url)
     } catch {
       showSnack('No client certificate found for this host', 'error')
+    }
+  }
+  
+  // ── Issue client certificate ──────────────────────────────────────────────
+  const handleOpenIssueCert = () => {
+    setIssueCertHostname(String(host?.fqdn ?? ''))
+    setIssueCertError(null)
+    setIssueCertOpen(true)
+  }
+  
+  const handleIssueCertSubmit = async () => {
+    if (!id || !issueCertHostname.trim()) { setIssueCertError('Hostname is required'); return }
+    setIssueCertLoading(true)
+    setIssueCertError(null)
+    try {
+      const res = await certsApi.issue(id, issueCertHostname.trim())
+      setIssuedCert(res.data)
+      setIssueCertOpen(false)
+      setKeyDialogOpen(true)
+      setCertExists(true)
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { error?: { message?: string } } } })
+        ?.response?.data?.error?.message ?? 'Failed to issue certificate'
+      setIssueCertError(msg)
+    } finally {
+      setIssueCertLoading(false)
     }
   }
 
@@ -684,11 +837,23 @@ export default function HostDetailPage() {
           <Typography variant="h5" fontWeight={700}>
             {String(host?.fqdn ?? '')}
           </Typography>
-          <Tooltip title="Download mTLS Client Certificate">
-            <IconButton onClick={handleDownloadClientCert} color="primary">
-              <VpnKeyIcon />
-            </IconButton>
-          </Tooltip>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            {!certExists && (
+              <Button
+                variant="contained"
+                size="small"
+                startIcon={<VpnKeyIcon />}
+                onClick={handleOpenIssueCert}
+              >
+                Issue Certificate
+              </Button>
+            )}
+            <Tooltip title="Download mTLS Client Certificate">
+              <IconButton onClick={handleDownloadClientCert} color="primary">
+                <VpnKeyIcon />
+              </IconButton>
+            </Tooltip>
+          </Box>
         </Box>
         <Divider sx={{ mb: 2 }} />
         <Grid container spacing={2}>
@@ -959,6 +1124,35 @@ export default function HostDetailPage() {
           <Button color="error" variant="contained" onClick={handleHcDeleteConfirm}>Delete</Button>
         </DialogActions>
       </Dialog>
+      
+      {/* Issue Certificate Dialog */}
+      <Dialog open={issueCertOpen} onClose={() => setIssueCertOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Issue Client Certificate</DialogTitle>
+        <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
+          {issueCertError && <Alert severity="error">{issueCertError}</Alert>}
+          <TextField
+            label="Hostname"
+            value={issueCertHostname}
+            onChange={(e) => setIssueCertHostname(e.target.value)}
+            required
+            fullWidth
+            helperText="Common name for the certificate (usually the host FQDN)"
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setIssueCertOpen(false)} disabled={issueCertLoading}>Cancel</Button>
+          <Button variant="contained" onClick={handleIssueCertSubmit} disabled={issueCertLoading}>
+            {issueCertLoading ? <CircularProgress size={20} /> : 'Issue Certificate'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+      
+      {/* One-time key display dialog */}
+      <KeyDisplayDialog
+        open={keyDialogOpen}
+        cert={issuedCert}
+        onClose={() => setKeyDialogOpen(false)}
+      />
 
       {/* Snackbar */}
       <Snackbar
