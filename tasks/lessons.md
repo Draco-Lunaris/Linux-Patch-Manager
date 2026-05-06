@@ -80,3 +80,8 @@ The Docker container intercepted some jobs and ran them in its Alpine environmen
 **Pattern:** Always run `cargo fmt --all` locally before pushing Rust code changes.
 **Why:** The CI pipeline has a Rust Format Check gate that will fail if code isn't formatted. This wastes CI runner time and delays deployment.
 **Action:** Run `cargo fmt --all` as part of local pre-push checklist, alongside `npm run build` for frontend changes.
+
+## 2026-05-06: Pre-Commit/Pre-Push Hooks Must Match CI Checks Exactly
+**Pattern:** The git pre-commit and pre-push hooks must run the same checks as the CI pipeline to prevent CI failures.
+**Why:** Initially the hooks only ran `cargo fmt` and `tsc --noEmit`, but CI also runs ESLint. Three ESLint errors (eqeqeq, duplicate imports) slipped through the hooks and failed CI.
+**Action:** Pre-commit hook now runs: cargo fmt --all, ESLint (--max-warnings 0), tsc --noEmit. Pre-push hook verifies the same checks pass before allowing push. Hooks are stored in `scripts/git-hooks/` and installed via `scripts/git-hooks/install.sh`.
