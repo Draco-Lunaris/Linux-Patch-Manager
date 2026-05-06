@@ -282,6 +282,7 @@ export interface HealthCheck {
   expected_body?: string
   ignore_cert_errors: boolean
   basic_auth_user?: string
+  target_host_id?: string | null
   created_at: string
   updated_at: string
 }
@@ -313,6 +314,7 @@ export interface CreateHealthCheckRequest {
   ignore_cert_errors?: boolean
   basic_auth_user?: string
   basic_auth_pass?: string
+  target_host_id?: string | null
 }
 
 export interface UpdateHealthCheckRequest {
@@ -324,4 +326,5 @@ export interface UpdateHealthCheckRequest {
   ignore_cert_errors?: boolean
   basic_auth_user?: string
   basic_auth_pass?: string
+  target_host_id?: string | null
 }

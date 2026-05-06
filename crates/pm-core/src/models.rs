@@ -135,6 +135,7 @@ pub struct HealthCheck {
     pub expected_body: Option<String>,
     pub ignore_cert_errors: bool,
     pub basic_auth_user: Option<String>,
+    pub target_host_id: Option<Uuid>,
     // basic_auth_pass_encrypted and nonce NOT exposed in API responses
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -168,6 +169,7 @@ pub struct CreateHealthCheckRequest {
     pub ignore_cert_errors: bool,
     pub basic_auth_user: Option<String>,
     pub basic_auth_pass: Option<String>, // plaintext in request, encrypted before storage
+    pub target_host_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -180,6 +182,7 @@ pub struct UpdateHealthCheckRequest {
     pub ignore_cert_errors: Option<bool>,
     pub basic_auth_user: Option<String>,
     pub basic_auth_pass: Option<String>, // if provided, re-encrypt
+    pub target_host_id: Option<Uuid>,
 }
 
 fn default_true() -> bool {

@@ -21,7 +21,7 @@ use pm_agent_client::{AgentClient, AgentClientError};
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Row fetched for each enabled health check, joined with host connection info.
-#[derive(Debug, FromRow)]
+#[derive(FromRow)]
 struct HealthCheckRow {
     id: Uuid,
     host_id: Uuid,
@@ -34,6 +34,7 @@ struct HealthCheckRow {
     basic_auth_user: Option<String>,
     basic_auth_pass_encrypted: Option<Vec<u8>>,
     basic_auth_pass_nonce: Option<Vec<u8>>,
+    target_host_id: Option<Uuid>,
     ip_address: String,
     agent_port: i32,
 }
@@ -99,10 +100,12 @@ pub async fn run_health_check_poller(pool: PgPool, config: Arc<AppConfig>) {
                 hc.basic_auth_user,
                 hc.basic_auth_pass_encrypted,
                 hc.basic_auth_pass_nonce,
-                host(h.ip_address)::text AS ip_address,
-                h.agent_port
+                hc.target_host_id,
+                host(COALESCE(th.ip_address, h.ip_address))::text AS ip_address,
+                COALESCE(th.agent_port, h.agent_port) AS agent_port
             FROM host_health_checks hc
             JOIN hosts h ON h.id = hc.host_id
+            LEFT JOIN hosts th ON th.id = hc.target_host_id
             WHERE hc.enabled = TRUE
             ORDER BY hc.id
             "#,

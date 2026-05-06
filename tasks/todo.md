@@ -1,253 +1,61 @@
-# Health Check Configuration for Hosts — Feature Plan
+# Target Host for Service Health Checks
 
 ## Overview
-Each host can have 1-5 health checks. During maintenance windows, all checks must be healthy before patch execution. Health checks are also continuously polled for dashboard status.
+Add `target_host_id` field to service health checks, allowing a check configured on Host A to query a service on Host B's agent. Useful for redundant services running on multiple machines.
 
-## Design Decisions (confirmed with Kelly)
-- Health check config lives in manager DB, manager controls everything
-- Agent is just an action endpoint (no health check logic on agent)
-- Admins and operators can manage (operators need matching group)
-- Per-host 1:1 (not shareable templates)
-- Both continuous polling AND must be healthy before patch execution
-- Service health: query agent `GET /api/v1/system/services/{name}`, check `healthy` field
-- HTTP health: manager makes direct HTTP request, substring match in response body
-- Retry failed checks at 5-minute intervals until maintenance window closes
-- 10-second check timeout; no response = failed
-- Order doesn't matter
-- Basic auth password: encrypted in DB with per-install app key
-- Health check poll interval: 5 minutes
-- Result retention: 4 days (time-based)
+**Design:** `target_host_id` is nullable. When NULL (default), behavior unchanged — check queries its own host's agent. When set, the service check queries the target host's agent instead. Only applies to service checks; HTTP checks already specify a full URL.
 
-## linux_patch_api Agent Endpoints (Reference)
+## Implementation Checklist
 
-### GET /api/v1/system/services/{name}
-Returns service status for health check Type 1 (service). Added in commit 8b6d9ed.
+### 1. Database Migration
+- [ ] Create `migrations/011_health_check_target_host.sql`
+- [ ] Add `target_host_id UUID REFERENCES hosts(id) ON DELETE SET NULL` column
+- [ ] Add partial index on `target_host_id` where NOT NULL
 
-**Response:** `ApiResponse<ServiceStatusData>`
-```json
-{
-  "success": true,
-  "data": {
-    "name": "nginx",
-    "display_name": "A high performance web server",
-    "active_state": "active",
-    "sub_state": "running",
-    "load_state": "loaded",
-    "enabled_state": "enabled",
-    "main_pid": 1234,
-    "healthy": true
-  }
-}
-```
+### 2. Backend Models (`crates/pm-core/src/models.rs`)
+- [ ] Add `target_host_id: Option<Uuid>` to `HealthCheck` struct
+- [ ] Add `target_host_id: Option<Uuid>` to `CreateHealthCheckRequest`
+- [ ] Add `target_host_id: Option<Uuid>` to `UpdateHealthCheckRequest`
+- [ ] Add `target_host_id` to all HealthCheck SELECT queries
 
-**Health determination:** The agent `healthy` field is authoritative. Manager uses this boolean directly.
+### 3. API Routes (`crates/pm-web/src/routes/health_checks.rs`)
+- [ ] Create: add `target_host_id` to INSERT, validate target host exists + is healthy
+- [ ] Update: add `target_host_id` to COALESCE UPDATE
+- [ ] List/Get: add `target_host_id` to SELECT columns
+- [ ] Test endpoint (`run_service_check`): when `target_host_id` is Some, query that host's IP/port
+- [ ] Audit log: include `target_host_id` in audit JSON
 
-**Error responses:** 400 (invalid name), 404 (not found → unhealthy), 500 (error → unhealthy)
+### 4. Health Check Poller (`crates/pm-worker/src/health_check_poller.rs`)
+- [ ] Add `target_host_id: Option<Uuid>` to `HealthCheckRow`
+- [ ] Modify SQL: LEFT JOIN hosts th ON th.id = hc.target_host_id, use COALESCE(th.ip_address, h.ip_address) and COALESCE(th.agent_port, h.agent_port)
+- [ ] Add `target_ip_address` and `target_agent_port` fields to HealthCheckRow
+- [ ] `run_service_check`: use target host IP/port when available
+- [ ] `check_host_health_checks`: no change needed (results count toward owning host)
 
-### GET /api/v1/health
-Basic agent health. Returns `{"status": "healthy"}`. Used for connectivity checks, not host health checks.
+### 5. Frontend Types (`frontend/src/types/index.ts`)
+- [ ] Add `target_host_id?: string` to `HealthCheck`
+- [ ] Add `target_host_id?: string` to `CreateHealthCheckRequest`
+- [ ] Add `target_host_id?: string` to `UpdateHealthCheckRequest`
 
----
+### 6. Frontend Form (`frontend/src/pages/HostDetailPage.tsx`)
+- [ ] Add `target_host_id: string` to `HealthCheckFormValues`
+- [ ] Add `target_host_id: ''` to `defaultHealthCheckForm`
+- [ ] Add host selector dropdown in `HealthCheckFormDialog` (visible when check_type === 'service')
+- [ ] Fetch hosts list for dropdown (use hostsApi.list or a dedicated endpoint)
+- [ ] `handleHcCreateSubmit`: include `target_host_id: values.target_host_id || undefined`
+- [ ] `handleHcEditClick`: map `check.target_host_id ?? ''` to form
+- [ ] `handleHcEditSubmit`: include `target_host_id` in UpdateHealthCheckRequest
+- [ ] Display target host in health checks table Target column
 
-## Phase 1: Database Schema
+### 7. Build, Test, Deploy
+- [ ] Run `cargo fmt --all` + `cargo clippy` + `cargo test`
+- [ ] Run frontend build + ESLint + tsc
+- [ ] Commit and push through CI pipeline
+- [ ] Tag release, build .deb, deploy to dev
 
-### New table: `host_health_checks`
-```sql
-CREATE TABLE host_health_checks (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    host_id         UUID NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
-    name            VARCHAR(100) NOT NULL,
-    check_type      VARCHAR(20) NOT NULL CHECK (check_type IN ('service', 'http')),
-    enabled         BOOLEAN NOT NULL DEFAULT true,
-    -- Service check fields
-    service_name    VARCHAR(200),
-    -- HTTP check fields
-    url             TEXT,
-    expected_body   VARCHAR(500),
-    ignore_cert_errors BOOLEAN DEFAULT true,
-    basic_auth_user VARCHAR(100),
-    basic_auth_pass_encrypted BYTEA,  -- AES-256-GCM encrypted with per-install key
-    basic_auth_pass_nonce BYTEA,      -- nonce for AES-GCM
-    -- Metadata
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT valid_service_check CHECK (
-        (check_type = 'service' AND service_name IS NOT NULL AND url IS NULL)
-        OR
-        (check_type = 'http' AND url IS NOT NULL AND expected_body IS NOT NULL AND service_name IS NULL)
-    )
-);
-
-CREATE INDEX idx_health_checks_host ON host_health_checks (host_id);
-```
-
-### New table: `host_health_check_results`
-```sql
-CREATE TABLE host_health_check_results (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    check_id    UUID NOT NULL REFERENCES host_health_checks(id) ON DELETE CASCADE,
-    healthy     BOOLEAN NOT NULL,
-    detail      TEXT,
-    latency_ms  INTEGER,
-    checked_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_health_results_check ON host_health_check_results (check_id, checked_at DESC);
-```
-
-### Encryption key storage
-- Per-install app key stored at `/etc/patch-manager/keys/health-check.key`
-- 256-bit random key generated on first startup if not present
-- File permissions: 0600, owned by patch-manager user
-- Used for AES-256-GCM encryption of basic_auth_pass
-
-- [ ] Create migration 007_health_checks.sql
-- [ ] Add models to pm-core/src/models.rs
-- [ ] Add encryption utility to pm-core
-- [ ] Verify migration runs on dev LXC
-
----
-
-## Phase 2: Backend API Routes
-
-### Endpoints
-- `GET    /api/v1/hosts/{id}/health-checks` — list health checks for host (RBAC scoped)
-- `POST   /api/v1/hosts/{id}/health-checks` — create health check (max 5 per host)
-- `PUT    /api/v1/hosts/{id}/health-checks/{check_id}` — update health check
-- `DELETE /api/v1/hosts/{id}/health-checks/{check_id}` — delete health check
-- `POST   /api/v1/hosts/{id}/health-checks/{check_id}/test` — run check immediately, return result
-
-### Request/Response types
-```rust
-struct CreateHealthCheckRequest {
-    name: String,
-    check_type: String,  // "service" or "http"
-    service_name: Option<String>,
-    url: Option<String>,
-    expected_body: Option<String>,
-    ignore_cert_errors: Option<bool>,
-    basic_auth_user: Option<String>,
-    basic_auth_pass: Option<String>,  // plaintext in request, encrypted before storage
-}
-
-struct HealthCheck {
-    id: Uuid,
-    host_id: Uuid,
-    name: String,
-    check_type: String,
-    enabled: bool,
-    service_name: Option<String>,
-    url: Option<String>,
-    expected_body: Option<String>,
-    ignore_cert_errors: bool,
-    basic_auth_user: Option<String>,
-    // basic_auth_pass NOT returned in responses
-    last_result: Option<HealthCheckResult>,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
-}
-
-struct HealthCheckResult {
-    healthy: bool,
-    detail: Option<String>,
-    latency_ms: Option<i32>,
-    checked_at: DateTime<Utc>,
-}
-```
-
-- [ ] Add routes to pm-web/src/routes/ (new health_checks.rs)
-- [ ] Add CRUD operations
-- [ ] Add RBAC enforcement (admin all, operator matching group)
-- [ ] Add max-5-per-host validation
-- [ ] Add /test endpoint that runs check immediately
-- [ ] Add audit logging for create/update/delete
-- [ ] Add encryption/decryption for basic_auth_pass
-
----
-
-## Phase 3: Worker Health Check Engine
-
-### Continuous Polling
-- New task in pm-worker: `health_check_poller`
-- Polls all enabled health checks every 5 minutes
-- For service checks: call agent `GET /api/v1/system/services/{name}` via mTLS, check `healthy` field
-- For HTTP checks: make direct HTTP(S) request from manager, check status code + substring match
-- Store results in `host_health_check_results`
-- Prune results older than 4 days
-
-### Pre-Patch Execution Gate
-- When a patch job is about to execute on a host:
-  1. Check if host has any enabled health checks
-  2. If yes, verify all are currently healthy (from latest poll result)
-  3. If any are unhealthy:
-     - Wait and retry at 5-minute intervals
-     - Continue until maintenance window closes
-     - If window closes with failed checks, mark job host as failed with detail
-  4. If all healthy, proceed with patch execution
-
-### HTTP Check Implementation
-- Use reqwest with:
-  - 10-second timeout
-  - Accept invalid certs (ignore_cert_errors)
-  - Optional basic auth header (decrypt from DB)
-  - Check response body contains expected_body substring
-- Return healthy=true if match, false otherwise
-
-- [ ] Add health_check_poller module to pm-worker
-- [ ] Implement service check via AgentClient
-- [ ] Implement HTTP check via reqwest
-- [ ] Add pre-patch execution gate to job_executor
-- [ ] Add retry loop with 5-minute intervals
-- [ ] Add maintenance window expiry check
-- [ ] Add health check config to WorkerConfig (poll interval)
-- [ ] Add result pruning (4-day retention)
-
----
-
-## Phase 4: Frontend UI
-
-### Host Detail Page
-- Add "Health Checks" section below host info
-- List current health checks with status indicators
-- Add/Edit/Delete health check dialogs
-- "Test" button to run check immediately and show result
-- Visual indicator: green check = healthy, red X = unhealthy, gray = unknown
-
-### Hosts Page
-- Add health check summary column or indicator
-- Show aggregate status: all healthy / some unhealthy / no checks configured
-
-### Deploy Page
-- Show health check status in host selection table
-- Warn if any selected hosts have unhealthy checks
-
-### Job Detail
-- Show health check gate status when job is waiting for healthy checks
-- Display which checks are passing/failing
-
-- [ ] Add HealthCheck types to frontend/src/types/index.ts
-- [ ] Add health check API calls to frontend/src/api/client.ts
-- [ ] Add Health Checks section to HostDetailPage.tsx
-- [ ] Add health check status to HostsPage.tsx
-- [ ] Add health check indicators to PatchDeploymentPage.tsx
-- [ ] Add health check gate status to JobsPage.tsx detail view
-
----
-
-## Phase 5: Integration & Testing
-- [ ] Build and deploy to dev LXC
-- [ ] Test service health check against dev LXC agent
-- [ ] Test HTTP health check against internal services
-- [ ] Test pre-patch gate: deploy with failing check, verify retry behavior
-- [ ] Test maintenance window expiry with failing checks
-- [ ] Test RBAC: operator can only manage checks in their group
-- [ ] Test max 5 checks per host enforcement
-- [ ] Test basic auth encryption/decryption
-- [ ] Push to Gitea
-
----
-
-## Resolved Items
-- ~~Basic auth password storage~~ → Encrypted in DB with per-install app key (AES-256-GCM)
-- ~~Health check poll interval~~ → 5 minutes
-- ~~Result retention~~ → 4 days (time-based)
+## Design Decisions
+- `target_host_id` is nullable — NULL = check own host (backward compatible)
+- FK with ON DELETE SET NULL — if target host deleted, revert to default
+- Only applies to service checks (HTTP checks already have full URL)
+- Health gate: results count toward the owning host, not the target host
+- No RBAC required for target host — only requirement: target host exists in manager and is currently healthy

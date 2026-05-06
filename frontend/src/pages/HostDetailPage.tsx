@@ -18,6 +18,7 @@ import {
   Grid,
   IconButton,
   InputLabel,
+  FormHelperText,
   MenuItem,
   Paper,
   Select,
@@ -213,6 +214,7 @@ interface HealthCheckFormValues {
   basic_auth_user: string
   basic_auth_pass: string
   enabled: boolean
+  target_host_id: string
 }
 
 function defaultHealthCheckForm(): HealthCheckFormValues {
@@ -226,6 +228,7 @@ function defaultHealthCheckForm(): HealthCheckFormValues {
     basic_auth_user: '',
     basic_auth_pass: '',
     enabled: true,
+    target_host_id: '',
   }
 }
 
@@ -235,11 +238,13 @@ interface HealthCheckFormDialogProps {
   open: boolean
   title: string
   initial: HealthCheckFormValues
+  hosts: { id: string; display_name: string; fqdn: string }[]
+  currentHostId: string
   onClose: () => void
   onSubmit: (values: HealthCheckFormValues) => Promise<void>
 }
 
-function HealthCheckFormDialog({ open, title, initial, onClose, onSubmit }: HealthCheckFormDialogProps) {
+function HealthCheckFormDialog({ open, title, initial, hosts, currentHostId, onClose, onSubmit }: HealthCheckFormDialogProps) {
   const [form, setForm] = useState<HealthCheckFormValues>(initial)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -276,8 +281,20 @@ function HealthCheckFormDialog({ open, title, initial, onClose, onSubmit }: Heal
           </Select>
         </FormControl>
         {form.check_type === 'service' && (
-          <TextField label="Service Name" value={form.service_name} onChange={e => set('service_name', e.target.value)} required fullWidth
-            helperText="Systemd service unit name to check" />
+          <>
+            <TextField label="Service Name" value={form.service_name} onChange={e => set('service_name', e.target.value)} required fullWidth
+              helperText="Systemd service unit name to check" />
+            <FormControl fullWidth>
+              <InputLabel>Target Host (optional)</InputLabel>
+              <Select label="Target Host (optional)" value={form.target_host_id} onChange={e => set('target_host_id', e.target.value)}>
+                <MenuItem value="">Own Host (default)</MenuItem>
+                {hosts.filter(h => h.id !== currentHostId).map(h => (
+                  <MenuItem key={h.id} value={h.id}>{h.display_name || h.fqdn}</MenuItem>
+                ))}
+              </Select>
+              <FormHelperText>Query a service on a different host's agent (for redundant services)</FormHelperText>
+            </FormControl>
+          </>
         )}
         {form.check_type === 'http' && (
           <>
@@ -591,6 +608,9 @@ export default function HostDetailPage() {
   const [reissueLoading, setReissueLoading] = useState(false)
   const [reissueError, setReissueError] = useState<string | null>(null)
 
+  // Hosts list for target_host_id dropdown
+  const [hosts, setHosts] = useState<{ id: string; display_name: string; fqdn: string }[]>([])
+
   // ── Fetch host ────────────────────────────────────────────────────────────
   useEffect(() => {
     if (id === 'new') { setLoading(false); return }
@@ -599,6 +619,13 @@ export default function HostDetailPage() {
       .catch(() => setError('Host not found or access denied.'))
       .finally(() => setLoading(false))
   }, [id])
+
+  // ── Fetch hosts list (for target_host_id dropdown) ──────────────────────
+  useEffect(() => {
+    hostsApi.list()
+      .then(res => setHosts(res.data?.hosts ?? []))
+      .catch(() => { /* ignore */ })
+  }, [])
   
   // ── Check cert existence ───────────────────────────────────────────────────
   useEffect(() => {
@@ -754,6 +781,7 @@ export default function HostDetailPage() {
     }
     if (values.check_type === 'service') {
       body.service_name = values.service_name || undefined
+      body.target_host_id = values.target_host_id || undefined
     } else {
       body.url = values.url || undefined
       body.expected_body = values.expected_body || undefined
@@ -780,6 +808,7 @@ export default function HostDetailPage() {
       basic_auth_user: check.basic_auth_user ?? '',
       basic_auth_pass: '',
       enabled: check.enabled,
+      target_host_id: check.target_host_id ?? '',
     })
     setHcEditOpen(true)
   }
@@ -792,6 +821,7 @@ export default function HostDetailPage() {
     }
     if (values.check_type === 'service') {
       body.service_name = values.service_name || undefined
+      body.target_host_id = values.target_host_id || undefined
     } else {
       body.url = values.url || undefined
       body.expected_body = values.expected_body || undefined
@@ -1145,6 +1175,8 @@ export default function HostDetailPage() {
         open={hcCreateOpen}
         title="Add Health Check"
         initial={hcCreateForm}
+        hosts={hosts}
+        currentHostId={id ?? ''}
         onClose={() => setHcCreateOpen(false)}
         onSubmit={handleHcCreateSubmit}
       />
@@ -1152,6 +1184,8 @@ export default function HostDetailPage() {
         open={hcEditOpen}
         title="Edit Health Check"
         initial={hcEditForm}
+        hosts={hosts}
+        currentHostId={id ?? ''}
         onClose={() => setHcEditOpen(false)}
         onSubmit={handleHcEditSubmit}
       />

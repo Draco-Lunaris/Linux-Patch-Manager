@@ -148,6 +148,7 @@ async fn list_health_checks(
         r#"
         SELECT id, host_id, name, check_type, enabled,
                service_name, url, expected_body, ignore_cert_errors, basic_auth_user,
+               target_host_id,
                created_at, updated_at
         FROM host_health_checks
         WHERE host_id = $1
@@ -256,6 +257,55 @@ async fn create_health_check(
         ));
     }
 
+    // Validate target_host_id if provided
+    if let Some(tid) = req.target_host_id {
+        let target_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM hosts WHERE id = $1)",
+        )
+        .bind(tid)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to check target host");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+            )
+        })?;
+
+        if !target_exists {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(
+                    json!({ "error": { "code": "invalid_target_host", "message": "Target host does not exist" } }),
+                ),
+            ));
+        }
+
+        let target_healthy: bool = sqlx::query_scalar(
+            "SELECT health_status = 'healthy' FROM hosts WHERE id = $1",
+        )
+        .bind(tid)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to check target host health");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+            )
+        })?;
+
+        if !target_healthy {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(
+                    json!({ "error": { "code": "invalid_target_host", "message": "Target host is not currently healthy" } }),
+                ),
+            ));
+        }
+    }
+
     // Enforce max 5 per host
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM host_health_checks WHERE host_id = $1",
@@ -310,8 +360,9 @@ async fn create_health_check(
         INSERT INTO host_health_checks (
             host_id, name, check_type, enabled,
             service_name, url, expected_body, ignore_cert_errors,
-            basic_auth_user, basic_auth_pass_encrypted, basic_auth_pass_nonce
-        ) VALUES ($1, $2, $3, true, $4, $5, $6, $7, $8, $9, $10)
+            basic_auth_user, basic_auth_pass_encrypted, basic_auth_pass_nonce,
+            target_host_id
+        ) VALUES ($1, $2, $3, true, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING id
         "#,
     )
@@ -325,6 +376,7 @@ async fn create_health_check(
     .bind(&req.basic_auth_user)
     .bind(pass_encrypted)
     .bind(pass_nonce)
+    .bind(req.target_host_id)
     .fetch_one(&state.db)
     .await
     .map_err(|e| {
@@ -347,6 +399,7 @@ async fn create_health_check(
             "check_id": check_id,
             "name": req.name,
             "check_type": req.check_type,
+            "target_host_id": req.target_host_id,
         }),
         None,
         None,
@@ -361,6 +414,7 @@ async fn create_health_check(
             "name": req.name,
             "check_type": req.check_type,
             "enabled": true,
+            "target_host_id": req.target_host_id,
         })),
     ))
 }
@@ -397,6 +451,7 @@ async fn get_health_check(
         r#"
         SELECT id, host_id, name, check_type, enabled,
                service_name, url, expected_body, ignore_cert_errors, basic_auth_user,
+               target_host_id,
                created_at, updated_at
         FROM host_health_checks
         WHERE id = $1 AND host_id = $2
@@ -495,6 +550,55 @@ async fn update_health_check(
         ));
     }
 
+    // Validate target_host_id if provided
+    if let Some(tid) = req.target_host_id {
+        let target_exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM hosts WHERE id = $1)",
+        )
+        .bind(tid)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to check target host");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+            )
+        })?;
+
+        if !target_exists {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(
+                    json!({ "error": { "code": "invalid_target_host", "message": "Target host does not exist" } }),
+                ),
+            ));
+        }
+
+        let target_healthy: bool = sqlx::query_scalar(
+            "SELECT health_status = 'healthy' FROM hosts WHERE id = $1",
+        )
+        .bind(tid)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to check target host health");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+            )
+        })?;
+
+        if !target_healthy {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(
+                    json!({ "error": { "code": "invalid_target_host", "message": "Target host is not currently healthy" } }),
+                ),
+            ));
+        }
+    }
+
     // Handle basic_auth_pass encryption if provided
     let (pass_encrypted, pass_nonce) = if let Some(ref pass) = req.basic_auth_pass {
         let key_path = PathBuf::from(crypto::KEY_PATH);
@@ -584,9 +688,10 @@ async fn update_health_check(
             basic_auth_user = COALESCE($9, basic_auth_user),
             basic_auth_pass_encrypted = COALESCE($10, basic_auth_pass_encrypted),
             basic_auth_pass_nonce = COALESCE($11, basic_auth_pass_nonce),
+            target_host_id = COALESCE($12, target_host_id),
             updated_at  = NOW()
         WHERE id = $1 AND host_id = $2
-        "#,
+    "#,
     )
     .bind(check_id)
     .bind(host_id)
@@ -599,6 +704,7 @@ async fn update_health_check(
     .bind(&req.basic_auth_user)
     .bind(pass_encrypted)
     .bind(pass_nonce)
+    .bind(req.target_host_id)
     .execute(&state.db)
     .await
     .map_err(|e| {
@@ -624,7 +730,7 @@ async fn update_health_check(
         None,
         Some("host"),
         Some(&host_id.to_string()),
-        json!({ "check_id": check_id }),
+        json!({ "check_id": check_id, "target_host_id": req.target_host_id }),
         None,
         None,
     )
@@ -731,6 +837,7 @@ async fn test_health_check(
         r#"
         SELECT id, host_id, name, check_type, enabled,
                service_name, url, expected_body, ignore_cert_errors, basic_auth_user,
+               target_host_id,
                created_at, updated_at
         FROM host_health_checks
         WHERE id = $1 AND host_id = $2
@@ -815,17 +922,18 @@ async fn run_service_check(check: &HealthCheck, state: &AppState) -> CheckResult
         },
     };
 
-    // Get host info for agent connection
-    let host_info: Option<(String, String)> = sqlx::query_as::<_, (String, String)>(
-        "SELECT host(ip_address)::text, fqdn FROM hosts WHERE id = $1",
+    // Get host info for agent connection — use target_host_id if set, otherwise own host
+    let effective_host_id = check.target_host_id.unwrap_or(check.host_id);
+    let host_info: Option<(String, i32)> = sqlx::query_as::<_, (String, i32)>(
+        "SELECT host(ip_address)::text, agent_port FROM hosts WHERE id = $1",
     )
-    .bind(check.host_id)
+    .bind(effective_host_id)
     .fetch_optional(&state.db)
     .await
     .ok()
     .flatten();
 
-    let (ip, fqdn) = match host_info {
+    let (ip, agent_port) = match host_info {
         Some(info) => info,
         None => {
             return CheckResult {
@@ -838,8 +946,8 @@ async fn run_service_check(check: &HealthCheck, state: &AppState) -> CheckResult
 
     // Build agent URL
     let agent_url = format!(
-        "https://{}:12443/api/v1/system/services/{}",
-        ip, service_name
+        "https://{}:{}/api/v1/system/services/{}",
+        ip, agent_port, service_name
     );
 
     let start = std::time::Instant::now();
