@@ -320,10 +320,10 @@ interface KeyDisplayDialogProps {
 }
 
 function KeyDisplayDialog({ open, cert, hostname, onClose }: KeyDisplayDialogProps) {
-  const [copiedField, setCopiedField] = useState<'ca' | 'cert' | 'key' | 'server-cert' | 'server-key' | null>(null)
+  const [copiedField, setCopiedField] = useState<'ca' | 'server-cert' | 'server-key' | null>(null)
   const [downloading, setDownloading] = useState(false)
 
-  const handleCopy = async (text: string, field: 'ca' | 'cert' | 'key' | 'server-cert' | 'server-key') => {
+  const handleCopy = async (text: string, field: 'ca' | 'server-cert' | 'server-key') => {
     await navigator.clipboard.writeText(text)
     setCopiedField(field)
     setTimeout(() => setCopiedField(null), 2000)
@@ -335,15 +335,13 @@ function KeyDisplayDialog({ open, cert, hostname, onClose }: KeyDisplayDialogPro
     try {
       const zip = new JSZip()
       zip.file('ca.crt', cert.ca_root_pem)
-      zip.file('client.crt', cert.cert_pem)
-      zip.file('client.key', cert.key_pem)
       zip.file('server.crt', cert.server_cert_pem)
       zip.file('server.key', cert.server_key_pem)
       const blob = await zip.generateAsync({ type: 'blob' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `${hostname || 'host'}-certs.zip`
+      a.download = `${hostname || 'host'}-agent-certs.zip`
       a.click()
       URL.revokeObjectURL(url)
     } finally {
@@ -365,16 +363,15 @@ function KeyDisplayDialog({ open, cert, hostname, onClose }: KeyDisplayDialogPro
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
-      <DialogTitle>Agent Certificate Bundle Issued — Save Your Private Keys</DialogTitle>
+      <DialogTitle>Agent Certificates Issued — Save Your Private Key</DialogTitle>
       <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
         <Alert severity="warning">
-          <strong>Private keys will NOT be shown again.</strong> Copy and store them securely
-          before closing this dialog.
+          <strong>The server private key will NOT be shown again.</strong> Download the bundle or copy it now.
         </Alert>
         {cert && (
           <>
             <Typography variant="caption" color="text.secondary">
-              Client Serial: {cert.serial_number} &nbsp;|&nbsp; Server Serial: {cert.server_serial_number} &nbsp;|&nbsp; Expires: {new Date(cert.expires_at).toLocaleDateString()}
+              Server Serial: {cert.server_serial_number} &nbsp;|&nbsp; Expires: {new Date(cert.expires_at).toLocaleDateString()}
             </Typography>
 
             {/* CA Root Certificate */}
@@ -390,31 +387,7 @@ function KeyDisplayDialog({ open, cert, hostname, onClose }: KeyDisplayDialogPro
               <Box component="pre" sx={preStyle}>{cert.ca_root_pem}</Box>
             </Box>
 
-            {/* Client Certificate (mTLS) */}
-            <Box>
-              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
-                <Typography variant="subtitle2">Client Certificate — mTLS (client.crt)</Typography>
-                <Tooltip title={copiedField === 'cert' ? 'Copied!' : 'Copy client cert to clipboard'}>
-                  <Button size="small" startIcon={<CopyIcon />} onClick={() => handleCopy(cert.cert_pem, 'cert')} variant="outlined">
-                    {copiedField === 'cert' ? 'Copied!' : 'Copy Client Cert'}
-                  </Button>
-                </Tooltip>
-              </Box>
-              <Box component="pre" sx={preStyle}>{cert.cert_pem}</Box>
-            </Box>
 
-            {/* Client Private Key */}
-            <Box>
-              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
-                <Typography variant="subtitle2" color="error">Client Private Key (client.key)</Typography>
-                <Tooltip title={copiedField === 'key' ? 'Copied!' : 'Copy client key to clipboard'}>
-                  <Button size="small" startIcon={<CopyIcon />} onClick={() => handleCopy(cert.key_pem, 'key')} variant="outlined" color="error">
-                    {copiedField === 'key' ? 'Copied!' : 'Copy Client Key'}
-                  </Button>
-                </Tooltip>
-              </Box>
-              <Box component="pre" sx={preStyle}>{cert.key_pem}</Box>
-            </Box>
 
             {/* Server Certificate (Agent TLS) */}
             <Box>
@@ -450,9 +423,9 @@ function KeyDisplayDialog({ open, cert, hostname, onClose }: KeyDisplayDialogPro
           onClick={handleDownloadBundle}
           disabled={downloading || !cert}
         >
-          {downloading ? <CircularProgress size={20} /> : 'Download Bundle (.zip)'}
+          {downloading ? <CircularProgress size={20} /> : 'Download Agent Bundle (.zip)'}
         </Button>
-        <Button variant="contained" onClick={onClose}>I Have Saved the Keys</Button>
+        <Button variant="contained" onClick={onClose}>I Have Saved the Key</Button>
       </DialogActions>
     </Dialog>
   )
@@ -726,22 +699,6 @@ export default function HostDetailPage() {
     }
   }
 
-  // ── Download client cert ─────────────────────────────────────────────────
-  const handleDownloadClientCert = async () => {
-    if (!id) return
-    try {
-      const res = await certsApi.downloadClientCert(id)
-      const url = URL.createObjectURL(res.data as Blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = 'client.crt'
-      a.click()
-      URL.revokeObjectURL(url)
-    } catch {
-      showSnack('No client certificate found for this host', 'error')
-    }
-  }
-  
   // ── Issue client certificate ──────────────────────────────────────────────
   const handleOpenIssueCert = () => {
     setIssueCertHostname(String(host?.fqdn ?? ''))
@@ -930,11 +887,7 @@ export default function HostDetailPage() {
                 Re-issue Certificate
               </Button>
             )}
-            <Tooltip title="Download Client Certificate (public cert only)">
-              <IconButton onClick={handleDownloadClientCert} color="primary">
-                <VpnKeyIcon />
-              </IconButton>
-            </Tooltip>
+
           </Box>
         </Box>
         <Divider sx={{ mb: 2 }} />
