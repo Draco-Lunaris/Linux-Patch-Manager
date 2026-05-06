@@ -203,6 +203,9 @@ export interface IssuedCert {
   key_pem: string
   serial_number: string
   expires_at: string
+  server_cert_pem: string
+  server_key_pem: string
+  server_serial_number: string
   ca_root_pem: string
 }
 

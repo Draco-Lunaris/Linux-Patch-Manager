@@ -1,11 +1,12 @@
 //! Internal Certificate Authority for Linux Patch Manager.
 //!
-//! Issues and renews mTLS client certificates for agent communication.
-//! Uses rcgen (ECDSA P-256) for all certificate generation.
-//! CA key and certificate are stored on disk under `base_dir`
-//! (default: /etc/patch-manager/ca/).
-//! Certificate metadata is persisted in the `certificates` PostgreSQL table.
+//! Issues and renews mTLS client certificates and agent server certificates
+//! for agent communication. Uses rcgen (ECDSA P-256) for all certificate
+//! generation. CA key and certificate are stored on disk under `base_dir`
+//! (default: /etc/patch-manager/ca/). Certificate metadata is persisted in
+//! the `certificates` PostgreSQL table.
 
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -26,19 +27,26 @@ use uuid::Uuid;
 
 /// Returned by [`CertAuthority::issue_client_cert`] and [`CertAuthority::renew_cert`].
 ///
-/// The private key is intentionally **not** stored in the database.
+/// The private keys are intentionally **not** stored in the database.
 #[derive(Debug, Clone)]
 pub struct IssuedCert {
-    /// PEM-encoded public certificate.
+    /// PEM-encoded client certificate (mTLS).
     pub cert_pem: String,
-    /// PEM-encoded private key (PKCS#8).
+    /// PEM-encoded client private key (PKCS#8).
     pub key_pem: String,
-    /// Hex-encoded 16-byte random serial number.
+    /// Hex-encoded 16-byte random serial number (client cert).
     pub serial_number: String,
     /// Certificate expiry timestamp (UTC).
     pub expires_at: DateTime<Utc>,
+    /// PEM-encoded agent server certificate (for TLS listener).
+    pub server_cert_pem: String,
+    /// PEM-encoded agent server private key (PKCS#8).
+    pub server_key_pem: String,
+    /// Hex-encoded serial number of the server certificate.
+    pub server_serial_number: String,
+    /// PEM-encoded CA root certificate.
+    pub ca_root_pem: String,
 }
-
 // ---------------------------------------------------------------------------
 // CertAuthority
 // ---------------------------------------------------------------------------
@@ -240,15 +248,19 @@ impl CertAuthority {
     /// * Key usage: Digital Signature
     /// * Extended key usage: Client Authentication
     ///
-    /// The certificate PEM is stored in `certificates`.
-    /// The private key is returned to the caller **only** and never persisted.
+    /// Also issues a server certificate for the agent's TLS listener
+    /// (see [`issue_server_cert`]).
+    ///
+    /// The certificate PEMs are stored in `certificates`.
+    /// The private keys are returned to the caller **only** and never persisted.
     pub async fn issue_client_cert(
         &self,
         host_id: Uuid,
         hostname: &str,
+        ip_address: &str,
         db: &PgPool,
     ) -> Result<IssuedCert> {
-        tracing::info!(host_id = %host_id, hostname, "Issuing mTLS client certificate");
+        tracing::info!(host_id = %host_id, hostname, ip_address, "Issuing mTLS client certificate");
 
         let key =
             KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).context("generate client key pair")?;
@@ -288,12 +300,97 @@ impl CertAuthority {
             "Client certificate issued successfully"
         );
 
+        // Also issue a server certificate for the agent's TLS listener.
+        let (server_cert_pem, server_key_pem, server_serial_number, _server_expires_at) =
+            self.issue_server_cert(host_id, hostname, ip_address, db).await?;
+
         Ok(IssuedCert {
             cert_pem,
             key_pem,
             serial_number: serial_hex,
             expires_at,
+            server_cert_pem,
+            server_key_pem,
+            server_serial_number,
+            ca_root_pem: self.root_cert_pem().to_owned(),
         })
+    }
+
+    /// Issue a one-year server certificate for a managed host's agent TLS listener.
+    ///
+    /// * Subject: `CN=<hostname>-server`
+    /// * Key usage: Digital Signature
+    /// * Extended key usage: Server Authentication
+    /// * SANs: DNS `<hostname>` + IP `<ip_address>` (if valid)
+    ///
+    /// The certificate PEM is stored in `certificates` with common_name
+    /// `{hostname}-server` to distinguish from client certs.
+    /// The private key is returned to the caller **only** and never persisted.
+    ///
+    /// Returns `(cert_pem, key_pem, serial_number, expires_at)`.
+    pub async fn issue_server_cert(
+        &self,
+        host_id: Uuid,
+        hostname: &str,
+        ip_address: &str,
+        db: &PgPool,
+    ) -> Result<(String, String, String, DateTime<Utc>)> {
+        tracing::info!(host_id = %host_id, hostname, ip_address, "Issuing agent server certificate");
+
+        let key =
+            KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).context("generate server key pair")?;
+
+        let server_cn = format!("{hostname}-server");
+        let (mut params, serial_hex, expires_at) = base_params(&server_cn, 365)?;
+        params.is_ca = IsCa::ExplicitNoCa;
+        params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+        params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+
+        // Build SANs: DNS hostname + optional IP address
+        let mut sans = vec![SanType::DnsName(
+            Ia5String::try_from(hostname.to_owned()).context("hostname is not valid IA5")?,
+        )];
+        if let Ok(ip) = ip_address.parse::<IpAddr>() {
+            sans.push(SanType::IpAddress(ip));
+        } else {
+            tracing::warn!(
+                ip_address,
+                "Could not parse IP address for server cert SANs, skipping IP SAN"
+            );
+        }
+        params.subject_alt_names = sans;
+
+        let (ca_key, ca_cert) = self.ca_objects()?;
+        let cert = params
+            .signed_by(&key, &ca_cert, &ca_key)
+            .context("sign server cert with CA")?;
+
+        let cert_pem = cert.pem();
+        let key_pem = key.serialize_pem();
+
+        sqlx::query(
+            "INSERT INTO certificates \
+             (host_id, serial_number, common_name, status, expires_at, cert_pem) \
+             VALUES ($1, $2, $3, 'active'::cert_status, $4, $5)",
+        )
+        .bind(host_id)
+        .bind(&serial_hex)
+        .bind(&server_cn)
+        .bind(expires_at)
+        .bind(&cert_pem)
+        .execute(db)
+        .await
+        .context("insert server cert into database")?;
+
+        tracing::info!(
+            host_id = %host_id,
+            hostname,
+            serial = %serial_hex,
+            expires_at = %expires_at,
+            "Server certificate issued successfully"
+        );
+
+        Ok((cert_pem, key_pem, serial_hex, expires_at))
     }
 
     /// Revoke a certificate by database ID.
@@ -323,6 +420,9 @@ impl CertAuthority {
 
     /// Renew a certificate: revoke the existing cert and issue a new one with
     /// the same `host_id` and `common_name`.
+    ///
+    /// Also issues a new server certificate and populates all `IssuedCert` fields.
+    /// The host's IP address is looked up from the database for server cert SANs.
     pub async fn renew_cert(&self, cert_id: Uuid, db: &PgPool) -> Result<IssuedCert> {
         tracing::info!(cert_id = %cert_id, "Renewing certificate");
 
@@ -338,15 +438,25 @@ impl CertAuthority {
             .context("certificate has no host_id (cannot renew root CA)")?;
         let common_name: String = row.try_get("common_name").context("fetch common_name")?;
 
+        // Look up the host's IP address for the server cert SANs.
+        let ip_address: String =
+            sqlx::query_scalar("SELECT ip_address::text FROM hosts WHERE id = $1")
+                .bind(host_id)
+                .fetch_one(db)
+                .await
+                .context("fetch host IP address for renewal")?;
+
         // Revoke the old cert first.
         self.revoke_cert(cert_id, db).await?;
 
         // Issue a fresh cert with the same CN.
-        let issued = self.issue_client_cert(host_id, &common_name, db).await?;
+        let issued = self
+            .issue_client_cert(host_id, &common_name, &ip_address, db)
+            .await?;
 
         tracing::info!(
             old_cert_id = %cert_id,
-            new_serial   = %issued.serial_number,
+            new_serial = %issued.serial_number,
             "Certificate renewed"
         );
         Ok(issued)

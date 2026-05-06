@@ -149,10 +149,10 @@ interface KeyDisplayDialogProps {
 }
 
 function KeyDisplayDialog({ open, cert, hostname, onClose }: KeyDisplayDialogProps) {
-  const [copiedField, setCopiedField] = useState<'cert' | 'key' | 'ca' | null>(null)
+  const [copiedField, setCopiedField] = useState<'ca' | 'cert' | 'key' | 'server-cert' | 'server-key' | null>(null)
   const [downloading, setDownloading] = useState(false)
 
-  const handleCopy = async (text: string, field: 'cert' | 'key' | 'ca') => {
+  const handleCopy = async (text: string, field: 'ca' | 'cert' | 'key' | 'server-cert' | 'server-key') => {
     await navigator.clipboard.writeText(text)
     setCopiedField(field)
     setTimeout(() => setCopiedField(null), 2000)
@@ -166,6 +166,8 @@ function KeyDisplayDialog({ open, cert, hostname, onClose }: KeyDisplayDialogPro
       zip.file('ca.crt', cert.ca_root_pem)
       zip.file('client.crt', cert.cert_pem)
       zip.file('client.key', cert.key_pem)
+      zip.file('server.crt', cert.server_cert_pem)
+      zip.file('server.key', cert.server_key_pem)
       const blob = await zip.generateAsync({ type: 'blob' })
       downloadBlob(blob, `${hostname || 'host'}-certs.zip`)
     } finally {
@@ -173,112 +175,95 @@ function KeyDisplayDialog({ open, cert, hostname, onClose }: KeyDisplayDialogPro
     }
   }
 
+  const preStyle = {
+    p: 2,
+    bgcolor: 'grey.100',
+    borderRadius: 1,
+    fontSize: 12,
+    overflow: 'auto',
+    maxHeight: 150,
+    fontFamily: 'monospace' as const,
+    whiteSpace: 'pre-wrap' as const,
+    wordBreak: 'break-all' as const,
+  }
+
   return (
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
-      <DialogTitle>Certificate Issued — Save Your Private Key</DialogTitle>
+      <DialogTitle>Agent Certificate Bundle Issued — Save Your Private Keys</DialogTitle>
       <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
         <Alert severity="warning">
-          <strong>This private key will NOT be shown again.</strong> Copy and store it securely
+          <strong>Private keys will NOT be shown again.</strong> Copy and store them securely
           before closing this dialog.
         </Alert>
         {cert && (
           <>
             <Typography variant="caption" color="text.secondary">
-              Serial: {cert.serial_number} &nbsp;|&nbsp; Expires: {fmtDate(cert.expires_at)}
+              Client Serial: {cert.serial_number} &nbsp;|&nbsp; Server Serial: {cert.server_serial_number} &nbsp;|&nbsp; Expires: {fmtDate(cert.expires_at)}
             </Typography>
+
+            {/* CA Root Certificate */}
             <Box>
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
                 <Typography variant="subtitle2">CA Root Certificate (ca.crt)</Typography>
                 <Tooltip title={copiedField === 'ca' ? 'Copied!' : 'Copy CA root cert to clipboard'}>
-                  <Button
-                    size="small"
-                    startIcon={<CopyIcon />}
-                    onClick={() => handleCopy(cert.ca_root_pem, 'ca')}
-                    variant="outlined"
-                  >
+                  <Button size="small" startIcon={<CopyIcon />} onClick={() => handleCopy(cert.ca_root_pem, 'ca')} variant="outlined">
                     {copiedField === 'ca' ? 'Copied!' : 'Copy CA Root'}
                   </Button>
                 </Tooltip>
               </Box>
-              <Box
-                component="pre"
-                sx={{
-                  p: 2,
-                  bgcolor: 'grey.100',
-                  borderRadius: 1,
-                  fontSize: 12,
-                  overflow: 'auto',
-                  maxHeight: 150,
-                  fontFamily: 'monospace',
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-all',
-                }}
-              >
-                {cert.ca_root_pem}
-              </Box>
+              <Box component="pre" sx={preStyle}>{cert.ca_root_pem}</Box>
             </Box>
+
+            {/* Client Certificate (mTLS) */}
             <Box>
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
-                <Typography variant="subtitle2">Certificate (client.crt)</Typography>
-                <Tooltip title={copiedField === 'cert' ? 'Copied!' : 'Copy certificate to clipboard'}>
-                  <Button
-                    size="small"
-                    startIcon={<CopyIcon />}
-                    onClick={() => handleCopy(cert.cert_pem, 'cert')}
-                    variant="outlined"
-                  >
-                    {copiedField === 'cert' ? 'Copied!' : 'Copy Cert'}
+                <Typography variant="subtitle2">Client Certificate — mTLS (client.crt)</Typography>
+                <Tooltip title={copiedField === 'cert' ? 'Copied!' : 'Copy client cert to clipboard'}>
+                  <Button size="small" startIcon={<CopyIcon />} onClick={() => handleCopy(cert.cert_pem, 'cert')} variant="outlined">
+                    {copiedField === 'cert' ? 'Copied!' : 'Copy Client Cert'}
                   </Button>
                 </Tooltip>
               </Box>
-              <Box
-                component="pre"
-                sx={{
-                  p: 2,
-                  bgcolor: 'grey.100',
-                  borderRadius: 1,
-                  fontSize: 12,
-                  overflow: 'auto',
-                  maxHeight: 200,
-                  fontFamily: 'monospace',
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-all',
-                }}
-              >
-                {cert.cert_pem}
-              </Box>
+              <Box component="pre" sx={preStyle}>{cert.cert_pem}</Box>
             </Box>
+
+            {/* Client Private Key */}
             <Box>
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
-                <Typography variant="subtitle2" color="error">Private Key (client.key)</Typography>
-                <Tooltip title={copiedField === 'key' ? 'Copied!' : 'Copy private key to clipboard'}>
-                  <Button
-                    size="small"
-                    startIcon={<CopyIcon />}
-                    onClick={() => handleCopy(cert.key_pem, 'key')}
-                    variant="outlined"
-                    color="error"
-                  >
-                    {copiedField === 'key' ? 'Copied!' : 'Copy Key'}
+                <Typography variant="subtitle2" color="error">Client Private Key (client.key)</Typography>
+                <Tooltip title={copiedField === 'key' ? 'Copied!' : 'Copy client key to clipboard'}>
+                  <Button size="small" startIcon={<CopyIcon />} onClick={() => handleCopy(cert.key_pem, 'key')} variant="outlined" color="error">
+                    {copiedField === 'key' ? 'Copied!' : 'Copy Client Key'}
                   </Button>
                 </Tooltip>
               </Box>
-              <Box
-                component="pre"
-                sx={{
-                  p: 2,
-                  bgcolor: 'grey.100',
-                  borderRadius: 1,
-                  fontSize: 12,
-                  overflow: 'auto',
-                  maxHeight: 200,
-                  fontFamily: 'monospace',
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-all',
-                }}
-              >
-                {cert.key_pem}
+              <Box component="pre" sx={preStyle}>{cert.key_pem}</Box>
+            </Box>
+
+            {/* Server Certificate (Agent TLS) */}
+            <Box>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+                <Typography variant="subtitle2">Server Certificate — Agent TLS (server.crt)</Typography>
+                <Tooltip title={copiedField === 'server-cert' ? 'Copied!' : 'Copy server cert to clipboard'}>
+                  <Button size="small" startIcon={<CopyIcon />} onClick={() => handleCopy(cert.server_cert_pem, 'server-cert')} variant="outlined">
+                    {copiedField === 'server-cert' ? 'Copied!' : 'Copy Server Cert'}
+                  </Button>
+                </Tooltip>
               </Box>
+              <Box component="pre" sx={preStyle}>{cert.server_cert_pem}</Box>
+            </Box>
+
+            {/* Server Private Key */}
+            <Box>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+                <Typography variant="subtitle2" color="error">Server Private Key (server.key)</Typography>
+                <Tooltip title={copiedField === 'server-key' ? 'Copied!' : 'Copy server key to clipboard'}>
+                  <Button size="small" startIcon={<CopyIcon />} onClick={() => handleCopy(cert.server_key_pem, 'server-key')} variant="outlined" color="error">
+                    {copiedField === 'server-key' ? 'Copied!' : 'Copy Server Key'}
+                  </Button>
+                </Tooltip>
+              </Box>
+              <Box component="pre" sx={preStyle}>{cert.server_key_pem}</Box>
             </Box>
           </>
         )}
@@ -291,7 +276,7 @@ function KeyDisplayDialog({ open, cert, hostname, onClose }: KeyDisplayDialogPro
         >
           {downloading ? <CircularProgress size={20} /> : 'Download Bundle (.zip)'}
         </Button>
-        <Button variant="contained" onClick={onClose}>I Have Saved the Key</Button>
+        <Button variant="contained" onClick={onClose}>I Have Saved the Keys</Button>
       </DialogActions>
     </Dialog>
   )

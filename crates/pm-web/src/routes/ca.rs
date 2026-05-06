@@ -26,6 +26,7 @@ use pm_auth::rbac::AuthUser;
 use pm_core::audit::{log_event, AuditAction};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sqlx::Row;
 use uuid::Uuid;
 
 use crate::AppState;
@@ -121,6 +122,21 @@ fn db_error(e: sqlx::Error) -> (StatusCode, Json<Value>) {
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
     )
+}
+
+// ── Helper: build the full IssuedCert JSON response ──────────────────────────
+
+fn issued_cert_json(issued: &pm_ca::IssuedCert) -> Value {
+    json!({
+        "cert_pem":            issued.cert_pem,
+        "key_pem":             issued.key_pem,
+        "serial_number":       issued.serial_number,
+        "expires_at":          issued.expires_at,
+        "server_cert_pem":     issued.server_cert_pem,
+        "server_key_pem":      issued.server_key_pem,
+        "server_serial_number": issued.server_serial_number,
+        "ca_root_pem":         issued.ca_root_pem,
+    })
 }
 
 // ── GET /api/v1/ca/root.crt ───────────────────────────────────────────────────
@@ -231,6 +247,7 @@ async fn download_client_cert(
            FROM certificates
            WHERE host_id = $1
              AND status = 'active'::cert_status
+             AND common_name NOT LIKE '%-server'
            ORDER BY issued_at DESC
            LIMIT 1"#,
     )
@@ -272,8 +289,8 @@ async fn download_client_cert(
 
 // ── POST /api/v1/hosts/:host_id/certificates ─────────────────────────────────
 
-/// Issue a new mTLS client certificate for a host.
-/// **The private key is returned only once — the caller must save it.**
+/// Issue a new mTLS client certificate (and server certificate) for a host.
+/// **The private keys are returned only once — the caller must save them.**
 async fn issue_client_cert(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -282,9 +299,26 @@ async fn issue_client_cert(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
 
+    // Look up the host's IP address from the database.
+    let ip_address: String = sqlx::query_scalar("SELECT ip_address::text FROM hosts WHERE id = $1")
+        .bind(host_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, %host_id, "Failed to fetch host IP address");
+            if e.to_string().contains("no rows") {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({ "error": { "code": "not_found", "message": "Host not found" } })),
+                )
+            } else {
+                db_error(e)
+            }
+        })?;
+
     let issued = state
         .ca
-        .issue_client_cert(host_id, &req.hostname, &state.db)
+        .issue_client_cert(host_id, &req.hostname, &ip_address, &state.db)
         .await
         .map_err(|e| {
             tracing::error!(error = %e, %host_id, hostname = %req.hostname,
@@ -302,19 +336,13 @@ async fn issue_client_cert(
         Some(&auth.username),
         Some("certificate"),
         Some(&host_id.to_string()),
-        json!({ "hostname": req.hostname, "serial_number": issued.serial_number }),
+        json!({ "hostname": req.hostname, "serial_number": issued.serial_number, "server_serial_number": issued.server_serial_number }),
         None,
         None,
     )
     .await;
 
-    Ok(Json(json!({
-        "cert_pem":      issued.cert_pem,
-        "key_pem":       issued.key_pem,
-        "serial_number": issued.serial_number,
-        "expires_at":    issued.expires_at,
-        "ca_root_pem":   state.ca.root_cert_pem(),
-    })))
+    Ok(Json(issued_cert_json(&issued)))
 }
 
 // ── POST /api/v1/certificates/:cert_id/renew ─────────────────────────────────
@@ -352,25 +380,19 @@ async fn renew_cert(
         Some(&auth.username),
         Some("certificate"),
         Some(&cert_id.to_string()),
-        json!({ "serial_number": issued.serial_number }),
+        json!({ "serial_number": issued.serial_number, "server_serial_number": issued.server_serial_number }),
         None,
         None,
     )
     .await;
 
-    Ok(Json(json!({
-        "cert_pem":      issued.cert_pem,
-        "key_pem":       issued.key_pem,
-        "serial_number": issued.serial_number,
-        "expires_at":    issued.expires_at,
-        "ca_root_pem":   state.ca.root_cert_pem(),
-    })))
+    Ok(Json(issued_cert_json(&issued)))
 }
 
 // ── POST /api/v1/hosts/:host_id/certificates/reissue ────────────────────────
 
-/// Revoke ALL active certificates for a host and issue a new one.
-/// The private key is returned only once — the caller must save it.
+/// Revoke ALL active certificates for a host and issue new ones.
+/// The private keys are returned only once — the caller must save them.
 async fn reissue_host_cert(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -378,13 +400,13 @@ async fn reissue_host_cert(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
 
-    // Look up the host's FQDN for the new certificate CN.
-    let fqdn: String = sqlx::query_scalar("SELECT fqdn FROM hosts WHERE id = $1")
+    // Look up the host's FQDN and IP address for the new certificate CN and SANs.
+    let row = sqlx::query("SELECT fqdn, ip_address::text AS ip_address FROM hosts WHERE id = $1")
         .bind(host_id)
         .fetch_one(&state.db)
         .await
         .map_err(|e| {
-            tracing::error!(error = %e, %host_id, "Failed to fetch host FQDN");
+            tracing::error!(error = %e, %host_id, "Failed to fetch host FQDN/IP");
             if e.to_string().contains("no rows") {
                 (
                     StatusCode::NOT_FOUND,
@@ -394,6 +416,15 @@ async fn reissue_host_cert(
                 db_error(e)
             }
         })?;
+
+    let fqdn: String = row.try_get("fqdn").map_err(|e| {
+        tracing::error!(error = %e, %host_id, "Failed to read fqdn");
+        db_error(e)
+    })?;
+    let ip_address: String = row.try_get("ip_address").map_err(|e| {
+        tracing::error!(error = %e, %host_id, "Failed to read ip_address");
+        db_error(e)
+    })?;
 
     // Revoke all active certificates for this host.
     let revoked = sqlx::query(
@@ -407,10 +438,10 @@ async fn reissue_host_cert(
 
     tracing::info!(%host_id, rows_revoked = revoked.rows_affected(), "Revoked all active certs for host");
 
-    // Issue a new certificate using the host's FQDN.
+    // Issue a new certificate bundle using the host's FQDN and IP.
     let issued = state
         .ca
-        .issue_client_cert(host_id, &fqdn, &state.db)
+        .issue_client_cert(host_id, &fqdn, &ip_address, &state.db)
         .await
         .map_err(|e| {
             tracing::error!(error = %e, %host_id, "Failed to issue new cert during reissue");
@@ -427,19 +458,13 @@ async fn reissue_host_cert(
         Some(&auth.username),
         Some("certificate"),
         Some(&host_id.to_string()),
-        json!({ "hostname": &fqdn, "serial_number": issued.serial_number, "rows_revoked": revoked.rows_affected() }),
+        json!({ "hostname": &fqdn, "serial_number": issued.serial_number, "server_serial_number": issued.server_serial_number, "rows_revoked": revoked.rows_affected() }),
         None,
         None,
     )
     .await;
 
-    Ok(Json(json!({
-        "cert_pem":      issued.cert_pem,
-        "key_pem":       issued.key_pem,
-        "serial_number": issued.serial_number,
-        "expires_at":    issued.expires_at,
-        "ca_root_pem":   state.ca.root_cert_pem(),
-    })))
+    Ok(Json(issued_cert_json(&issued)))
 }
 
 // ── DELETE /api/v1/certificates/:cert_id ─────────────────────────────────────
