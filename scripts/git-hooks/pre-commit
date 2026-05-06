@@ -2,8 +2,8 @@
 # =============================================================================
 # Linux Patch Manager — Pre-Commit Hook
 # =============================================================================
-# Auto-formats Rust code and runs frontend type check before each commit.
-# Prevents CI format-check failures by ensuring code is always formatted.
+# Auto-formats Rust code and runs frontend checks before each commit.
+# Prevents CI format-check and lint failures by catching issues locally.
 # Install: ./scripts/git-hooks/install.sh
 # =============================================================================
 
@@ -16,17 +16,20 @@ if [[ -f "${REPO_ROOT}/Cargo.toml" ]]; then
     echo "[pre-commit] Running cargo fmt --all ..."
     cargo fmt --all --manifest-path "${REPO_ROOT}/Cargo.toml" 2>/dev/null
 
-    # Re-stage any files that cargo fmt reformatted (including previously unstaged)
+    # Re-stage any files that cargo fmt reformatted
     STAGED_RS=$(git diff --name-only --diff-filter=ACM -- '*.rs')
     if [[ -n "${STAGED_RS}" ]]; then
         git add ${STAGED_RS}
     fi
 fi
 
-# ── Frontend type check ─────────────────────────────────────────────────────
+# ── Frontend checks ──────────────────────────────────────────────────────────
 if [[ -f "${REPO_ROOT}/frontend/package.json" ]]; then
-    echo "[pre-commit] Running TypeScript type check ..."
+    echo "[pre-commit] Running ESLint ..."
     cd "${REPO_ROOT}/frontend"
+    npx eslint src/ --ext .ts,.tsx --max-warnings 0 2>/dev/null
+
+    echo "[pre-commit] Running TypeScript type check ..."
     npx tsc --noEmit 2>/dev/null
 fi
 

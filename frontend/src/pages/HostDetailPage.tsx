@@ -1071,7 +1071,7 @@ export default function HostDetailPage() {
                     </Typography>
                   </TableCell>
                   <TableCell>
-                    {check.last_result?.latency_ms != null ? `${check.last_result.latency_ms} ms` : '—'}
+                    {check.last_result?.latency_ms !== null && check.last_result?.latency_ms !== undefined ? `${check.last_result.latency_ms} ms` : '—'}
                   </TableCell>
                   <TableCell>
                     {check.last_result?.checked_at

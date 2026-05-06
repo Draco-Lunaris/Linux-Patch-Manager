@@ -2,7 +2,7 @@
 # =============================================================================
 # Linux Patch Manager — Pre-Push Hook
 # =============================================================================
-# Safety net: verifies cargo fmt and frontend build pass before pushing.
+# Safety net: verifies cargo fmt, ESLint, and TypeScript pass before pushing.
 # Install: ./scripts/git-hooks/install.sh
 # =============================================================================
 
@@ -16,6 +16,15 @@ if [[ -f "${REPO_ROOT}/Cargo.toml" ]]; then
     echo "[pre-push] Checking Rust formatting ..."
     if ! cargo fmt --all --manifest-path "${REPO_ROOT}/Cargo.toml" --check 2>/dev/null; then
         echo "[pre-push] ❌ Rust formatting check FAILED. Run: cargo fmt --all"
+        FAILED=1
+    fi
+fi
+
+# ── Frontend ESLint ──────────────────────────────────────────────────────────
+if [[ -f "${REPO_ROOT}/frontend/package.json" ]]; then
+    echo "[pre-push] Running ESLint ..."
+    if ! (cd "${REPO_ROOT}/frontend" && npx eslint src/ --ext .ts,.tsx --max-warnings 0 2>/dev/null); then
+        echo "[pre-push] ❌ ESLint check FAILED."
         FAILED=1
     fi
 fi

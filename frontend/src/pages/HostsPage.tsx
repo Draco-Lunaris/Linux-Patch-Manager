@@ -4,8 +4,7 @@ import {
   Paper, Table, TableBody, TableCell, TableContainer, TableHead,
   TableRow, TextField, Toolbar, Tooltip, Typography,
 } from '@mui/material'
-import { Add as AddIcon, Refresh as RefreshIcon, Delete as DeleteIcon } from '@mui/icons-material'
-import { CheckCircle as CheckCircleIcon, Cancel as CancelIcon, Remove as RemoveIcon } from '@mui/icons-material'
+import { Add as AddIcon, Refresh as RefreshIcon, Delete as DeleteIcon, CheckCircle as CheckCircleIcon, Cancel as CancelIcon, Remove as RemoveIcon } from '@mui/icons-material'
 import { useNavigate } from 'react-router-dom'
 import { apiClient, hostsApi } from '../api/client'
 import type { Host, HostHealthStatus } from '../types'
