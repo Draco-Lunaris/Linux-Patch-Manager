@@ -300,7 +300,7 @@ async fn issue_client_cert(
     require_admin(&auth)?;
 
     // Look up the host's IP address from the database.
-    let ip_address: String = sqlx::query_scalar("SELECT ip_address::text FROM hosts WHERE id = $1")
+    let ip_address: String = sqlx::query_scalar("SELECT host(ip_address) FROM hosts WHERE id = $1")
         .bind(host_id)
         .fetch_one(&state.db)
         .await
@@ -401,7 +401,7 @@ async fn reissue_host_cert(
     require_admin(&auth)?;
 
     // Look up the host's FQDN and IP address for the new certificate CN and SANs.
-    let row = sqlx::query("SELECT fqdn, ip_address::text AS ip_address FROM hosts WHERE id = $1")
+    let row = sqlx::query("SELECT fqdn, host(ip_address) AS ip_address FROM hosts WHERE id = $1")
         .bind(host_id)
         .fetch_one(&state.db)
         .await
