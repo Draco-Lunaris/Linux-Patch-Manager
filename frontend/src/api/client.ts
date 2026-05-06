@@ -11,6 +11,7 @@ import type {
   HealthCheckWithResult,
   CreateHealthCheckRequest,
   UpdateHealthCheckRequest,
+  HealthCheckListResponse,
 } from '../types'
 
 const BASE_URL = '/api/v1'
@@ -273,7 +274,7 @@ export const settingsApi = {
 
 export const healthChecksApi = {
   list: (hostId: string) =>
-    apiClient.get<HealthCheckWithResult[]>(`/hosts/${hostId}/health-checks`),
+    apiClient.get<HealthCheckListResponse>(`/hosts/${hostId}/health-checks`),
 
   get: (hostId: string, checkId: string) =>
     apiClient.get<HealthCheckWithResult>(`/hosts/${hostId}/health-checks/${checkId}`),

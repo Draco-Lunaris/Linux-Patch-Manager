@@ -65,3 +65,18 @@ The Docker container intercepted some jobs and ran them in its Alpine environmen
 **Fix:** Stopped Docker container runner. Switched to runs-on: ubuntu-latest with docker://ubuntu:24.04 containers.
 
 **Lesson:** Check for multiple runners with same name. Stop after 2 attempts and diagnose root cause.
+
+## 2026-05-05: Always Use Git → Gitea → Runner CI/CD Pipeline for Deployment
+**Pattern:** When deploying code changes to any environment, always commit and push to Gitea and let the CI/CD pipeline handle building and deployment.
+**Why:** Manually copying built files (scp, etc.) bypasses quality gates (format, clippy, test, lint) and is not reproducible. The CI pipeline ensures every change passes all checks before reaching any environment.
+**Action:** Never manually copy files to servers. Always: commit → push to Gitea → let CI/CD run → deploy through proper pipeline.
+
+## 2026-05-05: Verify API Response Structure Matches Frontend Expectations
+**Pattern:** When frontend data doesn't appear, check the API response structure before assuming the UI code is wrong.
+**Why:** Health checks list was always empty because backend returns `{ checks: [...], total: N }` but frontend used `Array.isArray(res.data) ? res.data : []` which returned `[]` for an object. Maintenance windows worked because they correctly used `res.data?.windows ?? []`.
+**Action:** When adding new API endpoints, verify the response wrapper structure matches what the frontend expects. Check existing working patterns (like maintenance windows) for the correct data extraction approach.
+
+## 2026-05-05: Run cargo fmt Before Pushing to Avoid CI Failures
+**Pattern:** Always run `cargo fmt --all` locally before pushing Rust code changes.
+**Why:** The CI pipeline has a Rust Format Check gate that will fail if code isn't formatted. This wastes CI runner time and delays deployment.
+**Action:** Run `cargo fmt --all` as part of local pre-push checklist, alongside `npm run build` for frontend changes.

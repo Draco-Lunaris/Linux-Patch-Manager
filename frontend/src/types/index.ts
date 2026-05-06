@@ -299,6 +299,11 @@ export interface HealthCheckWithResult extends HealthCheck {
   last_result?: HealthCheckResult
 }
 
+export interface HealthCheckListResponse {
+  checks: HealthCheckWithResult[]
+  total: number
+}
+
 export interface CreateHealthCheckRequest {
   name: string
   check_type: HealthCheckType
