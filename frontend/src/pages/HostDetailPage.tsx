@@ -631,7 +631,7 @@ export default function HostDetailPage() {
     setHcLoading(true)
     try {
       const res = await healthChecksApi.list(id)
-      setHealthChecks(Array.isArray(res.data) ? res.data : [])
+      setHealthChecks(res.data?.checks ?? [])
     } catch { /* ignore */ }
     finally { setHcLoading(false) }
   }, [id])
@@ -1019,6 +1019,7 @@ export default function HostDetailPage() {
                 <TableCell>Name</TableCell>
                 <TableCell>Type</TableCell>
                 <TableCell>Status</TableCell>
+                <TableCell>Target</TableCell>
                 <TableCell>Enabled</TableCell>
                 <TableCell>Detail</TableCell>
                 <TableCell>Latency</TableCell>
@@ -1032,6 +1033,13 @@ export default function HostDetailPage() {
                   <TableCell>{check.name}</TableCell>
                   <TableCell>
                     <Chip label={check.check_type} size="small" variant="outlined" />
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2" sx={{ maxWidth: 250, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {check.check_type === 'service'
+                        ? (check.service_name ?? '—')
+                        : (check.url ?? '—')}
+                    </Typography>
                   </TableCell>
                   <TableCell>
                     {check.last_result ? (
