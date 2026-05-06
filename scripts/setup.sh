@@ -11,6 +11,7 @@
 #   - Copies configuration and binaries
 #   - Installs systemd units
 #   - Generates initial Ed25519 JWT keys
+#   - Generates internal CA and CA-signed web server certificate
 # =============================================================================
 
 set -euo pipefail
@@ -160,27 +161,58 @@ else
 fi
 
 # -----------------------------------------------------------------------
-# 6b. Generate self-signed TLS certificate for HTTPS
+# 6b. Generate CA and CA-signed TLS certificate for HTTPS
 # -----------------------------------------------------------------------
+CA_KEY="${CONFIG_DIR}/ca/ca.key"
+CA_CERT="${CONFIG_DIR}/ca/ca.crt"
 TLS_CERT="${CONFIG_DIR}/tls/web.crt"
 TLS_KEY="${CONFIG_DIR}/tls/web.key"
+TLS_CSR="${CONFIG_DIR}/tls/web.csr"
 
+# Generate CA if not present (pm-ca will load this on startup)
+if [[ ! -f "${CA_CERT}" ]]; then
+    info "Generating internal Certificate Authority (ECDSA P-256, 10-year validity)..."
+    openssl ecparam -genkey -name prime256v1 -noout -out "${CA_KEY}"
+    openssl req -new -x509 -key "${CA_KEY}" -out "${CA_CERT}" \
+        -days 3650 \
+        -subj "/CN=Patch Manager Root CA/O=Patch Manager" \
+        -addext "basicConstraints=critical,CA:true" \
+        -addext "keyUsage=critical,keyCertSign,cRLSign"
+    chown "${SERVICE_USER}:${SERVICE_GROUP}" "${CA_KEY}" "${CA_CERT}"
+    chmod 600 "${CA_KEY}" "${CA_CERT}"
+    info "Internal CA generated."
+else
+    info "Internal CA already exists at ${CA_CERT}, skipping."
+fi
+
+# Generate web server certificate signed by the internal CA
 if [[ ! -f "${TLS_CERT}" ]]; then
-    info "Generating self-signed TLS certificate (valid 365 days)..."
-    # Generate ECDSA P-256 private key
-    openssl ecparam -genkey -name prime256v1 -noout -out "${TLS_KEY}"
-    # Generate self-signed cert with SAN for localhost and the host's FQDN
+    info "Generating CA-signed web server certificate (valid 365 days)..."
     HOSTNAME_FQDN=$(hostname -f 2>/dev/null || echo "localhost")
     HOSTNAME_SHORT=$(hostname -s 2>/dev/null || echo "localhost")
-    openssl req -new -x509 -key "${TLS_KEY}" -out "${TLS_CERT}" \
-        -days 365 \
-        -subj "/CN=${HOSTNAME_FQDN}/O=Linux Patch Manager" \
-        -addext "subjectAltName=DNS:${HOSTNAME_FQDN},DNS:${HOSTNAME_SHORT},DNS:localhost,IP:127.0.0.1,IP:::1"
+    # Get the host's primary IP address for SAN
+    HOST_IP=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}' || echo "127.0.0.1")
+
+    # Generate ECDSA P-256 private key for web server
+    openssl ecparam -genkey -name prime256v1 -noout -out "${TLS_KEY}"
+
+    # Generate CSR with SANs
+    openssl req -new -key "${TLS_KEY}" -out "${TLS_CSR}" \
+        -subj "/CN=${HOSTNAME_FQDN}/O=Patch Manager" \
+        -addext "subjectAltName=DNS:${HOSTNAME_FQDN},DNS:${HOSTNAME_SHORT},DNS:localhost,IP:${HOST_IP},IP:127.0.0.1,IP:::1"
+
+    # Sign with the internal CA
+    openssl x509 -req -in "${TLS_CSR}" -CA "${CA_CERT}" -CAkey "${CA_KEY}" \
+        -CAcreateserial -days 365 -out "${TLS_CERT}" \
+        -extfile <(printf "subjectAltName=DNS:${HOSTNAME_FQDN},DNS:${HOSTNAME_SHORT},DNS:localhost,IP:${HOST_IP},IP:127.0.0.1,IP:::1\nextendedKeyUsage=serverAuth")
+
+    # Clean up CSR
+    rm -f "${TLS_CSR}"
+
     chown "${SERVICE_USER}:${SERVICE_GROUP}" "${TLS_CERT}" "${TLS_KEY}"
     chmod 644 "${TLS_CERT}"
     chmod 600 "${TLS_KEY}"
-    info "TLS certificate generated for ${HOSTNAME_FQDN}."
-    warn "Self-signed certificate — replace with CA-signed cert for production!"
+    info "CA-signed web server certificate generated for ${HOSTNAME_FQDN}."
 else
     warn "TLS certificate already exists at ${TLS_CERT}, skipping."
 fi
