@@ -31,7 +31,10 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_hosts).post(register_host))
         .route("/{id}", get(get_host).delete(remove_host))
-        .route("/{id}/groups", get(list_host_groups).post(add_host_to_group))
+        .route(
+            "/{id}/groups",
+            get(list_host_groups).post(add_host_to_group),
+        )
         .route("/{id}/groups/{group_id}", delete(remove_host_from_group))
         .route("/{id}/refresh", post(refresh_host))
 }

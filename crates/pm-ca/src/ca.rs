@@ -301,8 +301,9 @@ impl CertAuthority {
         );
 
         // Also issue a server certificate for the agent's TLS listener.
-        let (server_cert_pem, server_key_pem, server_serial_number, _server_expires_at) =
-            self.issue_server_cert(host_id, hostname, ip_address, db).await?;
+        let (server_cert_pem, server_key_pem, server_serial_number, _server_expires_at) = self
+            .issue_server_cert(host_id, hostname, ip_address, db)
+            .await?;
 
         Ok(IssuedCert {
             cert_pem,

@@ -287,7 +287,10 @@ pub async fn verify_integrity(pool: &PgPool) -> IntegrityResult {
             .unwrap_or_default();
         let ip_str = row.ip_address.as_deref().unwrap_or("");
         let rid = row.request_id.as_deref().unwrap_or("");
-        let created_str = row.created_at.map(|c| c.to_rfc3339_opts(chrono::SecondsFormat::Micros, true)).unwrap_or_default();
+        let created_str = row
+            .created_at
+            .map(|c| c.to_rfc3339_opts(chrono::SecondsFormat::Micros, true))
+            .unwrap_or_default();
 
         let mut hasher = Sha256::new();
         hasher.update(row.prev_hash.as_bytes());

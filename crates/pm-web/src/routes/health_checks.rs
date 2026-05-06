@@ -23,11 +23,11 @@ use pm_core::{
         UpdateHealthCheckRequest,
     },
 };
+use reqwest::tls::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use uuid::Uuid;
-use reqwest::tls::Version;
 
 use crate::AppState;
 
@@ -85,13 +85,12 @@ async fn operator_can_access_host(
     }
 
     // Also allow if host has no groups (ungrouped)
-    let has_groups: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM host_groups WHERE host_id = $1)",
-    )
-    .bind(host_id)
-    .fetch_one(pool)
-    .await
-    .unwrap_or(true);
+    let has_groups: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM host_groups WHERE host_id = $1)")
+            .bind(host_id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(true);
 
     Ok(!has_groups)
 }
@@ -117,25 +116,25 @@ async fn list_health_checks(
         if !can_access {
             return Err((
                 StatusCode::FORBIDDEN,
-                Json(json!({ "error": { "code": "forbidden", "message": "Not authorized for this host" } })),
+                Json(
+                    json!({ "error": { "code": "forbidden", "message": "Not authorized for this host" } }),
+                ),
             ));
         }
     }
 
     // Verify host exists
-    let host_exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM hosts WHERE id = $1)",
-    )
-    .bind(host_id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| {
-        tracing::error!(error = %e, "Failed to check host");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
-        )
-    })?;
+    let host_exists: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM hosts WHERE id = $1)")
+        .bind(host_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to check host");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+            )
+        })?;
 
     if !host_exists {
         return Err((
@@ -191,10 +190,7 @@ async fn list_health_checks(
             )
         })?;
 
-        checks_with_results.push(HealthCheckWithResult {
-            check,
-            last_result,
-        });
+        checks_with_results.push(HealthCheckWithResult { check, last_result });
     }
 
     Ok(Json(HealthCheckListResponse {
@@ -225,7 +221,9 @@ async fn create_health_check(
         if !can_access {
             return Err((
                 StatusCode::FORBIDDEN,
-                Json(json!({ "error": { "code": "forbidden", "message": "Not authorized for this host" } })),
+                Json(
+                    json!({ "error": { "code": "forbidden", "message": "Not authorized for this host" } }),
+                ),
             ));
         }
     }
@@ -234,7 +232,9 @@ async fn create_health_check(
     if req.check_type != "service" && req.check_type != "http" {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": { "code": "invalid_check_type", "message": "check_type must be 'service' or 'http'" } })),
+            Json(
+                json!({ "error": { "code": "invalid_check_type", "message": "check_type must be 'service' or 'http'" } }),
+            ),
         ));
     }
 
@@ -242,13 +242,17 @@ async fn create_health_check(
     if req.check_type == "service" && req.service_name.is_none() {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": { "code": "validation_error", "message": "service_name is required for service checks" } })),
+            Json(
+                json!({ "error": { "code": "validation_error", "message": "service_name is required for service checks" } }),
+            ),
         ));
     }
     if req.check_type == "http" && (req.url.is_none() || req.expected_body.is_none()) {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": { "code": "validation_error", "message": "url and expected_body are required for http checks" } })),
+            Json(
+                json!({ "error": { "code": "validation_error", "message": "url and expected_body are required for http checks" } }),
+            ),
         ));
     }
 
@@ -270,7 +274,9 @@ async fn create_health_check(
     if count >= 5 {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": { "code": "limit_exceeded", "message": "Maximum 5 health checks per host" } })),
+            Json(
+                json!({ "error": { "code": "limit_exceeded", "message": "Maximum 5 health checks per host" } }),
+            ),
         ));
     }
 
@@ -288,7 +294,9 @@ async fn create_health_check(
             tracing::error!(error = %e, "Failed to encrypt password");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": { "code": "internal_error", "message": "Encryption error" } })),
+                Json(
+                    json!({ "error": { "code": "internal_error", "message": "Encryption error" } }),
+                ),
             )
         })?;
         (Some(enc), Some(nonce))
@@ -342,7 +350,8 @@ async fn create_health_check(
         }),
         None,
         None,
-    ).await;
+    )
+    .await;
 
     Ok((
         StatusCode::CREATED,
@@ -377,7 +386,9 @@ async fn get_health_check(
         if !can_access {
             return Err((
                 StatusCode::FORBIDDEN,
-                Json(json!({ "error": { "code": "forbidden", "message": "Not authorized for this host" } })),
+                Json(
+                    json!({ "error": { "code": "forbidden", "message": "Not authorized for this host" } }),
+                ),
             ));
         }
     }
@@ -429,10 +440,7 @@ async fn get_health_check(
         )
     })?;
 
-    Ok(Json(HealthCheckWithResult {
-        check,
-        last_result,
-    }))
+    Ok(Json(HealthCheckWithResult { check, last_result }))
 }
 
 // ── PUT /api/v1/hosts/{host_id}/health-checks/{check_id} ──────────────────────
@@ -457,7 +465,9 @@ async fn update_health_check(
         if !can_access {
             return Err((
                 StatusCode::FORBIDDEN,
-                Json(json!({ "error": { "code": "forbidden", "message": "Not authorized for this host" } })),
+                Json(
+                    json!({ "error": { "code": "forbidden", "message": "Not authorized for this host" } }),
+                ),
             ));
         }
     }
@@ -499,7 +509,9 @@ async fn update_health_check(
             tracing::error!(error = %e, "Failed to encrypt password");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": { "code": "internal_error", "message": "Encryption error" } })),
+                Json(
+                    json!({ "error": { "code": "internal_error", "message": "Encryption error" } }),
+                ),
             )
         })?;
         (Some(enc), Some(nonce))
@@ -549,7 +561,9 @@ async fn update_health_check(
     if set_clauses.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": { "code": "validation_error", "message": "No fields to update" } })),
+            Json(
+                json!({ "error": { "code": "validation_error", "message": "No fields to update" } }),
+            ),
         ));
     }
 
@@ -613,7 +627,8 @@ async fn update_health_check(
         json!({ "check_id": check_id }),
         None,
         None,
-    ).await;
+    )
+    .await;
 
     Ok(Json(json!({ "id": check_id, "updated": true })))
 }
@@ -639,25 +654,25 @@ async fn delete_health_check(
         if !can_access {
             return Err((
                 StatusCode::FORBIDDEN,
-                Json(json!({ "error": { "code": "forbidden", "message": "Not authorized for this host" } })),
+                Json(
+                    json!({ "error": { "code": "forbidden", "message": "Not authorized for this host" } }),
+                ),
             ));
         }
     }
 
-    let deleted = sqlx::query(
-        "DELETE FROM host_health_checks WHERE id = $1 AND host_id = $2",
-    )
-    .bind(check_id)
-    .bind(host_id)
-    .execute(&state.db)
-    .await
-    .map_err(|e| {
-        tracing::error!(error = %e, "Failed to delete health check");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
-        )
-    })?;
+    let deleted = sqlx::query("DELETE FROM host_health_checks WHERE id = $1 AND host_id = $2")
+        .bind(check_id)
+        .bind(host_id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to delete health check");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+            )
+        })?;
 
     if deleted.rows_affected() == 0 {
         return Err((
@@ -677,7 +692,8 @@ async fn delete_health_check(
         json!({ "check_id": check_id }),
         None,
         None,
-    ).await;
+    )
+    .await;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -703,7 +719,9 @@ async fn test_health_check(
         if !can_access {
             return Err((
                 StatusCode::FORBIDDEN,
-                Json(json!({ "error": { "code": "forbidden", "message": "Not authorized for this host" } })),
+                Json(
+                    json!({ "error": { "code": "forbidden", "message": "Not authorized for this host" } }),
+                ),
             ));
         }
     }
@@ -794,7 +812,7 @@ async fn run_service_check(check: &HealthCheck, state: &AppState) -> CheckResult
                 detail: "No service_name configured".to_string(),
                 latency_ms: None,
             }
-        }
+        },
     };
 
     // Get host info for agent connection
@@ -815,11 +833,14 @@ async fn run_service_check(check: &HealthCheck, state: &AppState) -> CheckResult
                 detail: "Host not found".to_string(),
                 latency_ms: None,
             }
-        }
+        },
     };
 
     // Build agent URL
-    let agent_url = format!("https://{}:12443/api/v1/system/services/{}", ip, service_name);
+    let agent_url = format!(
+        "https://{}:12443/api/v1/system/services/{}",
+        ip, service_name
+    );
 
     let start = std::time::Instant::now();
 
@@ -832,10 +853,15 @@ async fn run_service_check(check: &HealthCheck, state: &AppState) -> CheckResult
                 detail: format!("Failed to build HTTP client: {}", e),
                 latency_ms: None,
             }
-        }
+        },
     };
 
-    match client.get(&agent_url).timeout(std::time::Duration::from_secs(10)).send().await {
+    match client
+        .get(&agent_url)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+    {
         Ok(resp) => {
             let latency = start.elapsed().as_millis() as i32;
             let status = resp.status();
@@ -847,11 +873,14 @@ async fn run_service_check(check: &HealthCheck, state: &AppState) -> CheckResult
                         // Try to parse as ApiResponse<ServiceStatusData>
                         if let Ok(api_resp) = serde_json::from_str::<serde_json::Value>(&body) {
                             if let Some(data) = api_resp.get("data") {
-                                if let Some(healthy) = data.get("healthy").and_then(|v| v.as_bool()) {
-                                    let active_state = data.get("active_state")
+                                if let Some(healthy) = data.get("healthy").and_then(|v| v.as_bool())
+                                {
+                                    let active_state = data
+                                        .get("active_state")
                                         .and_then(|v| v.as_str())
                                         .unwrap_or("unknown");
-                                    let sub_state = data.get("sub_state")
+                                    let sub_state = data
+                                        .get("sub_state")
                                         .and_then(|v| v.as_str())
                                         .unwrap_or("");
                                     return CheckResult {
@@ -867,7 +896,7 @@ async fn run_service_check(check: &HealthCheck, state: &AppState) -> CheckResult
                             detail: format!("Failed to parse agent response"),
                             latency_ms: Some(latency),
                         }
-                    }
+                    },
                     Err(e) => CheckResult {
                         healthy: false,
                         detail: format!("Failed to read response: {}", e),
@@ -881,7 +910,7 @@ async fn run_service_check(check: &HealthCheck, state: &AppState) -> CheckResult
                     latency_ms: Some(latency),
                 }
             }
-        }
+        },
         Err(e) => {
             let latency = start.elapsed().as_millis() as i32;
             if e.is_timeout() {
@@ -897,7 +926,7 @@ async fn run_service_check(check: &HealthCheck, state: &AppState) -> CheckResult
                     latency_ms: Some(latency),
                 }
             }
-        }
+        },
     }
 }
 
@@ -910,7 +939,7 @@ async fn run_http_check(check: &HealthCheck, state: &AppState) -> CheckResult {
                 detail: "No URL configured".to_string(),
                 latency_ms: None,
             }
-        }
+        },
     };
 
     let expected = match &check.expected_body {
@@ -921,7 +950,7 @@ async fn run_http_check(check: &HealthCheck, state: &AppState) -> CheckResult {
                 detail: "No expected_body configured".to_string(),
                 latency_ms: None,
             }
-        }
+        },
     };
 
     // Build HTTP client
@@ -983,14 +1012,14 @@ async fn run_http_check(check: &HealthCheck, state: &AppState) -> CheckResult {
                         },
                         latency_ms: Some(latency),
                     }
-                }
+                },
                 Err(e) => CheckResult {
                     healthy: false,
                     detail: format!("Failed to read response: {}", e),
                     latency_ms: Some(latency),
                 },
             }
-        }
+        },
         Err(e) => {
             let latency = start.elapsed().as_millis() as i32;
             if e.is_timeout() {
@@ -1006,7 +1035,7 @@ async fn run_http_check(check: &HealthCheck, state: &AppState) -> CheckResult {
                     latency_ms: Some(latency),
                 }
             }
-        }
+        },
     }
 }
 
@@ -1030,20 +1059,32 @@ fn build_agent_http_client(state: &AppState) -> Result<reqwest::Client, String> 
     );
 
     // Add CA cert (mandatory since we disabled built-in root certs)
-    let ca_pem = std::fs::read(ca_cert_path).map_err(|e| format!("Read CA cert {}: {}", ca_cert_path, e))?;
+    let ca_pem =
+        std::fs::read(ca_cert_path).map_err(|e| format!("Read CA cert {}: {}", ca_cert_path, e))?;
     tracing::info!(ca_pem_len = ca_pem.len(), "CA cert read");
-    let ca = reqwest::Certificate::from_pem(&ca_pem).map_err(|e| format!("Parse CA cert: {}", e))?;
+    let ca =
+        reqwest::Certificate::from_pem(&ca_pem).map_err(|e| format!("Parse CA cert: {}", e))?;
     builder = builder.add_root_certificate(ca);
 
     // Add client cert + key for mTLS
     let client_cert_exists = std::path::Path::new(client_cert_path).exists();
     let client_key_exists = std::path::Path::new(client_key_path).exists();
-    tracing::info!(client_cert_exists, client_key_exists, "Checking client cert files");
+    tracing::info!(
+        client_cert_exists,
+        client_key_exists,
+        "Checking client cert files"
+    );
 
     if client_cert_exists && client_key_exists {
-        let client_pem = std::fs::read(client_cert_path).map_err(|e| format!("Read client cert: {}", e))?;
-        let key_pem = std::fs::read(client_key_path).map_err(|e| format!("Read client key: {}", e))?;
-        tracing::info!(cert_len = client_pem.len(), key_len = key_pem.len(), "Client cert/key read");
+        let client_pem =
+            std::fs::read(client_cert_path).map_err(|e| format!("Read client cert: {}", e))?;
+        let key_pem =
+            std::fs::read(client_key_path).map_err(|e| format!("Read client key: {}", e))?;
+        tracing::info!(
+            cert_len = client_pem.len(),
+            key_len = key_pem.len(),
+            "Client cert/key read"
+        );
         let mut combined = Vec::new();
         combined.extend_from_slice(&client_pem);
         combined.extend_from_slice(&key_pem);
@@ -1062,6 +1103,6 @@ fn build_agent_http_client(state: &AppState) -> Result<reqwest::Client, String> 
         Err(e) => {
             tracing::error!(error = %e, "Failed to build reqwest client");
             Err(format!("Build client: {}", e))
-        }
+        },
     }
 }

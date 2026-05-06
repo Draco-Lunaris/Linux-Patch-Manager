@@ -263,34 +263,32 @@ async fn run_service_check(
             let detail = if data.healthy {
                 format!(
                     "Service '{}' is {}/{} (enabled: {})",
-                    data.name,
-                    data.active_state,
-                    data.sub_state,
-                    data.enabled_state
+                    data.name, data.active_state, data.sub_state, data.enabled_state
                 )
             } else {
                 format!(
                     "Service '{}' status: {}/{} (unhealthy, enabled: {})",
-                    data.name, data.active_state,
-                    data.sub_state,
-                    data.enabled_state
+                    data.name, data.active_state, data.sub_state, data.enabled_state
                 )
             };
             (data.healthy, detail)
         },
-        Err(AgentClientError::Timeout) => {
-            (false, format!("Agent timed out querying service '{service_name}'"))
-        },
-        Err(AgentClientError::Connect(_)) => {
-            (false, format!("Agent connection refused for service '{service_name}'"))
-        },
+        Err(AgentClientError::Timeout) => (
+            false,
+            format!("Agent timed out querying service '{service_name}'"),
+        ),
+        Err(AgentClientError::Connect(_)) => (
+            false,
+            format!("Agent connection refused for service '{service_name}'"),
+        ),
         Err(AgentClientError::ApiError { code, message }) => {
             // 404, 400, 500 etc. from the agent means the service is unhealthy.
             (false, format!("Agent error [{code}]: {message}"))
         },
-        Err(e) => {
-            (false, format!("Agent error querying service '{service_name}': {e}"))
-        },
+        Err(e) => (
+            false,
+            format!("Agent error querying service '{service_name}': {e}"),
+        ),
     }
 }
 
@@ -300,10 +298,7 @@ async fn run_service_check(
 
 /// Execute an HTTP check by making a GET request to the configured URL.
 /// Supports optional basic auth (decrypted from DB) and substring body matching.
-async fn run_http_check(
-    check: &HealthCheckRow,
-    crypto_key: &[u8; 32],
-) -> (bool, String) {
+async fn run_http_check(check: &HealthCheckRow, crypto_key: &[u8; 32]) -> (bool, String) {
     let url = match &check.url {
         Some(u) => u.clone(),
         None => {
@@ -325,7 +320,9 @@ async fn run_http_check(
             .build()
             .unwrap_or_else(|_| reqwest::Client::new())
     } else {
-        client_builder.build().unwrap_or_else(|_| reqwest::Client::new())
+        client_builder
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new())
     };
 
     // Build the request.
@@ -334,21 +331,22 @@ async fn run_http_check(
     // Add basic auth if configured.
     if let Some(user) = &check.basic_auth_user {
         // Decrypt the password if present.
-        let password = match (&check.basic_auth_pass_encrypted, &check.basic_auth_pass_nonce) {
-            (Some(enc), Some(nonce)) => {
-                match crypto::decrypt(enc, nonce, crypto_key) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        return (
-                            false,
-                            format!("Failed to decrypt basic auth password: {e}"),
-                        );
-                    },
-                }
+        let password = match (
+            &check.basic_auth_pass_encrypted,
+            &check.basic_auth_pass_nonce,
+        ) {
+            (Some(enc), Some(nonce)) => match crypto::decrypt(enc, nonce, crypto_key) {
+                Ok(p) => p,
+                Err(e) => {
+                    return (false, format!("Failed to decrypt basic auth password: {e}"));
+                },
             },
             _ => {
                 // No encrypted password stored — treat as missing credentials.
-                return (false, "HTTP check has basic_auth_user but no encrypted password".to_string());
+                return (
+                    false,
+                    "HTTP check has basic_auth_user but no encrypted password".to_string(),
+                );
             },
         };
         request = request.basic_auth(user.as_str(), Some(password.as_str()));
@@ -382,7 +380,10 @@ async fn run_http_check(
     let body = match response.text().await {
         Ok(b) => b,
         Err(e) => {
-            return (false, format!("HTTP check failed to read response body: {e}"));
+            return (
+                false,
+                format!("HTTP check failed to read response body: {e}"),
+            );
         },
     };
 
@@ -391,14 +392,15 @@ async fn run_http_check(
         if !body.contains(expected) {
             return (
                 false,
-                format!(
-                    "HTTP check body mismatch for {url}: expected substring not found"
-                ),
+                format!("HTTP check body mismatch for {url}: expected substring not found"),
             );
         }
     }
 
-    (true, format!("HTTP check OK for {url} (status {})", status.as_u16()))
+    (
+        true,
+        format!("HTTP check OK for {url} (status {})", status.as_u16()),
+    )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

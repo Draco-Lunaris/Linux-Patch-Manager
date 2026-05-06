@@ -101,7 +101,9 @@ impl AppConfig {
     }
 }
 
-fn default_health_check_poll_interval() -> u64 { 300 }
+fn default_health_check_poll_interval() -> u64 {
+    300
+}
 
 impl Default for AppConfig {
     fn default() -> Self {

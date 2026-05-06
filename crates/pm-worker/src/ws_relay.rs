@@ -19,9 +19,9 @@ use tokio::sync::Mutex;
 use tokio_tungstenite::{connect_async_tls_with_config, tungstenite::protocol::Message, Connector};
 use uuid::Uuid;
 
+use pm_agent_client::client::AgentClient;
 use pm_agent_client::client::DEFAULT_AGENT_PORT;
 use pm_core::config::AppConfig;
-use pm_agent_client::client::AgentClient;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -48,7 +48,7 @@ struct AgentWsEvent {
 /// Payload broadcast via `pg_notify('job_update', …)`.
 #[derive(Debug, Serialize)]
 struct NotifyPayload {
-    event_type: String,  // "host" or "job"
+    event_type: String, // "host" or "job"
     job_id: String,
     host_id: String,
     status: String,
@@ -253,7 +253,6 @@ async fn build_tls_config(config: &AppConfig) -> anyhow::Result<TlsClientConfig>
 
     Ok(config)
 }
-
 
 // ── Per-job relay ─────────────────────────────────────────────────────────────
 
@@ -681,7 +680,7 @@ async fn update_parent_job_status(pool: &PgPool, job_id: Uuid) {
     let payload = NotifyPayload {
         event_type: "job".to_string(),
         job_id: job_id.to_string(),
-        host_id: String::new(),  // no specific host for job-level events
+        host_id: String::new(), // no specific host for job-level events
         status: final_status.to_string(),
         output: None,
         error_message: None,

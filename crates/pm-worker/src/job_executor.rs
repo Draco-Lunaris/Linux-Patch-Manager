@@ -870,7 +870,11 @@ async fn sync_job_status(pool: &PgPool, job_id: Uuid) {
     let new_status: &str;
     let set_completed: bool;
 
-    if counts.running_count > 0 || counts.pending_count > 0 || counts.queued_count > 0 || counts.waiting_health_check_count > 0 {
+    if counts.running_count > 0
+        || counts.pending_count > 0
+        || counts.queued_count > 0
+        || counts.waiting_health_check_count > 0
+    {
         // Still work in flight — keep parent running.
         new_status = "running";
         set_completed = false;
@@ -1009,7 +1013,8 @@ pub async fn retry_pending_jobs(pool: PgPool, config: Arc<AppConfig>) {
         WHERE  pjh.status IN ('pending', 'waiting_health_check')
           AND  pjh.retry_next_at <= NOW()
           AND  j.status != 'cancelled'
-        "#,)
+        "#,
+    )
     .fetch_all(&pool)
     .await
     {

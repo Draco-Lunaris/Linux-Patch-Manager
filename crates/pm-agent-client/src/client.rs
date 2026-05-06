@@ -223,14 +223,17 @@ impl AgentClient {
 
     /// `GET /api/v1/system/services/{name}` — check status of a specific service on the agent.
     #[instrument(skip(self), fields(base_url = %self.base_url, service_name = %service_name))]
-    pub async fn service_status(&self, service_name: &str) -> Result<ServiceStatusData, AgentClientError> {
-        self.get(&format!("system/services/{}", service_name), &[]).await
+    pub async fn service_status(
+        &self,
+        service_name: &str,
+    ) -> Result<ServiceStatusData, AgentClientError> {
+        self.get(&format!("system/services/{}", service_name), &[])
+            .await
     }
 
     // --------------------------------------------------------
     // Private POST helper
     // --------------------------------------------------------
-
 
     /// Execute a POST request against `{base_url}/{path}`, serialize `body` as
     /// JSON, deserialize the [`AgentEnvelope`], and extract the `data` field —

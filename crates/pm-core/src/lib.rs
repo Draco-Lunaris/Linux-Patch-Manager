@@ -9,7 +9,7 @@ pub mod request_id;
 
 // Re-export commonly used types
 pub use config::AppConfig;
-pub use crypto::{CryptoError, KEY_PATH, decrypt, encrypt, load_or_create_key};
+pub use crypto::{decrypt, encrypt, load_or_create_key, CryptoError, KEY_PATH};
 pub use error::{AppError, ErrorResponse};
 pub use models::{
     AuthProvider, CreateGroupRequest, CreateHealthCheckRequest, CreateHostRequest,
