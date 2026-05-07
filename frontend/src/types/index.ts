@@ -53,7 +53,34 @@ export interface User {
   auth_provider: AuthProvider
   mfa_enabled: boolean
   is_active: boolean
+  force_password_reset: boolean
   last_login_at?: string
+}
+
+export interface ChangePasswordRequest {
+  current_password: string
+  new_password: string
+}
+
+export interface AdminResetPasswordRequest {
+  new_password: string
+  force_password_reset?: boolean
+}
+
+export interface UpdateUserRequest {
+  display_name?: string
+  email?: string
+  role?: string
+  is_active?: boolean
+  force_password_reset?: boolean
+}
+
+export interface CreateUserRequest {
+  username: string
+  display_name?: string
+  email: string
+  role: string
+  password: string
 }
 
 export interface FleetStatus {

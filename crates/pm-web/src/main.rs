@@ -161,7 +161,8 @@ pub fn build_router(state: AppState) -> Router {
     // All protected API routes — require valid JWT
     let protected_api = Router::new()
         // Auth: MFA setup/verify
-        .merge(routes::auth::protected_router())
+        // Auth: MFA setup/verify/disable (nested under /auth so paths are /api/v1/auth/mfa/*)
+        .nest("/auth", routes::auth::protected_router())
         // Hosts
         .nest("/hosts", routes::hosts::router())
         // Host-scoped certificate endpoints (merged separately to avoid conflict)

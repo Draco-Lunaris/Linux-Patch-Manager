@@ -15,10 +15,10 @@ use axum::{
     routing::{delete, get, post, put},
     Router,
 };
-use pm_auth::{hash_password, rbac::AuthUser, session::force_logout};
+use pm_auth::{hash_password, rbac::AuthUser, session::force_logout, verify_password};
 use pm_core::{
     audit::{log_event, AuditAction},
-    models::{CreateUserRequest, UpdateUserRequest, User},
+    models::{AdminResetPasswordRequest, ChangePasswordRequest, CreateUserRequest, UpdateUserRequest, User},
 };
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -29,7 +29,10 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_users).post(create_user))
         .route("/me", get(get_current_user))
+        .route("/me/password", put(change_own_password))
         .route("/{id}", get(get_user).put(update_user).delete(delete_user))
+        .route("/{id}/password", put(admin_reset_password))
+        .route("/{id}/mfa", delete(admin_disable_mfa))
         .route("/{id}/revoke", post(revoke_user_sessions))
 }
 
@@ -191,11 +194,11 @@ async fn update_user(
         ));
     }
     // Only admins can change role or active status
-    if (req.role.is_some() || req.is_active.is_some()) && !auth.role.is_admin() {
+    if (req.role.is_some() || req.is_active.is_some() || req.force_password_reset.is_some()) && !auth.role.is_admin() {
         return Err((
             StatusCode::FORBIDDEN,
             Json(
-                json!({ "error": { "code": "forbidden", "message": "Admin role required to change role or status" } }),
+                json!({ "error": { "code": "forbidden", "message": "Admin role required to change role, status, or force_password_reset" } }),
             ),
         ));
     }
@@ -211,13 +214,15 @@ async fn update_user(
                email = COALESCE($2, email),
                role = COALESCE($3::user_role, role),
                is_active = COALESCE($4, is_active),
+               force_password_reset = COALESCE($5, force_password_reset),
                updated_at = NOW()
-           WHERE id = $5"#,
+           WHERE id = $6"#,
     )
     .bind(req.display_name.as_deref())
     .bind(req.email.as_deref())
     .bind(role_str)
     .bind(req.is_active)
+    .bind(req.force_password_reset)
     .bind(id)
     .execute(&state.db)
     .await
@@ -329,4 +334,204 @@ async fn revoke_user_sessions(
     Ok(Json(
         json!({ "message": "Sessions revoked", "count": count }),
     ))
+}
+
+// ============================================================
+// PUT /api/v1/users/me/password — change own password
+// ============================================================
+
+async fn change_own_password(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Json(req): Json<ChangePasswordRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    // Fetch current password hash
+    let hash: Option<String> = sqlx::query_scalar(
+        "SELECT password_hash FROM users WHERE id = $1",
+    )
+    .bind(auth.user_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, "Failed to fetch password hash");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+        )
+    })?
+    .flatten();
+
+    let hash_str = hash.unwrap_or_default();
+    let valid = verify_password(&req.current_password, &hash_str).unwrap_or(false);
+
+    if !valid {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": { "code": "invalid_password", "message": "Current password is incorrect" } })),
+        ));
+    }
+
+    let new_hash = hash_password(&req.new_password).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": e.to_string() } })),
+        )
+    })?;
+
+    sqlx::query(
+        "UPDATE users SET password_hash = $1, force_password_reset = FALSE, updated_at = NOW() WHERE id = $2",
+    )
+    .bind(&new_hash)
+    .bind(auth.user_id)
+    .execute(&state.db)
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, "Failed to update password");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": "Failed to update password" } })),
+        )
+    })?;
+
+    log_event(
+        &state.db,
+        AuditAction::UserUpdated,
+        Some(auth.user_id),
+        Some(&auth.username),
+        Some("user"),
+        Some(&auth.user_id.to_string()),
+        json!({ "action": "password_change" }),
+        None,
+        None,
+    )
+    .await;
+
+    Ok(Json(json!({ "message": "Password changed successfully" })))
+}
+
+// ============================================================
+// PUT /api/v1/users/:id/password — admin reset password
+// ============================================================
+
+async fn admin_reset_password(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(req): Json<AdminResetPasswordRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if !auth.role.is_admin() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } })),
+        ));
+    }
+
+    // Verify target user exists
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)")
+        .bind(id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": e.to_string() } })),
+            )
+        })?;
+
+    if !exists {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": { "code": "not_found", "message": "User not found" } })),
+        ));
+    }
+
+    let new_hash = hash_password(&req.new_password).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": e.to_string() } })),
+        )
+    })?;
+
+    sqlx::query(
+        "UPDATE users SET password_hash = $1, force_password_reset = $2, updated_at = NOW() WHERE id = $3",
+    )
+    .bind(&new_hash)
+    .bind(req.force_password_reset)
+    .bind(id)
+    .execute(&state.db)
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, "Failed to reset password");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": "Failed to reset password" } })),
+        )
+    })?;
+
+    log_event(
+        &state.db,
+        AuditAction::UserUpdated,
+        Some(auth.user_id),
+        Some(&auth.username),
+        Some("user"),
+        Some(&id.to_string()),
+        json!({ "action": "admin_password_reset", "force_password_reset": req.force_password_reset }),
+        None,
+        None,
+    )
+    .await;
+
+    Ok(Json(json!({ "message": "Password reset successfully" })))
+}
+
+// ============================================================
+// DELETE /api/v1/users/:id/mfa — admin disable MFA
+// ============================================================
+
+async fn admin_disable_mfa(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if !auth.role.is_admin() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } })),
+        ));
+    }
+
+    let rows = sqlx::query("UPDATE users SET totp_secret = NULL, mfa_enabled = FALSE, updated_at = NOW() WHERE id = $1")
+        .bind(id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to disable MFA");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": "Failed to disable MFA" } })),
+            )
+        })?
+        .rows_affected();
+
+    if rows == 0 {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": { "code": "not_found", "message": "User not found" } })),
+        ));
+    }
+
+    log_event(
+        &state.db,
+        AuditAction::UserUpdated,
+        Some(auth.user_id),
+        Some(&auth.username),
+        Some("user"),
+        Some(&id.to_string()),
+        json!({ "action": "admin_mfa_disabled" }),
+        None,
+        None,
+    )
+    .await;
+
+    Ok(Json(json!({ "message": "MFA disabled successfully" })))
 }

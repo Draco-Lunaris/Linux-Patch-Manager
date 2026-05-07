@@ -251,6 +251,22 @@ pub struct UpdateUserRequest {
     pub email: Option<String>,
     pub role: Option<String>,
     pub is_active: Option<bool>,
+    pub force_password_reset: Option<bool>,
+}
+
+/// Self-service password change payload
+#[derive(Debug, Deserialize)]
+pub struct ChangePasswordRequest {
+    pub current_password: String,
+    pub new_password: String,
+}
+
+/// Admin password reset payload
+#[derive(Debug, Deserialize)]
+pub struct AdminResetPasswordRequest {
+    pub new_password: String,
+    #[serde(default)]
+    pub force_password_reset: bool,
 }
 
 // ============================================================

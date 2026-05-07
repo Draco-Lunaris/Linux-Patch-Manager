@@ -12,6 +12,11 @@ import type {
   CreateHealthCheckRequest,
   UpdateHealthCheckRequest,
   HealthCheckListResponse,
+  User,
+  ChangePasswordRequest,
+  AdminResetPasswordRequest,
+  UpdateUserRequest,
+  CreateUserRequest,
 } from '../types'
 
 const BASE_URL = '/api/v1'
@@ -290,4 +295,19 @@ export const healthChecksApi = {
 
   test: (hostId: string, checkId: string) =>
     apiClient.post<HealthCheckWithResult>(`/hosts/${hostId}/health-checks/${checkId}/test`),
+}
+
+// ── Users API ──────────────────────────────────────────────────────────────
+export const usersApi = {
+  list: () => apiClient.get<User[]>('/users'),
+  get: (id: string) => apiClient.get<User>(`/users/${id}`),
+  getMe: () => apiClient.get<User>('/users/me'),
+  create: (data: CreateUserRequest) => apiClient.post('/users', data),
+  update: (id: string, data: UpdateUserRequest) => apiClient.put(`/users/${id}`, data),
+  delete: (id: string) => apiClient.delete(`/users/${id}`),
+  revokeSessions: (id: string) => apiClient.post(`/users/${id}/revoke`),
+  changePassword: (data: ChangePasswordRequest) => apiClient.put('/users/me/password', data),
+  adminResetPassword: (id: string, data: AdminResetPasswordRequest) => apiClient.put(`/users/${id}/password`, data),
+  adminDisableMfa: (id: string) => apiClient.delete(`/users/${id}/mfa`),
+  disableMfa: (password: string) => apiClient.delete('/auth/mfa', { data: { password } }),
 }

@@ -24,6 +24,8 @@ pub enum SessionError {
     InvalidCredentials,
     #[error("Account is disabled")]
     AccountDisabled,
+    #[error("Password reset required")]
+    PasswordResetRequired,
     #[error("MFA required")]
     MfaRequired,
     #[error("Invalid MFA code")]
@@ -75,6 +77,7 @@ struct DbUser {
     totp_secret: Option<String>,
     mfa_enabled: bool,
     is_active: bool,
+    force_password_reset: bool,
 }
 
 /// Login request payload.
@@ -107,7 +110,7 @@ pub async fn login(
     let user: Option<DbUser> = sqlx::query_as(
         r#"
         SELECT id, username, display_name, role, auth_provider,
-               password_hash, totp_secret, mfa_enabled, is_active
+               password_hash, totp_secret, mfa_enabled, is_active, force_password_reset
         FROM users
         WHERE username = $1 AND auth_provider = 'local'
         "#,
@@ -139,6 +142,12 @@ pub async fn login(
     if !user.is_active {
         tracing::warn!(username = %req.username, "Login failed: account disabled");
         return Err(SessionError::AccountDisabled);
+    }
+
+    // 3b. Check if password reset is required
+    if user.force_password_reset {
+        tracing::warn!(username = %req.username, "Login blocked: password reset required");
+        return Err(SessionError::PasswordResetRequired);
     }
 
     // 4. MFA check
@@ -207,7 +216,7 @@ pub async fn refresh_session(
     let user: DbUser = sqlx::query_as(
         r#"
         SELECT id, username, display_name, role, auth_provider,
-               password_hash, totp_secret, mfa_enabled, is_active
+               password_hash, totp_secret, mfa_enabled, is_active, force_password_reset
         FROM users WHERE id = $1
         "#,
     )

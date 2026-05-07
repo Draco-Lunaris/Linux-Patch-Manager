@@ -13,7 +13,8 @@ pub use crypto::{decrypt, encrypt, load_or_create_key, CryptoError, KEY_PATH};
 pub use error::{AppError, ErrorResponse};
 pub use models::{
     AuthProvider, CreateGroupRequest, CreateHealthCheckRequest, CreateHostRequest,
-    CreateUserRequest, DiscoveryCidrRequest, DiscoveryResult, Group, HealthCheck,
+    ChangePasswordRequest, AdminResetPasswordRequest, CreateUserRequest,
+    DiscoveryCidrRequest, DiscoveryResult, Group, HealthCheck,
     HealthCheckResult, HealthCheckWithResult, Host, HostHealthStatus, HostSummary,
     RegisterDiscoveredRequest, UpdateGroupRequest, UpdateHealthCheckRequest, UpdateUserRequest,
     User, UserRole as DbUserRole,
