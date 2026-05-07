@@ -14,7 +14,7 @@ use routes::azure_sso::SsoSession;
 use routes::ws::WsTicket;
 use serde_json::{json, Value};
 use std::{net::SocketAddr, sync::Arc, time::Duration};
-use tower_http::{services::ServeDir, trace::TraceLayer};
+use tower_http::{services::{ServeDir, ServeFile}, trace::TraceLayer};
 
 /// Shared application state threaded through Axum.
 #[derive(Clone)]
@@ -212,7 +212,11 @@ pub fn build_router(state: AppState) -> Router {
         // WebSocket browser endpoint — ticket-authenticated, outside JWT middleware
         .merge(routes::ws::ws_router())
         // Serve React SPA
-        .fallback_service(ServeDir::new(&static_dir).append_index_html_on_directories(true))
+        .fallback_service(
+            ServeDir::new(&static_dir)
+                .append_index_html_on_directories(true)
+                .fallback(ServeFile::new(format!("{}/index.html", static_dir))),
+        )
         .layer(middleware::from_fn(request_id_middleware))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
