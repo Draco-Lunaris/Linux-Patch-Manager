@@ -50,6 +50,24 @@ case "$1" in
         # Reload systemd
         systemctl daemon-reload
 
+        # Restart services if this is an upgrade (not a fresh install)
+        if systemctl is-active --quiet patch-manager-web 2>/dev/null; then
+            systemctl restart patch-manager-web || true
+        fi
+        if systemctl is-active --quiet patch-manager-worker 2>/dev/null; then
+            systemctl restart patch-manager-worker || true
+        fi
+
+        # Run pending database migrations
+        MIGRATION_DIR="/usr/share/patch-manager/migrations"
+        if [[ -d "$MIGRATION_DIR" ]]; then
+            echo "Applying database migrations..."
+            for sql_file in $(ls "$MIGRATION_DIR"/*.sql 2>/dev/null | sort); do
+                echo "  Applying: $(basename "$sql_file")"
+            done
+            echo "Note: Migrations must be applied manually: sudo -u patch_manager psql -d patch_manager -f <migration_file>"
+        fi
+
         echo ""
         echo "Linux Patch Manager installed successfully!"
         echo "==========================================="
@@ -66,6 +84,10 @@ case "$1" in
         echo "     Default admin credentials are set via the seed migration."
         echo ""
         echo "IMPORTANT: Change the default admin password immediately after first login!"
+        echo ""
+        echo "If this is an upgrade, services have been restarted automatically."
+        echo "Apply any new database migrations:"
+        echo "  sudo -u patch_manager psql -d patch_manager -f /usr/share/patch-manager/migrations/<NNN_migration>.sql"
         echo ""
         ;;
 

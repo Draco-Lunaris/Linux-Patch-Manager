@@ -85,3 +85,13 @@ The Docker container intercepted some jobs and ran them in its Alpine environmen
 **Pattern:** The git pre-commit and pre-push hooks must run the same checks as the CI pipeline to prevent CI failures.
 **Why:** Initially the hooks only ran `cargo fmt` and `tsc --noEmit`, but CI also runs ESLint. Three ESLint errors (eqeqeq, duplicate imports) slipped through the hooks and failed CI.
 **Action:** Pre-commit hook now runs: cargo fmt --all, ESLint (--max-warnings 0), tsc --noEmit. Pre-push hook verifies the same checks pass before allowing push. Hooks are stored in `scripts/git-hooks/` and installed via `scripts/git-hooks/install.sh`.
+
+## 2026-05-06: Always Restart Services After .deb Installation
+**Pattern:** After installing a .deb package, services must be explicitly restarted. The postinst script only does `systemctl daemon-reload` — it does NOT restart the services.
+**Why:** After `dpkg -i`, the old binary is still running in memory. The new binary on disk is only picked up after `systemctl restart`. This caused health checks to not appear because the v0.1.1 binary was still serving requests despite v0.1.2 being installed.
+**Action:** Always run `systemctl restart patch-manager-web patch-manager-worker` after .deb installation. Also run database migrations if new migrations were added.
+
+## 2026-05-06: debian/control Version Must Match Cargo.toml
+**Pattern:** The debian/control file has a hardcoded `Version: 1.0.0-1` that doesn't match the Cargo.toml version.
+**Why:** When dpkg sees the same version number (1.0.0-1) for both old and new packages, it may not properly replace files. The build-package.sh script updates the version in the control file during build, but this needs to be verified.
+**Action:** Ensure build-package.sh always updates debian/control Version to match Cargo.toml version before building the .deb.
