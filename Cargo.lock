@@ -2206,7 +2206,7 @@ dependencies = [
 
 [[package]]
 name = "pm-agent-client"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2223,7 +2223,7 @@ dependencies = [
 
 [[package]]
 name = "pm-auth"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "argon2",
@@ -2250,7 +2250,7 @@ dependencies = [
 
 [[package]]
 name = "pm-ca"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2273,7 +2273,7 @@ dependencies = [
 
 [[package]]
 name = "pm-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2297,7 +2297,7 @@ dependencies = [
 
 [[package]]
 name = "pm-reports"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2318,7 +2318,7 @@ dependencies = [
 
 [[package]]
 name = "pm-web"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "axum",
@@ -2354,7 +2354,7 @@ dependencies = [
 
 [[package]]
 name = "pm-worker"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "chrono",

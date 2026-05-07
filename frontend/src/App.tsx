@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { CssBaseline, ThemeProvider } from '@mui/material'
 import { darkTheme } from './theme/theme'
 import { useAuthStore } from './store/authStore'
+import { CircularProgress, Box } from '@mui/material'
 import AppLayout from './components/AppLayout'
 import LoginPage from './pages/LoginPage'
 import MfaSetupPage from './pages/MfaSetupPage'
@@ -19,6 +20,16 @@ import SettingsPage from './pages/SettingsPage'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
+  const isRestoring = useAuthStore((s) => s.isRestoring)
+
+  if (isRestoring) {
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <CircularProgress />
+      </Box>
+    )
+  }
+
   return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />
 }
 
