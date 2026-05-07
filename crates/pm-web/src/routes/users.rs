@@ -16,6 +16,7 @@ use axum::{
     Router,
 };
 use pm_auth::{hash_password, rbac::AuthUser, session::force_logout, verify_password};
+use pm_auth::validate_password_strength;
 use pm_core::{
     audit::{log_event, AuditAction},
     models::{AdminResetPasswordRequest, ChangePasswordRequest, CreateUserRequest, UpdateUserRequest, User},
@@ -74,6 +75,14 @@ async fn create_user(
         return Err((
             StatusCode::FORBIDDEN,
             Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } })),
+        ));
+    }
+
+    // Validate password strength
+    if let Err(msg) = validate_password_strength(&req.password) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": { "code": "weak_password", "message": msg } })),
         ));
     }
 
@@ -371,6 +380,14 @@ async fn change_own_password(
         ));
     }
 
+    // Validate new password strength
+    if let Err(msg) = validate_password_strength(&req.new_password) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": { "code": "weak_password", "message": msg } })),
+        ));
+    }
+
     let new_hash = hash_password(&req.new_password).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -442,6 +459,14 @@ async fn admin_reset_password(
         return Err((
             StatusCode::NOT_FOUND,
             Json(json!({ "error": { "code": "not_found", "message": "User not found" } })),
+        ));
+    }
+
+    // Validate new password strength
+    if let Err(msg) = validate_password_strength(&req.new_password) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": { "code": "weak_password", "message": msg } })),
         ));
     }
 

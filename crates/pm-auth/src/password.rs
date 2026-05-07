@@ -67,6 +67,34 @@ pub fn verify_password(password: &str, hash: &str) -> Result<bool, PasswordError
     }
 }
 
+/// Validate password strength against minimum requirements.
+///
+/// Requirements:
+/// - Minimum 8 characters
+/// - At least one uppercase letter
+/// - At least one lowercase letter
+/// - At least one digit
+/// - At least one special character (!@#$%^&*()_+-=[]{}|;:,.<>?)
+pub fn validate_password_strength(password: &str) -> Result<(), String> {
+    if password.len() < 8 {
+        return Err("Password must be at least 8 characters".to_string());
+    }
+    if !password.chars().any(|c| c.is_ascii_uppercase()) {
+        return Err("Password must contain at least one uppercase letter".to_string());
+    }
+    if !password.chars().any(|c| c.is_ascii_lowercase()) {
+        return Err("Password must contain at least one lowercase letter".to_string());
+    }
+    if !password.chars().any(|c| c.is_ascii_digit()) {
+        return Err("Password must contain at least one digit".to_string());
+    }
+    let special_chars = "!@#$%^&*()_+-=[]{}|;:,.<>?";
+    if !password.chars().any(|c| special_chars.contains(c)) {
+        return Err("Password must contain at least one special character (!@#$%^&*()_+-=[]{}|;:,.<>?)".to_string());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

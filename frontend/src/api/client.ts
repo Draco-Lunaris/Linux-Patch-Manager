@@ -101,6 +101,9 @@ export const authApi = {
   logout: (refreshToken: string) =>
     apiClient.post('/auth/logout', { refresh_token: refreshToken }),
 
+  forceChangePassword: (username: string, currentPassword: string, newPassword: string) =>
+    apiClient.post('/auth/force-change-password', { username, current_password: currentPassword, new_password: newPassword }),
+
   getMfaSetup: () =>
     apiClient.get('/auth/mfa/setup'),
 

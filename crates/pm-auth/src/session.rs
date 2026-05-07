@@ -30,6 +30,8 @@ pub enum SessionError {
     MfaRequired,
     #[error("Invalid MFA code")]
     InvalidMfaCode,
+    #[error("Account locked due to too many failed attempts")]
+    AccountLocked,
     #[error("JWT error: {0}")]
     Jwt(#[from] JwtError),
     #[error("Refresh token error: {0}")]
@@ -78,6 +80,8 @@ struct DbUser {
     mfa_enabled: bool,
     is_active: bool,
     force_password_reset: bool,
+    failed_login_attempts: i32,
+    locked_until: Option<chrono::DateTime<Utc>>,
 }
 
 /// Login request payload.
@@ -110,7 +114,8 @@ pub async fn login(
     let user: Option<DbUser> = sqlx::query_as(
         r#"
         SELECT id, username, display_name, role, auth_provider,
-               password_hash, totp_secret, mfa_enabled, is_active, force_password_reset
+               password_hash, totp_secret, mfa_enabled, is_active, force_password_reset,
+               failed_login_attempts, locked_until
         FROM users
         WHERE username = $1 AND auth_provider = 'local'
         "#,
@@ -129,12 +134,43 @@ pub async fn login(
         },
     };
 
+    // 2a. Check if account is locked due to too many failed attempts
+    if let Some(locked_until) = user.locked_until {
+        if locked_until > Utc::now() {
+            tracing::warn!(username = %req.username, "Login blocked: account locked until {}", locked_until);
+            return Err(SessionError::AccountLocked);
+        }
+        // Lockout period has expired — reset counters
+        sqlx::query("UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1")
+            .bind(user.id)
+            .execute(pool)
+            .await?;
+    }
+
     // 2. Verify password
     let hash = user.password_hash.as_deref().unwrap_or("");
     let valid = password::verify_password(&req.password, hash).unwrap_or(false);
 
     if !valid {
-        tracing::warn!(username = %req.username, "Login failed: invalid password");
+        // Increment failed login attempts
+        let new_attempts = user.failed_login_attempts + 1;
+        if new_attempts >= 5 {
+            let lock_until = Utc::now() + chrono::Duration::minutes(30);
+            sqlx::query("UPDATE users SET failed_login_attempts = $1, locked_until = $2 WHERE id = $3")
+                .bind(new_attempts)
+                .bind(lock_until)
+                .bind(user.id)
+                .execute(pool)
+                .await?;
+            tracing::warn!(username = %req.username, "Account locked after {} failed attempts", new_attempts);
+        } else {
+            sqlx::query("UPDATE users SET failed_login_attempts = $1 WHERE id = $2")
+                .bind(new_attempts)
+                .bind(user.id)
+                .execute(pool)
+                .await?;
+        }
+        tracing::warn!(username = %req.username, "Login failed: invalid password (attempt {})", new_attempts);
         return Err(SessionError::InvalidCredentials);
     }
 
@@ -175,7 +211,7 @@ pub async fn login(
     let raw_refresh = refresh::issue(pool, user.id, user_agent, ip_address).await?;
 
     // 6. Update last_login_at
-    sqlx::query("UPDATE users SET last_login_at = $1 WHERE id = $2")
+    sqlx::query("UPDATE users SET last_login_at = $1, failed_login_attempts = 0, locked_until = NULL WHERE id = $2")
         .bind(Utc::now())
         .bind(user.id)
         .execute(pool)
@@ -216,7 +252,8 @@ pub async fn refresh_session(
     let user: DbUser = sqlx::query_as(
         r#"
         SELECT id, username, display_name, role, auth_provider,
-               password_hash, totp_secret, mfa_enabled, is_active, force_password_reset
+               password_hash, totp_secret, mfa_enabled, is_active, force_password_reset,
+               failed_login_attempts, locked_until
         FROM users WHERE id = $1
         "#,
     )

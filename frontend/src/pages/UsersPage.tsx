@@ -5,14 +5,73 @@ import {
   MenuItem, Paper, Select, Switch, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, TextField, Toolbar, Tooltip, Typography,
   Snackbar, Alert, InputAdornment, FormControl, InputLabel,
+  List, ListItem, ListItemIcon, ListItemText,
 } from '@mui/material'
 import {
   Add as AddIcon, Lock as LockIcon, Edit as EditIcon,
   VpnKey as VpnKeyIcon, Delete as DeleteIcon, Search as SearchIcon,
+  Check as CheckIcon, Close as CloseIcon,
 } from '@mui/icons-material'
 import { usersApi } from '../api/client'
 import { useAuthStore } from '../store/authStore'
 import type { User, UpdateUserRequest, AdminResetPasswordRequest } from '../types'
+
+/** Password strength checker */
+function checkPasswordStrength(password: string) {
+  return {
+    length: password.length >= 8,
+    uppercase: /[A-Z]/.test(password),
+    lowercase: /[a-z]/.test(password),
+    digit: /[0-9]/.test(password),
+    special: /[!@#$%^&*()_+\-=\[\]{}|;:,.<>?]/.test(password),
+  }
+}
+
+function isPasswordValid(checks: ReturnType<typeof checkPasswordStrength>) {
+  return checks.length && checks.uppercase && checks.lowercase && checks.digit && checks.special
+}
+
+/** Reusable password strength checklist component */
+function PasswordStrengthIndicator({ password }: { password: string }) {
+  if (!password) return null
+  const checks = checkPasswordStrength(password)
+  return (
+    <Box sx={{ mt: 0.5, mb: 1 }}>
+      <List dense disablePadding>
+        <ListItem disableGutters sx={{ py: 0 }}>
+          <ListItemIcon sx={{ minWidth: 28 }}>
+            {checks.length ? <CheckIcon color="success" fontSize="small" /> : <CloseIcon color="error" fontSize="small" />}
+          </ListItemIcon>
+          <ListItemText primary="At least 8 characters" primaryTypographyProps={{ variant: 'caption' }} />
+        </ListItem>
+        <ListItem disableGutters sx={{ py: 0 }}>
+          <ListItemIcon sx={{ minWidth: 28 }}>
+            {checks.uppercase ? <CheckIcon color="success" fontSize="small" /> : <CloseIcon color="error" fontSize="small" />}
+          </ListItemIcon>
+          <ListItemText primary="At least one uppercase letter" primaryTypographyProps={{ variant: 'caption' }} />
+        </ListItem>
+        <ListItem disableGutters sx={{ py: 0 }}>
+          <ListItemIcon sx={{ minWidth: 28 }}>
+            {checks.lowercase ? <CheckIcon color="success" fontSize="small" /> : <CloseIcon color="error" fontSize="small" />}
+          </ListItemIcon>
+          <ListItemText primary="At least one lowercase letter" primaryTypographyProps={{ variant: 'caption' }} />
+        </ListItem>
+        <ListItem disableGutters sx={{ py: 0 }}>
+          <ListItemIcon sx={{ minWidth: 28 }}>
+            {checks.digit ? <CheckIcon color="success" fontSize="small" /> : <CloseIcon color="error" fontSize="small" />}
+          </ListItemIcon>
+          <ListItemText primary="At least one digit" primaryTypographyProps={{ variant: 'caption' }} />
+        </ListItem>
+        <ListItem disableGutters sx={{ py: 0 }}>
+          <ListItemIcon sx={{ minWidth: 28 }}>
+            {checks.special ? <CheckIcon color="success" fontSize="small" /> : <CloseIcon color="error" fontSize="small" />}
+          </ListItemIcon>
+          <ListItemText primary="At least one special character" primaryTypographyProps={{ variant: 'caption' }} />
+        </ListItem>
+      </List>
+    </Box>
+  )
+}
 
 export default function UsersPage() {
   const currentUser = useAuthStore(s => s.user)
@@ -56,6 +115,10 @@ export default function UsersPage() {
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteUser, setDeleteUser] = useState<User | null>(null)
 
+  const addPwValid = isPasswordValid(checkPasswordStrength(addForm.password))
+  const resetPwValid = isPasswordValid(checkPasswordStrength(resetForm.new_password))
+  const resetPwMismatch = !!(resetForm.confirm_password && resetForm.new_password !== resetForm.confirm_password)
+
   const load = async () => {
     setLoading(true)
     try {
@@ -90,6 +153,10 @@ export default function UsersPage() {
   // ── Handlers ────────────────────────────────────────────────────────────────
 
   const handleCreate = async () => {
+    if (!addPwValid) {
+      showSnack('error', 'Password does not meet strength requirements')
+      return
+    }
     try {
       await usersApi.create(addForm)
       setAddOpen(false)
@@ -142,12 +209,12 @@ export default function UsersPage() {
 
   const handleResetSave = async () => {
     if (!resetUser) return
-    if (resetForm.new_password !== resetForm.confirm_password) {
+    if (resetPwMismatch) {
       showSnack('error', 'Passwords do not match')
       return
     }
-    if (resetForm.new_password.length < 8) {
-      showSnack('error', 'Password must be at least 8 characters')
+    if (!resetPwValid) {
+      showSnack('error', 'Password does not meet strength requirements')
       return
     }
     try {
@@ -326,6 +393,7 @@ export default function UsersPage() {
             value={addForm.password}
             onChange={e => setAddForm({ ...addForm, password: e.target.value })}
             margin="normal" required />
+          <PasswordStrengthIndicator password={addForm.password} />
           <FormControl fullWidth sx={{ mt: 2 }}>
             <InputLabel>Role</InputLabel>
             <Select value={addForm.role} label="Role"
@@ -338,7 +406,7 @@ export default function UsersPage() {
         <DialogActions>
           <Button onClick={() => setAddOpen(false)}>Cancel</Button>
           <Button variant="contained" onClick={handleCreate}
-            disabled={!addForm.username || !addForm.email || !addForm.password}>
+            disabled={!addForm.username || !addForm.email || !addForm.password || !addPwValid}>
             Create
           </Button>
         </DialogActions>
@@ -427,17 +495,14 @@ export default function UsersPage() {
             value={resetForm.new_password}
             onChange={e => setResetForm({ ...resetForm, new_password: e.target.value })}
             margin="normal" required
-            error={resetForm.new_password.length > 0 && resetForm.new_password.length < 8}
-            helperText={resetForm.new_password.length > 0 && resetForm.new_password.length < 8
-              ? 'Minimum 8 characters' : ''}
           />
+          <PasswordStrengthIndicator password={resetForm.new_password} />
           <TextField fullWidth label="Confirm Password" type="password"
             value={resetForm.confirm_password}
             onChange={e => setResetForm({ ...resetForm, confirm_password: e.target.value })}
             margin="normal" required
-            error={resetForm.confirm_password.length > 0 && resetForm.new_password !== resetForm.confirm_password}
-            helperText={resetForm.confirm_password.length > 0 && resetForm.new_password !== resetForm.confirm_password
-              ? 'Passwords do not match' : ''}
+            error={resetPwMismatch}
+            helperText={resetPwMismatch ? 'Passwords do not match' : ''}
           />
           <FormControlLabel
             control={
@@ -453,8 +518,8 @@ export default function UsersPage() {
           <Button variant="contained" color="warning" onClick={handleResetSave}
             disabled={
               !resetForm.new_password ||
-              resetForm.new_password.length < 8 ||
-              resetForm.new_password !== resetForm.confirm_password
+              !resetPwValid ||
+              resetPwMismatch
             }>
             Reset Password
           </Button>

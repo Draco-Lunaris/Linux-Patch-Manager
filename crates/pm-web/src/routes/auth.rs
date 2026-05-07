@@ -21,10 +21,12 @@ use pm_auth::{
     mfa_totp,
     rbac::AuthUser,
     session::{self, LoginRequest, LoginResponse},
-    verify_password,
+    verify_password, hash_password, validate_password_strength,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
+
+use uuid::Uuid;
 
 use crate::AppState;
 
@@ -37,6 +39,7 @@ pub fn public_router() -> Router<AppState> {
         .route("/login", post(login_handler))
         .route("/refresh", post(refresh_handler))
         .route("/logout", post(logout_handler))
+        .route("/force-change-password", post(force_change_password_handler))
 }
 
 // ============================================================
@@ -112,6 +115,11 @@ async fn login_handler(
                 StatusCode::FORBIDDEN,
                 "password_reset_required",
                 "Password reset is required before login",
+            ),
+            SessionError::AccountLocked => (
+                StatusCode::LOCKED,
+                "account_locked",
+                "Account is locked due to too many failed login attempts",
             ),
             _ => {
                 tracing::error!(error = %e, "Login error");
@@ -213,6 +221,93 @@ async fn logout_handler(
 // ============================================================
 // GET /api/v1/auth/mfa/setup  (JWT required — via middleware)
 // ============================================================
+
+// ============================================================
+// POST /api/v1/auth/force-change-password  (PUBLIC — no JWT)
+// ============================================================
+
+#[derive(Debug, Deserialize)]
+struct ForceChangePasswordRequest {
+    username: String,
+    current_password: String,
+    new_password: String,
+}
+
+async fn force_change_password_handler(
+    State(state): State<AppState>,
+    Json(req): Json<ForceChangePasswordRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    // Validate new password strength
+    if let Err(msg) = validate_password_strength(&req.new_password) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": { "code": "weak_password", "message": msg } })),
+        ));
+    }
+
+    // Look up user by username
+    let row: Option<(Uuid, Option<String>, bool)> = sqlx::query_as(
+        "SELECT id, password_hash, force_password_reset FROM users WHERE username = $1 AND auth_provider = 'local'",
+    )
+    .bind(&req.username)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, "Failed to fetch user");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+        )
+    })?;
+
+    let (user_id, hash_opt, _force_reset) = match row {
+        Some(r) => r,
+        None => {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(json!({ "error": { "code": "invalid_credentials", "message": "Invalid username or password" } })),
+            ));
+        }
+    };
+
+    // Verify current password
+    let hash_str = hash_opt.as_deref().unwrap_or("");
+    let valid = verify_password(&req.current_password, hash_str).unwrap_or(false);
+
+    if !valid {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": { "code": "invalid_credentials", "message": "Invalid username or password" } })),
+        ));
+    }
+
+    // Hash and update password, clear force_password_reset
+    let new_hash = hash_password(&req.new_password).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": e.to_string() } })),
+        )
+    })?;
+
+    sqlx::query(
+        "UPDATE users SET password_hash = $1, force_password_reset = FALSE, failed_login_attempts = 0, locked_until = NULL, updated_at = NOW() WHERE id = $2",
+    )
+    .bind(&new_hash)
+    .bind(user_id)
+    .execute(&state.db)
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, "Failed to update password");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": "Failed to update password" } })),
+        )
+    })?;
+
+    tracing::info!(user_id = %user_id, username = %req.username, "Password changed via force-change-password");
+
+    Ok(Json(json!({ "message": "Password changed successfully" })))
+}
 
 async fn mfa_setup_handler(
     auth_user: AuthUser,

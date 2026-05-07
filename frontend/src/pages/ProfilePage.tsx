@@ -4,6 +4,7 @@ import {
   Box, Button, Card, CardContent, Chip, Container, Dialog,
   DialogActions, DialogContent, DialogTitle, Snackbar,
   Alert, TextField, Typography, InputAdornment, IconButton,
+  List, ListItem, ListItemIcon, ListItemText,
 } from '@mui/material'
 import {
   Person as PersonIcon,
@@ -11,10 +12,26 @@ import {
   Visibility, VisibilityOff,
   VpnKey as MfaIcon,
   Save as SaveIcon,
+  Check as CheckIcon, Close as CloseIcon,
 } from '@mui/icons-material'
 import { useAuthStore } from '../store/authStore'
 import { usersApi } from '../api/client'
 import type { User } from '../types'
+
+/** Password strength checker */
+function checkPasswordStrength(password: string) {
+  return {
+    length: password.length >= 8,
+    uppercase: /[A-Z]/.test(password),
+    lowercase: /[a-z]/.test(password),
+    digit: /[0-9]/.test(password),
+    special: /[!@#$%^&*()_+\-=\[\]{}|;:,.<>?]/.test(password),
+  }
+}
+
+function isPasswordValid(checks: ReturnType<typeof checkPasswordStrength>) {
+  return checks.length && checks.uppercase && checks.lowercase && checks.digit && checks.special
+}
 
 export default function ProfilePage() {
   const navigate = useNavigate()
@@ -48,6 +65,10 @@ export default function ProfilePage() {
 
   const showSnack = (severity: 'success' | 'error', message: string) =>
     setSnack({ open: true, severity, message })
+
+  const pwChecks = checkPasswordStrength(newPw)
+  const pwValid = isPasswordValid(pwChecks)
+  const pwMismatch = !!(newPw && confirmPw && newPw !== confirmPw)
 
   // ── Load current user on mount ──────────────────────────────────────────
   useEffect(() => {
@@ -85,6 +106,10 @@ export default function ProfilePage() {
   const handleChangePassword = async () => {
     if (newPw !== confirmPw) {
       showSnack('error', 'New passwords do not match')
+      return
+    }
+    if (!pwValid) {
+      showSnack('error', 'Password does not meet strength requirements')
       return
     }
     setChangingPw(true)
@@ -126,8 +151,6 @@ export default function ProfilePage() {
       </Container>
     )
   }
-
-  const pwMismatch = !!(newPw && confirmPw && newPw !== confirmPw)
 
   return (
     <Container maxWidth="md" sx={{ mt: 3 }}>
@@ -217,6 +240,42 @@ export default function ProfilePage() {
                 ),
               }}
             />
+            {newPw && (
+              <Box sx={{ mt: -1, mb: 0 }}>
+                <List dense disablePadding>
+                  <ListItem disableGutters sx={{ py: 0 }}>
+                    <ListItemIcon sx={{ minWidth: 28 }}>
+                      {pwChecks.length ? <CheckIcon color="success" fontSize="small" /> : <CloseIcon color="error" fontSize="small" />}
+                    </ListItemIcon>
+                    <ListItemText primary="At least 8 characters" primaryTypographyProps={{ variant: 'caption' }} />
+                  </ListItem>
+                  <ListItem disableGutters sx={{ py: 0 }}>
+                    <ListItemIcon sx={{ minWidth: 28 }}>
+                      {pwChecks.uppercase ? <CheckIcon color="success" fontSize="small" /> : <CloseIcon color="error" fontSize="small" />}
+                    </ListItemIcon>
+                    <ListItemText primary="At least one uppercase letter" primaryTypographyProps={{ variant: 'caption' }} />
+                  </ListItem>
+                  <ListItem disableGutters sx={{ py: 0 }}>
+                    <ListItemIcon sx={{ minWidth: 28 }}>
+                      {pwChecks.lowercase ? <CheckIcon color="success" fontSize="small" /> : <CloseIcon color="error" fontSize="small" />}
+                    </ListItemIcon>
+                    <ListItemText primary="At least one lowercase letter" primaryTypographyProps={{ variant: 'caption' }} />
+                  </ListItem>
+                  <ListItem disableGutters sx={{ py: 0 }}>
+                    <ListItemIcon sx={{ minWidth: 28 }}>
+                      {pwChecks.digit ? <CheckIcon color="success" fontSize="small" /> : <CloseIcon color="error" fontSize="small" />}
+                    </ListItemIcon>
+                    <ListItemText primary="At least one digit" primaryTypographyProps={{ variant: 'caption' }} />
+                  </ListItem>
+                  <ListItem disableGutters sx={{ py: 0 }}>
+                    <ListItemIcon sx={{ minWidth: 28 }}>
+                      {pwChecks.special ? <CheckIcon color="success" fontSize="small" /> : <CloseIcon color="error" fontSize="small" />}
+                    </ListItemIcon>
+                    <ListItemText primary="At least one special character" primaryTypographyProps={{ variant: 'caption' }} />
+                  </ListItem>
+                </List>
+              </Box>
+            )}
             <TextField
               label="Confirm New Password"
               type={showConfirmPw ? 'text' : 'password'}
@@ -239,7 +298,7 @@ export default function ProfilePage() {
             <Button
               variant="contained"
               onClick={handleChangePassword}
-              disabled={changingPw || !currentPw || !newPw || !confirmPw || !!pwMismatch}
+              disabled={changingPw || !currentPw || !newPw || !confirmPw || !!pwMismatch || !pwValid}
             >
               {changingPw ? 'Changing…' : 'Change Password'}
             </Button>

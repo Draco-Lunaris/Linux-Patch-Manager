@@ -2,7 +2,10 @@ import React, { useEffect, useState } from 'react'
 import {
   Box, Button, Container, TextField, Typography,
   Alert, CircularProgress, Paper, Stepper, Step, StepLabel,
+  IconButton, Tooltip, Snackbar,
 } from '@mui/material'
+import { ContentCopy as CopyIcon } from '@mui/icons-material'
+import QRCode from 'qrcode'
 import { authApi } from '../api/client'
 
 const STEPS = ['Get your QR code', 'Verify code', 'Done']
@@ -13,12 +16,34 @@ export default function MfaSetupPage() {
   const [code, setCode] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     authApi.getMfaSetup()
-      .then((res) => setSetup(res.data))
+      .then((res) => {
+        setSetup(res.data)
+        // Generate QR code from otpauth URI
+        if (res.data.otp_uri) {
+          QRCode.toDataURL(res.data.otp_uri, {
+            width: 256,
+            margin: 2,
+            color: { dark: '#000000', light: '#ffffff' },
+          })
+            .then((url) => setQrDataUrl(url))
+            .catch(() => setError('Failed to generate QR code.'))
+        }
+      })
       .catch(() => setError('Failed to load MFA setup.'))
   }, [])
+
+  const handleCopySecret = () => {
+    if (setup?.secret_base32) {
+      navigator.clipboard.writeText(setup.secret_base32)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
+  }
 
   const handleVerify = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -48,14 +73,46 @@ export default function MfaSetupPage() {
         {step === 0 && setup && (
           <Box>
             <Typography mb={2}>
-              Scan this URI in your authenticator app or enter the secret manually:
+              Scan this QR code in your authenticator app:
             </Typography>
-            <Typography variant="body2" sx={{ fontFamily: 'monospace', wordBreak: 'break-all', mb: 2, p: 1, bgcolor: 'grey.100', borderRadius: 1 }}>
-              {setup.otp_uri}
+            {qrDataUrl ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}>
+                <img
+                  src={qrDataUrl}
+                  alt="MFA QR Code"
+                  width={256}
+                  height={256}
+                  style={{ imageRendering: 'pixelated' }}
+                />
+              </Box>
+            ) : (
+              <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}>
+                <CircularProgress />
+              </Box>
+            )}
+            <Typography variant="caption" color="text.secondary" display="block" mb={1}>
+              If you can't scan the QR code, enter the secret manually:
             </Typography>
-            <Typography variant="caption" color="text.secondary" display="block" mb={3}>
-              Manual entry secret: <strong>{setup.secret_base32}</strong>
-            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 3 }}>
+              <Typography
+                variant="body2"
+                sx={{
+                  fontFamily: 'monospace',
+                  wordBreak: 'break-all',
+                  p: 1,
+                  bgcolor: 'grey.100',
+                  borderRadius: 1,
+                  flexGrow: 1,
+                }}
+              >
+                {setup.secret_base32}
+              </Typography>
+              <Tooltip title={copied ? 'Copied!' : 'Copy Secret'}>
+                <IconButton onClick={handleCopySecret} color={copied ? 'success' : 'default'}>
+                  <CopyIcon />
+                </IconButton>
+              </Tooltip>
+            </Box>
             <Button variant="contained" onClick={() => setStep(1)}>Continue</Button>
           </Box>
         )}
@@ -81,6 +138,15 @@ export default function MfaSetupPage() {
           </Alert>
         )}
       </Paper>
+
+      <Snackbar
+        open={copied}
+        autoHideDuration={2000}
+        onClose={() => setCopied(false)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert severity="success" variant="filled">Secret copied to clipboard</Alert>
+      </Snackbar>
     </Container>
   )
 }
