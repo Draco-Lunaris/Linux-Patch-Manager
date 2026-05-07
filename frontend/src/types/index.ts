@@ -171,6 +171,7 @@ export interface MaintenanceWindow {
   /** 0-6 for weekly (0=Sun), 1-31 for monthly, null for once/daily */
   recurrence_day?: number | null
   enabled: boolean
+  auto_apply: boolean
   created_at: string
   updated_at: string
 }
@@ -182,6 +183,7 @@ export interface CreateMaintenanceWindowRequest {
   duration_minutes?: number
   recurrence_day?: number | null
   enabled?: boolean
+  auto_apply?: boolean
 }
 
 export interface UpdateMaintenanceWindowRequest {
@@ -191,6 +193,7 @@ export interface UpdateMaintenanceWindowRequest {
   duration_minutes?: number
   recurrence_day?: number | null
   enabled?: boolean
+  auto_apply?: boolean
 }
 
 // ── WebSocket event types (M7) ────────────────────────────────────────────────

@@ -131,6 +131,7 @@ export default function UsersPage() {
     }
   }
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load() }, [])
 
   // Filtered users

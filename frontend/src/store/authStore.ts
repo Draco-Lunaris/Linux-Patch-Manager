@@ -35,7 +35,7 @@ export const useAuthStore = create<AuthState>()(
       restoreSession: async () => {
         const { refreshToken } = get()
         if (!refreshToken) {
-          console.log('[auth] No refresh token found, skipping restoration')
+          console.warn('[auth] No refresh token found, skipping restoration')
           set({ isRestoring: false })
           return
         }
@@ -46,7 +46,7 @@ export const useAuthStore = create<AuthState>()(
             { refresh_token: refreshToken },
             { timeout: 10000 }
           )
-          console.log('[auth] Token refresh successful')
+          console.warn('[auth] Token refresh successful')
           set({
             accessToken: data.access_token,
             refreshToken: data.refresh_token,

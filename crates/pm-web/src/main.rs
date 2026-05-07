@@ -14,7 +14,10 @@ use routes::azure_sso::SsoSession;
 use routes::ws::WsTicket;
 use serde_json::{json, Value};
 use std::{net::SocketAddr, sync::Arc, time::Duration};
-use tower_http::{services::{ServeDir, ServeFile}, trace::TraceLayer};
+use tower_http::{
+    services::{ServeDir, ServeFile},
+    trace::TraceLayer,
+};
 
 /// Shared application state threaded through Axum.
 #[derive(Clone)]

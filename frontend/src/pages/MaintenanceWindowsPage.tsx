@@ -104,6 +104,7 @@ interface FormValues {
   duration_minutes: number
   recurrence_day: number | ''
   enabled: boolean
+  auto_apply: boolean
 }
 
 function defaultForm(): FormValues {
@@ -114,6 +115,7 @@ function defaultForm(): FormValues {
     duration_minutes: 60,
     recurrence_day: '',
     enabled: true,
+    auto_apply: true,
   }
 }
 
@@ -242,6 +244,18 @@ function WindowFormDialog({ open, title, initial, onClose, onSubmit }: WindowFor
           }
           label="Enabled"
         />
+        <FormControlLabel
+          control={
+            <Switch
+              checked={form.auto_apply}
+              onChange={e => set('auto_apply', e.target.checked)}
+            />
+          }
+          label="Auto-Apply Patches"
+        />
+        <Typography variant="caption" color="text.secondary" sx={{ mt: -1 }}>
+          When enabled, pending patches are automatically applied during this window.
+        </Typography>
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose} disabled={saving}>Cancel</Button>
@@ -346,6 +360,7 @@ function HostWindowsTable({ host, windows, onEdit, onDelete, onAdd }: HostWindow
               <TableCell>Schedule</TableCell>
               <TableCell>Recurrence</TableCell>
               <TableCell>Status</TableCell>
+              <TableCell>Auto-Apply</TableCell>
               <TableCell>Created</TableCell>
               <TableCell align="right">Actions</TableCell>
             </TableRow>
@@ -368,6 +383,13 @@ function HostWindowsTable({ host, windows, onEdit, onDelete, onAdd }: HostWindow
                   <Chip
                     label={w.enabled ? 'Enabled' : 'Disabled'}
                     color={w.enabled ? 'success' : 'default'}
+                    size="small"
+                  />
+                </TableCell>
+                <TableCell>
+                  <Chip
+                    label={w.auto_apply ? 'On' : 'Off'}
+                    color={w.auto_apply ? 'info' : 'default'}
                     size="small"
                   />
                 </TableCell>
@@ -468,6 +490,7 @@ export default function MaintenanceWindowsPage() {
       duration_minutes: values.duration_minutes,
       recurrence_day: values.recurrence_day === '' ? undefined : values.recurrence_day,
       enabled: values.enabled,
+      auto_apply: values.auto_apply,
     })
     setCreateOpen(false)
     showSnackbar('Maintenance window created', 'success')
@@ -484,6 +507,7 @@ export default function MaintenanceWindowsPage() {
       duration_minutes: w.duration_minutes,
       recurrence_day: w.recurrence_day ?? '',
       enabled: w.enabled,
+      auto_apply: w.auto_apply,
     })
     setEditOpen(true)
   }
@@ -497,6 +521,7 @@ export default function MaintenanceWindowsPage() {
       duration_minutes: values.duration_minutes,
       recurrence_day: values.recurrence_day === '' ? undefined : values.recurrence_day,
       enabled: values.enabled,
+      auto_apply: values.auto_apply,
     })
     setEditOpen(false)
     showSnackbar('Maintenance window updated', 'success')

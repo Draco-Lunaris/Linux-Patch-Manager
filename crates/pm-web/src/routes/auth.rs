@@ -13,15 +13,15 @@ use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
     response::Json,
-    routing::{get, post},
     routing::delete,
+    routing::{get, post},
     Router,
 };
 use pm_auth::{
-    mfa_totp,
+    hash_password, mfa_totp,
     rbac::AuthUser,
     session::{self, LoginRequest, LoginResponse},
-    verify_password, hash_password, validate_password_strength,
+    validate_password_strength, verify_password,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -39,7 +39,10 @@ pub fn public_router() -> Router<AppState> {
         .route("/login", post(login_handler))
         .route("/refresh", post(refresh_handler))
         .route("/logout", post(logout_handler))
-        .route("/force-change-password", post(force_change_password_handler))
+        .route(
+            "/force-change-password",
+            post(force_change_password_handler),
+        )
 }
 
 // ============================================================
@@ -265,9 +268,11 @@ async fn force_change_password_handler(
         None => {
             return Err((
                 StatusCode::UNAUTHORIZED,
-                Json(json!({ "error": { "code": "invalid_credentials", "message": "Invalid username or password" } })),
+                Json(
+                    json!({ "error": { "code": "invalid_credentials", "message": "Invalid username or password" } }),
+                ),
             ));
-        }
+        },
     };
 
     // Verify current password
@@ -277,7 +282,9 @@ async fn force_change_password_handler(
     if !valid {
         return Err((
             StatusCode::UNAUTHORIZED,
-            Json(json!({ "error": { "code": "invalid_credentials", "message": "Invalid username or password" } })),
+            Json(
+                json!({ "error": { "code": "invalid_credentials", "message": "Invalid username or password" } }),
+            ),
         ));
     }
 
@@ -385,20 +392,18 @@ async fn disable_mfa(
     Json(req): Json<DisableMfaRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     // Verify current password to confirm identity
-    let hash: Option<String> = sqlx::query_scalar(
-        "SELECT password_hash FROM users WHERE id = $1",
-    )
-    .bind(auth_user.user_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| {
-        tracing::error!(error = %e, "Failed to fetch password hash");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
-        )
-    })?
-    .flatten();
+    let hash: Option<String> = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
+        .bind(auth_user.user_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to fetch password hash");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+            )
+        })?
+        .flatten();
 
     let hash_str = hash.unwrap_or_default();
     let valid = verify_password(&req.password, &hash_str).unwrap_or(false);
@@ -406,7 +411,9 @@ async fn disable_mfa(
     if !valid {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": { "code": "invalid_password", "message": "Current password is incorrect" } })),
+            Json(
+                json!({ "error": { "code": "invalid_password", "message": "Current password is incorrect" } }),
+            ),
         ));
     }
 

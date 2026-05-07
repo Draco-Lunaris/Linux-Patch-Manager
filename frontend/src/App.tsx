@@ -61,12 +61,12 @@ function AuthRestorer({ children }: { children: React.ReactNode }) {
 
     // Only call restoreSession AFTER Zustand has rehydrated the persisted state
     if (useAuthStore.persist.hasHydrated()) {
-      console.log('[auth] Store already hydrated, restoring session')
+      console.warn('[auth] Store already hydrated, restoring session')
       doRestore()
     } else {
-      console.log('[auth] Waiting for Zustand hydration...')
+      console.warn('[auth] Waiting for Zustand hydration...')
       unsub = useAuthStore.persist.onFinishHydration(() => {
-        console.log('[auth] Hydration complete, restoring session')
+        console.warn('[auth] Hydration complete, restoring session')
         doRestore()
       })
     }

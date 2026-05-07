@@ -74,7 +74,7 @@ async fn list_windows(
     let windows: Vec<MaintenanceWindow> = sqlx::query_as(
         r#"
         SELECT id, host_id, label, recurrence, start_at, duration_minutes,
-               recurrence_day, enabled, created_at, updated_at
+               recurrence_day, enabled, auto_apply, created_at, updated_at
         FROM   maintenance_windows
         WHERE  host_id = $1
         ORDER  BY created_at ASC
@@ -151,15 +151,16 @@ async fn create_window(
 
     let duration = req.duration_minutes.unwrap_or(60);
     let enabled = req.enabled.unwrap_or(true);
+    let auto_apply = req.auto_apply.unwrap_or(true);
 
     let window: MaintenanceWindow = sqlx::query_as(
         r#"
         INSERT INTO maintenance_windows
-            (host_id, label, recurrence, start_at, duration_minutes, recurrence_day, enabled)
+            (host_id, label, recurrence, start_at, duration_minutes, recurrence_day, enabled, auto_apply)
         VALUES
-            ($1, $2, $3, $4, $5, $6, $7)
+            ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING id, host_id, label, recurrence, start_at, duration_minutes,
-                  recurrence_day, enabled, created_at, updated_at
+                  recurrence_day, enabled, auto_apply, created_at, updated_at
         "#,
     )
     .bind(host_id)
@@ -169,6 +170,7 @@ async fn create_window(
     .bind(duration)
     .bind(req.recurrence_day)
     .bind(enabled)
+    .bind(auto_apply)
     .fetch_one(&state.db)
     .await
     .map_err(|e| {
@@ -220,7 +222,7 @@ async fn update_window(
     let existing: Option<MaintenanceWindow> = sqlx::query_as(
         r#"
         SELECT id, host_id, label, recurrence, start_at, duration_minutes,
-               recurrence_day, enabled, created_at, updated_at
+               recurrence_day, enabled, auto_apply, created_at, updated_at
         FROM   maintenance_windows
         WHERE  id = $1 AND host_id = $2
         "#,
@@ -253,6 +255,7 @@ async fn update_window(
     let new_duration = req.duration_minutes.unwrap_or(existing.duration_minutes);
     let new_rec_day = req.recurrence_day.or(existing.recurrence_day);
     let new_enabled = req.enabled.unwrap_or(existing.enabled);
+    let new_auto_apply = req.auto_apply.unwrap_or(existing.auto_apply);
 
     // Validate recurrence_day for the final recurrence type.
     if new_recurrence == pm_core::models::WindowRecurrence::Weekly {
@@ -289,10 +292,11 @@ async fn update_window(
                duration_minutes = $6,
                recurrence_day = $7,
                enabled        = $8,
+               auto_apply     = $9,
                updated_at     = NOW()
         WHERE  id = $1 AND host_id = $2
         RETURNING id, host_id, label, recurrence, start_at, duration_minutes,
-                  recurrence_day, enabled, created_at, updated_at
+                  recurrence_day, enabled, auto_apply, created_at, updated_at
         "#,
     )
     .bind(win_id)
@@ -303,6 +307,7 @@ async fn update_window(
     .bind(new_duration)
     .bind(new_rec_day)
     .bind(new_enabled)
+    .bind(new_auto_apply)
     .fetch_one(&state.db)
     .await
     .map_err(|e| {

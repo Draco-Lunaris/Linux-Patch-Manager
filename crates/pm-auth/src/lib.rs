@@ -19,7 +19,7 @@ pub mod session;
 
 // Commonly re-exported types
 pub use jwt::{AccessClaims, JwtError};
-pub use password::{hash_password, verify_password, PasswordError};
 pub use password::validate_password_strength;
+pub use password::{hash_password, verify_password, PasswordError};
 pub use rbac::{AuthConfig, AuthUser, UserRole};
 pub use session::{LoginRequest, LoginResponse, SessionError, SessionUser};

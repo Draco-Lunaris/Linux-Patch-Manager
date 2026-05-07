@@ -90,7 +90,10 @@ pub fn validate_password_strength(password: &str) -> Result<(), String> {
     }
     let special_chars = "!@#$%^&*()_+-=[]{}|;:,.<>?";
     if !password.chars().any(|c| special_chars.contains(c)) {
-        return Err("Password must contain at least one special character (!@#$%^&*()_+-=[]{}|;:,.<>?)".to_string());
+        return Err(
+            "Password must contain at least one special character (!@#$%^&*()_+-=[]{}|;:,.<>?)"
+                .to_string(),
+        );
     }
     Ok(())
 }

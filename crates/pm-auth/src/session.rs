@@ -141,10 +141,12 @@ pub async fn login(
             return Err(SessionError::AccountLocked);
         }
         // Lockout period has expired — reset counters
-        sqlx::query("UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1")
-            .bind(user.id)
-            .execute(pool)
-            .await?;
+        sqlx::query(
+            "UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1",
+        )
+        .bind(user.id)
+        .execute(pool)
+        .await?;
     }
 
     // 2. Verify password
@@ -156,12 +158,14 @@ pub async fn login(
         let new_attempts = user.failed_login_attempts + 1;
         if new_attempts >= 5 {
             let lock_until = Utc::now() + chrono::Duration::minutes(30);
-            sqlx::query("UPDATE users SET failed_login_attempts = $1, locked_until = $2 WHERE id = $3")
-                .bind(new_attempts)
-                .bind(lock_until)
-                .bind(user.id)
-                .execute(pool)
-                .await?;
+            sqlx::query(
+                "UPDATE users SET failed_login_attempts = $1, locked_until = $2 WHERE id = $3",
+            )
+            .bind(new_attempts)
+            .bind(lock_until)
+            .bind(user.id)
+            .execute(pool)
+            .await?;
             tracing::warn!(username = %req.username, "Account locked after {} failed attempts", new_attempts);
         } else {
             sqlx::query("UPDATE users SET failed_login_attempts = $1 WHERE id = $2")

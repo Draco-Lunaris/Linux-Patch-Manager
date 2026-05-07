@@ -15,11 +15,14 @@ use axum::{
     routing::{delete, get, post, put},
     Router,
 };
-use pm_auth::{hash_password, rbac::AuthUser, session::force_logout, verify_password};
 use pm_auth::validate_password_strength;
+use pm_auth::{hash_password, rbac::AuthUser, session::force_logout, verify_password};
 use pm_core::{
     audit::{log_event, AuditAction},
-    models::{AdminResetPasswordRequest, ChangePasswordRequest, CreateUserRequest, UpdateUserRequest, User},
+    models::{
+        AdminResetPasswordRequest, ChangePasswordRequest, CreateUserRequest, UpdateUserRequest,
+        User,
+    },
 };
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -203,7 +206,9 @@ async fn update_user(
         ));
     }
     // Only admins can change role or active status
-    if (req.role.is_some() || req.is_active.is_some() || req.force_password_reset.is_some()) && !auth.role.is_admin() {
+    if (req.role.is_some() || req.is_active.is_some() || req.force_password_reset.is_some())
+        && !auth.role.is_admin()
+    {
         return Err((
             StatusCode::FORBIDDEN,
             Json(
@@ -355,20 +360,18 @@ async fn change_own_password(
     Json(req): Json<ChangePasswordRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     // Fetch current password hash
-    let hash: Option<String> = sqlx::query_scalar(
-        "SELECT password_hash FROM users WHERE id = $1",
-    )
-    .bind(auth.user_id)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| {
-        tracing::error!(error = %e, "Failed to fetch password hash");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
-        )
-    })?
-    .flatten();
+    let hash: Option<String> = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
+        .bind(auth.user_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to fetch password hash");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+            )
+        })?
+        .flatten();
 
     let hash_str = hash.unwrap_or_default();
     let valid = verify_password(&req.current_password, &hash_str).unwrap_or(false);
@@ -376,7 +379,9 @@ async fn change_own_password(
     if !valid {
         return Err((
             StatusCode::BAD_REQUEST,
-            Json(json!({ "error": { "code": "invalid_password", "message": "Current password is incorrect" } })),
+            Json(
+                json!({ "error": { "code": "invalid_password", "message": "Current password is incorrect" } }),
+            ),
         ));
     }
 

@@ -457,6 +457,7 @@ pub struct MaintenanceWindow {
     /// Day-of-week (0=Sun, weekly) or day-of-month (1-31, monthly); NULL for once/daily.
     pub recurrence_day: Option<i32>,
     pub enabled: bool,
+    pub auto_apply: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -474,6 +475,8 @@ pub struct CreateMaintenanceWindowRequest {
     pub recurrence_day: Option<i32>,
     /// Whether the window is active (default true).
     pub enabled: Option<bool>,
+    /// Whether to auto-create a patch_apply job when this window opens and patches are pending (default true).
+    pub auto_apply: Option<bool>,
 }
 
 /// Payload for `PUT /api/v1/hosts/{id}/maintenance-windows/{window_id}`.
@@ -485,4 +488,5 @@ pub struct UpdateMaintenanceWindowRequest {
     pub duration_minutes: Option<i32>,
     pub recurrence_day: Option<i32>,
     pub enabled: Option<bool>,
+    pub auto_apply: Option<bool>,
 }
