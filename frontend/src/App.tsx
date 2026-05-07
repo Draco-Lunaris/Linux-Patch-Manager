@@ -17,6 +17,7 @@ import MaintenanceWindowsPage from './pages/MaintenanceWindowsPage'
 import CertificatesPage from './pages/CertificatesPage'
 import ReportsPage from './pages/ReportsPage'
 import SettingsPage from './pages/SettingsPage'
+import ProfilePage from './pages/ProfilePage'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
@@ -104,6 +105,7 @@ function App() {
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/certificates" element={<CertificatesPage />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/profile" element={<ProfilePage />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/dashboard" replace />} />

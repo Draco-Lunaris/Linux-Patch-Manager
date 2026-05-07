@@ -189,6 +189,10 @@ export default function AppLayout() {
               <ListItemText primary={user?.display_name || user?.username} secondary={user?.role} />
             </MenuItem>
             <Divider />
+            <MenuItem onClick={() => { handleMenuClose(); navigate('/profile') }}>
+              <ListItemIcon><PersonIcon fontSize="small" /></ListItemIcon>
+              <ListItemText primary="My Profile" />
+            </MenuItem>
             <MenuItem onClick={handleLogout}>
               <ListItemIcon><LogoutIcon fontSize="small" /></ListItemIcon>
               <ListItemText primary="Sign out" />
