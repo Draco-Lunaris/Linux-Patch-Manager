@@ -12,11 +12,12 @@ interface AuthState {
   setTokens: (access: string, refresh: string) => void
   setUser: (user: User) => void
   logout: () => void
+  restoreSession: () => Promise<void>
 }
 
 export const useAuthStore = create<AuthState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       accessToken: null,
       refreshToken: null,
       user: null,
@@ -30,40 +31,47 @@ export const useAuthStore = create<AuthState>()(
 
       logout: () =>
         set({ accessToken: null, refreshToken: null, user: null, isAuthenticated: false, isRestoring: false }),
+
+      restoreSession: async () => {
+        const { refreshToken } = get()
+        if (!refreshToken) {
+          console.log('[auth] No refresh token found, skipping restoration')
+          set({ isRestoring: false })
+          return
+        }
+
+        try {
+          const { data } = await axios.post(
+            '/api/v1/auth/refresh',
+            { refresh_token: refreshToken },
+            { timeout: 10000 }
+          )
+          console.log('[auth] Token refresh successful')
+          set({
+            accessToken: data.access_token,
+            refreshToken: data.refresh_token,
+            user: data.user ?? get().user,
+            isAuthenticated: true,
+            isRestoring: false,
+          })
+        } catch (err: unknown) {
+          const status = (err as { response?: { status?: number } })?.response?.status
+          const message = (err as Error)?.message
+          console.warn('[auth] Token refresh failed:', status, message)
+          set({
+            accessToken: null,
+            refreshToken: null,
+            user: null,
+            isAuthenticated: false,
+            isRestoring: false,
+          })
+        }
+      },
     }),
     {
       name: 'pm-auth',
       // Only persist refresh token; access token regenerated on load
       partialize: (state) => ({ refreshToken: state.refreshToken, user: state.user }),
-      onRehydrateStorage: () => {
-        return (state) => {
-          if (state?.refreshToken) {
-            // Proactively refresh the access token using the persisted refresh token
-            axios.post('/api/v1/auth/refresh', { refresh_token: state.refreshToken })
-              .then(({ data }) => {
-                useAuthStore.setState({
-                  accessToken: data.access_token,
-                  refreshToken: data.refresh_token,
-                  isAuthenticated: true,
-                  isRestoring: false,
-                })
-              })
-              .catch(() => {
-                // Refresh token expired or invalid — clear all auth state
-                useAuthStore.setState({
-                  accessToken: null,
-                  refreshToken: null,
-                  user: null,
-                  isAuthenticated: false,
-                  isRestoring: false,
-                })
-              })
-          } else {
-            // No refresh token — not logged in, skip restoration
-            useAuthStore.setState({ isRestoring: false })
-          }
-        }
-      },
     }
   )
 )

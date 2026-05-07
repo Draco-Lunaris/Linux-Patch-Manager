@@ -1,8 +1,8 @@
+import { useEffect } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { CssBaseline, ThemeProvider } from '@mui/material'
+import { CssBaseline, ThemeProvider, CircularProgress, Box } from '@mui/material'
 import { darkTheme } from './theme/theme'
 import { useAuthStore } from './store/authStore'
-import { CircularProgress, Box } from '@mui/material'
 import AppLayout from './components/AppLayout'
 import LoginPage from './pages/LoginPage'
 import MfaSetupPage from './pages/MfaSetupPage'
@@ -33,33 +33,82 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   return isAuthenticated ? <>{children}</> : <Navigate to="/login" replace />
 }
 
+/**
+ * Waits for Zustand persist to finish rehydrating from localStorage,
+ * then calls restoreSession() so it can see the persisted refreshToken.
+ * Includes a safety timeout in case anything hangs.
+ */
+function AuthRestorer({ children }: { children: React.ReactNode }) {
+  const restoreSession = useAuthStore((s) => s.restoreSession)
+
+  useEffect(() => {
+    let cancelled = false
+
+    // Safety timeout: force isRestoring=false if restoration doesn't complete in 15s
+    const timeout = setTimeout(() => {
+      if (!cancelled) {
+        console.warn('[auth] Restoration timeout — forcing isRestoring=false')
+        useAuthStore.setState({ isRestoring: false })
+      }
+    }, 15_000)
+
+    const doRestore = () => {
+      if (!cancelled) restoreSession()
+    }
+
+    let unsub: (() => void) | undefined
+
+    // Only call restoreSession AFTER Zustand has rehydrated the persisted state
+    if (useAuthStore.persist.hasHydrated()) {
+      console.log('[auth] Store already hydrated, restoring session')
+      doRestore()
+    } else {
+      console.log('[auth] Waiting for Zustand hydration...')
+      unsub = useAuthStore.persist.onFinishHydration(() => {
+        console.log('[auth] Hydration complete, restoring session')
+        doRestore()
+      })
+    }
+
+    return () => {
+      cancelled = true
+      clearTimeout(timeout)
+      unsub?.()
+    }
+  }, [restoreSession])
+
+  return <>{children}</>
+}
+
 function App() {
   return (
     <ThemeProvider theme={darkTheme}>
       <CssBaseline />
-      <Routes>
-        {/* Public */}
-        <Route path="/login" element={<LoginPage />} />
+      <AuthRestorer>
+        <Routes>
+          {/* Public */}
+          <Route path="/login" element={<LoginPage />} />
 
-        {/* Protected — wrapped in AppLayout with sidebar navigation */}
-        <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
-          <Route path="/mfa/setup" element={<MfaSetupPage />} />
-          <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/hosts" element={<HostsPage />} />
-          <Route path="/hosts/:id" element={<HostDetailPage />} />
-          <Route path="/groups" element={<GroupsPage />} />
-          <Route path="/users" element={<UsersPage />} />
-          <Route path="/jobs" element={<JobsPage />} />
-          <Route path="/deployment" element={<PatchDeploymentPage />} />
-          <Route path="/maintenance" element={<MaintenanceWindowsPage />} />
-          <Route path="/reports" element={<ReportsPage />} />
-          <Route path="/certificates" element={<CertificatesPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-        </Route>
+          {/* Protected — wrapped in AppLayout with sidebar navigation */}
+          <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/mfa/setup" element={<MfaSetupPage />} />
+            <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/hosts" element={<HostsPage />} />
+            <Route path="/hosts/:id" element={<HostDetailPage />} />
+            <Route path="/groups" element={<GroupsPage />} />
+            <Route path="/users" element={<UsersPage />} />
+            <Route path="/jobs" element={<JobsPage />} />
+            <Route path="/deployment" element={<PatchDeploymentPage />} />
+            <Route path="/maintenance" element={<MaintenanceWindowsPage />} />
+            <Route path="/reports" element={<ReportsPage />} />
+            <Route path="/certificates" element={<CertificatesPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+          </Route>
 
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
-      </Routes>
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        </Routes>
+      </AuthRestorer>
     </ThemeProvider>
   )
 }
