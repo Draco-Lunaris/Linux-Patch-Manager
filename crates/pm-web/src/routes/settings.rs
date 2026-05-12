@@ -273,7 +273,10 @@ async fn get_settings(
     let cfg = load_system_config(&state.db).await?;
     // Inject read-only config values from TOML file (not stored in DB)
     let mut cfg = cfg;
-    cfg.insert("sso_callback_url".to_string(), state.config.security.sso_callback_url.clone());
+    cfg.insert(
+        "sso_callback_url".to_string(),
+        state.config.security.sso_callback_url.clone(),
+    );
     let azure = fetch_azure_sso_config(&state.db).await?;
     Ok(Json(build_settings_response(&cfg, azure)))
 }
@@ -495,7 +498,10 @@ async fn update_settings(
     let cfg = load_system_config(&state.db).await?;
     // Inject read-only config values from TOML file (not stored in DB)
     let mut cfg = cfg;
-    cfg.insert("sso_callback_url".to_string(), state.config.security.sso_callback_url.clone());
+    cfg.insert(
+        "sso_callback_url".to_string(),
+        state.config.security.sso_callback_url.clone(),
+    );
     let azure = fetch_azure_sso_config(&state.db).await?;
     Ok(Json(build_settings_response(&cfg, azure)))
 }

@@ -216,7 +216,12 @@ async fn azure_callback(
     // Look up code_verifier from sso_sessions
     let sso_session = match state.sso_sessions.remove(&state_token).map(|(_, v)| v) {
         Some(s) => s,
-        None => return Err(error_redirect("bad_request", "Invalid or expired state token")),
+        None => {
+            return Err(error_redirect(
+                "bad_request",
+                "Invalid or expired state token",
+            ))
+        },
     };
 
     // Read Azure SSO config (including client_secret for token exchange)
@@ -254,7 +259,7 @@ async fn azure_callback(
         Err(e) => {
             tracing::error!(error = %e, "Failed to build HTTP client");
             return Err(error_redirect("internal_error", "HTTP client error"));
-        }
+        },
     };
 
     let params = [
@@ -268,32 +273,36 @@ async fn azure_callback(
 
     let form_params: Vec<(&str, String)> = params.to_vec();
 
-    let token_resp = match client
-        .post(&token_url)
-        .form(&form_params)
-        .send()
-        .await
-    {
+    let token_resp = match client.post(&token_url).form(&form_params).send().await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = %e, "Token exchange request failed");
-            return Err(error_redirect("sso_error", &format!("Token exchange failed: {}", e)));
-        }
+            return Err(error_redirect(
+                "sso_error",
+                &format!("Token exchange failed: {}", e),
+            ));
+        },
     };
 
     if !token_resp.status().is_success() {
         let status = token_resp.status();
         let body = token_resp.text().await.unwrap_or_default();
         tracing::error!(status = %status, body = %body, "Token exchange failed");
-        return Err(error_redirect("sso_error", &format!("Token exchange failed: HTTP {}", status)));
+        return Err(error_redirect(
+            "sso_error",
+            &format!("Token exchange failed: HTTP {}", status),
+        ));
     }
 
     let token_data: TokenResponse = match token_resp.json().await {
         Ok(d) => d,
         Err(e) => {
             tracing::error!(error = %e, "Failed to parse token response");
-            return Err(error_redirect("internal_error", "Failed to parse token response"));
-        }
+            return Err(error_redirect(
+                "internal_error",
+                "Failed to parse token response",
+            ));
+        },
     };
 
     // Verify id_token JWT signature using Azure AD JWKS and validate claims
@@ -306,8 +315,11 @@ async fn azure_callback(
         Ok(c) => c,
         Err(e) => {
             tracing::error!(error = %e, "Failed to verify id_token");
-            return Err(error_redirect("internal_error", "Failed to verify id_token"));
-        }
+            return Err(error_redirect(
+                "internal_error",
+                "Failed to verify id_token",
+            ));
+        },
     };
 
     let email = claims.email.unwrap_or_default();
@@ -316,7 +328,10 @@ async fn azure_callback(
     let preferred_username = claims.preferred_username.unwrap_or_else(|| email.clone());
 
     if email.is_empty() || oid.is_empty() {
-        return Err(error_redirect("sso_error", "Missing email or oid in id_token"));
+        return Err(error_redirect(
+            "sso_error",
+            "Missing email or oid in id_token",
+        ));
     }
 
     // Look up or create user
@@ -332,7 +347,7 @@ async fn azure_callback(
         Err(e) => {
             tracing::error!(error = %e, "Failed to look up SSO user");
             return Err(error_redirect("internal_error", "Database error"));
-        }
+        },
     };
 
     let user = match user_opt {
@@ -358,7 +373,7 @@ async fn azure_callback(
                 Err(e) => {
                     tracing::error!(error = %e, "Failed to create SSO user");
                     return Err(error_redirect("internal_error", "Failed to create user"));
-                }
+                },
             };
 
             log_event(
@@ -411,15 +426,18 @@ async fn azure_callback(
         Err(e) => {
             tracing::error!(error = %e, "Failed to issue access token");
             return Err(error_redirect("internal_error", "Token issuance failed"));
-        }
+        },
     };
 
     let raw_refresh = match refresh::issue(&state.db, user.id, None, None).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = %e, "Failed to issue refresh token");
-            return Err(error_redirect("internal_error", "Refresh token issuance failed"));
-        }
+            return Err(error_redirect(
+                "internal_error",
+                "Refresh token issuance failed",
+            ));
+        },
     };
 
     log_event(
@@ -476,8 +494,7 @@ async fn verify_id_token(
     jwks_cache: &Arc<Mutex<JwksCache>>,
 ) -> Result<IdTokenClaims, String> {
     // 1. Decode JWT header to get the kid
-    let header = decode_header(token)
-        .map_err(|e| format!("Failed to decode JWT header: {}", e))?;
+    let header = decode_header(token).map_err(|e| format!("Failed to decode JWT header: {}", e))?;
 
     let kid = header.kid.ok_or("JWT header missing 'kid' field")?;
 
@@ -490,7 +507,7 @@ async fn verify_id_token(
             (Some(_), Some(fetched)) => {
                 let elapsed = Utc::now().signed_duration_since(*fetched);
                 elapsed.num_seconds() > JWKS_CACHE_TTL_SECS
-            }
+            },
         };
 
         if needs_fetch {
