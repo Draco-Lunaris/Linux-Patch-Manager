@@ -117,6 +117,16 @@ export default function SettingsPage() {
     setTestingSmtp(true)
     setSmtpTestResult(null)
     try {
+      // Save settings first so the test uses current form values
+      await settingsApi.update({
+        azure_sso: { ...azureSso },
+        smtp: { ...smtp },
+        polling,
+        ip_whitelist: ipWhitelist,
+        web_tls_strategy: webTlsStrategy,
+        notification,
+      })
+      // Then test SMTP
       const { data } = await settingsApi.testSmtp()
       setSmtpTestResult(data)
     } catch (err: unknown) {
@@ -204,8 +214,11 @@ export default function SettingsPage() {
             <Grid size={12}>
               <FormControlLabel
                 control={<Switch checked={smtp.enabled} onChange={(e) => setSmtp({ ...smtp, enabled: e.target.checked })} />}
-                label="Enable Email Notifications"
+                label="Enable SMTP Server"
               />
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                Enable the SMTP server connection for sending emails
+              </Typography>
             </Grid>
             <Grid size={6}>
               <TextField fullWidth label="SMTP Host" value={smtp.host} onChange={(e) => setSmtp({ ...smtp, host: e.target.value })} />
@@ -233,7 +246,7 @@ export default function SettingsPage() {
               <TextField fullWidth label="From Address" value={smtp.from} onChange={(e) => setSmtp({ ...smtp, from: e.target.value })} helperText="noreply@example.com" />
             </Grid>
             <Grid size={6}>
-              <Button variant="outlined" onClick={handleTestSmtp} disabled={testingSmtp || !smtp.enabled} startIcon={testingSmtp ? <CircularProgress size={20} /> : <EmailIcon />}>
+              <Button variant="outlined" onClick={handleTestSmtp} disabled={testingSmtp || !smtp.host} startIcon={testingSmtp ? <CircularProgress size={20} /> : <EmailIcon />}>
                 Send Test Email
               </Button>
               {smtpTestResult && (
@@ -312,10 +325,14 @@ export default function SettingsPage() {
               <FormControlLabel
                 control={<Switch checked={notification.email_enabled} onChange={(e) => setNotification({ ...notification, email_enabled: e.target.checked })} />}
                 label="Enable Email Notifications"
+                disabled={!smtp.enabled}
               />
+              <Typography variant="body2" color="text.secondary">
+                Requires SMTP server to be enabled
+              </Typography>
             </Grid>
             <Grid size={6}>
-              <TextField fullWidth label="From Address" value={notification.email_from} onChange={(e) => setNotification({ ...notification, email_from: e.target.value })} helperText="Sender address for notifications" />
+              <TextField fullWidth label="From Address" value={notification.email_from} onChange={(e) => setNotification({ ...notification, email_from: e.target.value })} helperText="Sender address for notifications" disabled={!smtp.enabled} />
             </Grid>
             <Grid size={12}>
               <Typography variant="subtitle2" sx={{ mt: 1, mb: 1 }}>Recipients</Typography>
@@ -325,7 +342,7 @@ export default function SettingsPage() {
                     const updated = [...notification.recipients]
                     updated[idx] = e.target.value
                     setNotification({ ...notification, recipients: updated })
-                  }} placeholder="admin@example.com" sx={{ flexGrow: 1 }} />
+                  }} placeholder="admin@example.com" sx={{ flexGrow: 1 }} disabled={!smtp.enabled} />
                   <IconButton onClick={() => {
                     setNotification({ ...notification, recipients: notification.recipients.filter((_, i) => i !== idx) })
                   }}><DeleteIcon /></IconButton>
