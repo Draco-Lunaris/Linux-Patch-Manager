@@ -46,6 +46,16 @@ fn render_bar_chart(
 
     let mut pixel_buf = vec![0u8; (W * H * 3) as usize];
 
+    // Guard: skip rendering for empty or mismatched data
+    if labels.is_empty() || values.is_empty() || labels.len() != values.len() {
+        anyhow::bail!("cannot render bar chart with empty or mismatched data");
+    }
+
+    // Guard: reject NaN / infinity which would panic in plotters
+    if values.iter().any(|v| !v.is_finite()) {
+        anyhow::bail!("bar chart values contain non-finite numbers");
+    }
+
     {
         let root = BitMapBackend::with_buffer(&mut pixel_buf, (W, H)).into_drawing_area();
         root.fill(&WHITE)?;
@@ -169,6 +179,24 @@ impl PdfBuilder {
         scale_x: f32,
         scale_y: f32,
     ) -> anyhow::Result<()> {
+        // Validate dimensions and buffer size to prevent panics
+        let expected_len = (img_w as usize) * (img_h as usize) * 3;
+        if raw_rgb.len() != expected_len || img_w == 0 || img_h == 0 {
+            anyhow::bail!(
+                "image buffer size mismatch: expected {} bytes for {}x{} RGB, got {}",
+                expected_len,
+                img_w,
+                img_h,
+                raw_rgb.len()
+            );
+        }
+        if !scale_x.is_finite() || !scale_y.is_finite() || scale_x <= 0.0 || scale_y <= 0.0 {
+            anyhow::bail!(
+                "invalid image scale factors: scale_x={}, scale_y={}",
+                scale_x,
+                scale_y
+            );
+        }
         let xobj = ImageXObject {
             width: Px(img_w as usize),
             height: Px(img_h as usize),
@@ -252,9 +280,9 @@ async fn compliance_pdf(pool: &sqlx::PgPool, params: &ReportParams) -> anyhow::R
 SELECT h.display_name, h.fqdn,
     COALESCE(jsonb_array_length(pd.installed_packages),0) AS total_packages,
     COALESCE(pd.patch_count,0) AS pending_patches,
-    CASE WHEN COALESCE(jsonb_array_length(pd.installed_packages),0)=0 THEN 100.0
+    (CASE WHEN COALESCE(jsonb_array_length(pd.installed_packages),0)=0 THEN 100.0
           ELSE ROUND(CAST((1.0-pd.patch_count::float/NULLIF(jsonb_array_length(pd.installed_packages),0))*100 AS numeric),1)
-    END AS compliance_pct,
+    END)::float8 AS compliance_pct,
     h.health_status::text AS health_status
 FROM hosts h LEFT JOIN host_patch_data pd ON pd.host_id=h.id
 WHERE h.id IN (SELECT host_id FROM host_groups WHERE group_id=$1)
@@ -271,9 +299,9 @@ ORDER BY compliance_pct ASC",
 SELECT h.display_name, h.fqdn,
     COALESCE(jsonb_array_length(pd.installed_packages),0) AS total_packages,
     COALESCE(pd.patch_count,0) AS pending_patches,
-    CASE WHEN COALESCE(jsonb_array_length(pd.installed_packages),0)=0 THEN 100.0
+    (CASE WHEN COALESCE(jsonb_array_length(pd.installed_packages),0)=0 THEN 100.0
           ELSE ROUND(CAST((1.0-pd.patch_count::float/NULLIF(jsonb_array_length(pd.installed_packages),0))*100 AS numeric),1)
-    END AS compliance_pct,
+    END)::float8 AS compliance_pct,
     h.health_status::text AS health_status
 FROM hosts h LEFT JOIN host_patch_data pd ON pd.host_id=h.id
 GROUP BY h.id, h.health_status, pd.installed_packages, pd.patch_count

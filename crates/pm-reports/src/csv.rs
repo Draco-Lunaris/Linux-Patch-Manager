@@ -29,9 +29,9 @@ SELECT
     h.last_patch_at,
     COALESCE(jsonb_array_length(pd.installed_packages), 0)  AS total_packages,
     COALESCE(pd.patch_count, 0) AS pending_patches,
-    CASE WHEN COALESCE(jsonb_array_length(pd.installed_packages), 0) = 0 THEN 100.0
-         ELSE ROUND(CAST((1.0 - pd.patch_count::float / NULLIF(jsonb_array_length(pd.installed_packages), 0)) * 100 AS numeric), 1)
-    END AS compliance_pct,
+    (CASE WHEN COALESCE(jsonb_array_length(pd.installed_packages), 0) = 0 THEN 100.0
+          ELSE ROUND(CAST((1.0 - pd.patch_count::float / NULLIF(jsonb_array_length(pd.installed_packages), 0)) * 100 AS numeric), 1)
+    END)::float8 AS compliance_pct,
     COALESCE(string_agg(DISTINCT g.name, ', '), '') AS group_names
 FROM hosts h
 LEFT JOIN host_patch_data pd ON pd.host_id = h.id
@@ -59,9 +59,9 @@ SELECT
     h.last_patch_at,
     COALESCE(jsonb_array_length(pd.installed_packages), 0)  AS total_packages,
     COALESCE(pd.patch_count, 0) AS pending_patches,
-    CASE WHEN COALESCE(jsonb_array_length(pd.installed_packages), 0) = 0 THEN 100.0
-         ELSE ROUND(CAST((1.0 - pd.patch_count::float / NULLIF(jsonb_array_length(pd.installed_packages), 0)) * 100 AS numeric), 1)
-    END AS compliance_pct,
+    (CASE WHEN COALESCE(jsonb_array_length(pd.installed_packages), 0) = 0 THEN 100.0
+          ELSE ROUND(CAST((1.0 - pd.patch_count::float / NULLIF(jsonb_array_length(pd.installed_packages), 0)) * 100 AS numeric), 1)
+    END)::float8 AS compliance_pct,
     COALESCE(string_agg(DISTINCT g.name, ', '), '') AS group_names
 FROM hosts h
 LEFT JOIN host_patch_data pd ON pd.host_id = h.id
