@@ -24,7 +24,7 @@ export default function MfaSetupPage() {
     authApi.getMfaSetup()
       .then((res) => {
         setSetup(res.data)
-        console.log('[MFA Setup] Success:', res.status, res.data)
+        console.warn('[MFA Setup] Success:', res.status, res.data)
         // Generate QR code from otpauth URI
         if (res.data.otp_uri) {
           QRCode.toDataURL(res.data.otp_uri, {
