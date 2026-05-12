@@ -4,7 +4,7 @@ Architecture: amd64
 Maintainer: Moon Dragon <echo@moon-dragon.us>
 Installed-Size: 45000
 Depends: postgresql-16, libssl3, libc6 (>= 2.39)
-Recommends: postgresql-client-16
+Recommends: postgresql-client-16, fonts-dejavu-core
 Suggests: gpg
 Section: admin
 Priority: optional
