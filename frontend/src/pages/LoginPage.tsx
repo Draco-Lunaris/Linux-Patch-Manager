@@ -9,8 +9,8 @@ import {
 import {
   Visibility, VisibilityOff,
   Check as CheckIcon, Close as CloseIcon,
+  Cloud as CloudIcon,
 } from '@mui/icons-material'
-import { Cloud as CloudIcon } from '@mui/icons-material'
 import { authApi } from '../api/client'
 import { useAuthStore } from '../store/authStore'
 import type { User } from '../types'
