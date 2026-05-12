@@ -2328,6 +2328,7 @@ dependencies = [
  "chrono",
  "dashmap",
  "ipnet",
+ "jsonwebtoken",
  "lettre",
  "pm-auth",
  "pm-ca",

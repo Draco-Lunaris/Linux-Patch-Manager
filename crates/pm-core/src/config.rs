@@ -80,6 +80,9 @@ pub struct SecurityConfig {
     pub web_tls_cert_path: String,
     /// Web UI TLS key path
     pub web_tls_key_path: String,
+    /// Frontend URL to redirect to after SSO callback (default: http://localhost:5173/auth/sso/callback)
+    #[serde(default = "default_sso_callback_url")]
+    pub sso_callback_url: String,
 }
 
 impl AppConfig {
@@ -103,6 +106,10 @@ impl AppConfig {
 
 fn default_health_check_poll_interval() -> u64 {
     300
+}
+
+fn default_sso_callback_url() -> String {
+    "http://localhost:5173/auth/sso/callback".to_string()
 }
 
 impl Default for AppConfig {
@@ -142,6 +149,7 @@ impl Default for AppConfig {
                 ca_key_path: "/etc/patch-manager/ca/ca.key".to_string(),
                 web_tls_cert_path: "/etc/patch-manager/tls/web.crt".to_string(),
                 web_tls_key_path: "/etc/patch-manager/tls/web.key".to_string(),
+                sso_callback_url: default_sso_callback_url(),
             },
         }
     }

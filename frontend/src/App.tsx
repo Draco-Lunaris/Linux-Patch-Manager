@@ -5,6 +5,7 @@ import { darkTheme } from './theme/theme'
 import { useAuthStore } from './store/authStore'
 import AppLayout from './components/AppLayout'
 import LoginPage from './pages/LoginPage'
+import SsoCallbackPage from './pages/SsoCallbackPage'
 import MfaSetupPage from './pages/MfaSetupPage'
 import HostsPage from './pages/HostsPage'
 import HostDetailPage from './pages/HostDetailPage'
@@ -89,6 +90,7 @@ function App() {
         <Routes>
           {/* Public */}
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/auth/sso/callback" element={<SsoCallbackPage />} />
 
           {/* Protected — wrapped in AppLayout with sidebar navigation */}
           <Route element={<RequireAuth><AppLayout /></RequireAuth>}>

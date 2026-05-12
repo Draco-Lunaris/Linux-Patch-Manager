@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Box, Button, Chip, CircularProgress, Container, Dialog, DialogActions,
   DialogContent, DialogContentText, DialogTitle, FormControlLabel, IconButton,
@@ -75,6 +76,7 @@ function PasswordStrengthIndicator({ password }: { password: string }) {
 
 export default function UsersPage() {
   const currentUser = useAuthStore(s => s.user)
+  const navigate = useNavigate()
   const isAdmin = currentUser?.role === 'admin'
 
   const [users, setUsers] = useState<User[]>([])
@@ -327,8 +329,17 @@ export default function UsersPage() {
                       color={u.role === 'admin' ? 'primary' : 'default'} />
                   </TableCell>
                   <TableCell>
-                    <Chip size="small" label={u.mfa_enabled ? 'On' : 'Off'}
-                      color={u.mfa_enabled ? 'success' : 'warning'} />
+                    {u.mfa_enabled ? (
+                      <Chip size="small" label="On" color="success" />
+                    ) : currentUser?.id === u.id ? (
+                      <Tooltip title="Enable MFA">
+                        <Chip size="small" label="Off" color="warning"
+                          sx={{ cursor: 'pointer', '&:hover': { opacity: 0.8 } }}
+                          onClick={() => navigate('/mfa/setup')} />
+                      </Tooltip>
+                    ) : (
+                      <Chip size="small" label="Off" color="default" />
+                    )}
                   </TableCell>
                   <TableCell>
                     <Chip size="small" label={u.is_active ? 'Active' : 'Disabled'}
@@ -460,24 +471,41 @@ export default function UsersPage() {
                 />
               </Box>
 
-              {/* MFA status & disable */}
+              {/* MFA status */}
               <Box sx={{ mt: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
                 <Typography variant="body2" color="text.secondary">MFA Status:</Typography>
                 <Chip size="small"
                   label={editUser?.mfa_enabled ? 'Enabled' : 'Disabled'}
                   color={editUser?.mfa_enabled ? 'success' : 'default'}
                 />
-                {editUser?.mfa_enabled && (
+                {editUser?.mfa_enabled ? (
                   <Button size="small" color="error" variant="outlined"
                     onClick={() => editUser && handleMfaDisable(editUser)}>
                     Disable MFA
                   </Button>
+                ) : (
+                  currentUser?.id === editUser?.id ? (
+                    <Button size="small" color="primary" variant="outlined"
+                      onClick={() => navigate('/mfa/setup')}>
+                      Enable MFA
+                    </Button>
+                  ) : (
+                    <Typography variant="caption" color="text.secondary">
+                      User must enable MFA from their own profile settings.
+                    </Typography>
+                  )
                 )}
               </Box>
-              {editUser?.mfa_enabled && (
+              {editUser?.mfa_enabled ? (
                 <Typography variant="caption" color="warning.main" sx={{ display: 'block', mt: 0.5 }}>
                   Disabling MFA reduces account security for this user.
                 </Typography>
+              ) : (
+                currentUser?.id === editUser?.id && (
+                  <Typography variant="caption" color="info.main" sx={{ display: 'block', mt: 0.5 }}>
+                    You will be guided through authenticator app setup.
+                  </Typography>
+                )
               )}
             </>
           )}

@@ -40,6 +40,7 @@ pub struct SettingsResponse {
     pub ip_whitelist: Vec<String>,
     pub web_tls_strategy: String,
     pub notification: NotificationConfig,
+    pub sso_callback_url: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -202,6 +203,7 @@ fn build_settings_response(
             email_from: get("notification_email_from"),
             recipients,
         },
+        sso_callback_url: get("sso_callback_url"),
     }
 }
 
@@ -269,6 +271,9 @@ async fn get_settings(
 ) -> Result<Json<SettingsResponse>, (StatusCode, Json<Value>)> {
     admin_only(&auth)?;
     let cfg = load_system_config(&state.db).await?;
+    // Inject read-only config values from TOML file (not stored in DB)
+    let mut cfg = cfg;
+    cfg.insert("sso_callback_url".to_string(), state.config.security.sso_callback_url.clone());
     let azure = fetch_azure_sso_config(&state.db).await?;
     Ok(Json(build_settings_response(&cfg, azure)))
 }
@@ -488,6 +493,9 @@ async fn update_settings(
 
     // Return updated settings
     let cfg = load_system_config(&state.db).await?;
+    // Inject read-only config values from TOML file (not stored in DB)
+    let mut cfg = cfg;
+    cfg.insert("sso_callback_url".to_string(), state.config.security.sso_callback_url.clone());
     let azure = fetch_azure_sso_config(&state.db).await?;
     Ok(Json(build_settings_response(&cfg, azure)))
 }

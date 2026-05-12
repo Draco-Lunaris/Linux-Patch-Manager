@@ -4,11 +4,13 @@ import {
   Box, Button, Container, TextField, Typography,
   Alert, CircularProgress, Paper, InputAdornment, IconButton,
   List, ListItem, ListItemIcon, ListItemText,
+  Divider,
 } from '@mui/material'
 import {
   Visibility, VisibilityOff,
   Check as CheckIcon, Close as CloseIcon,
 } from '@mui/icons-material'
+import { Cloud as CloudIcon } from '@mui/icons-material'
 import { authApi } from '../api/client'
 import { useAuthStore } from '../store/authStore'
 import type { User } from '../types'
@@ -322,6 +324,15 @@ export default function LoginPage() {
               sx={{ mt: 3 }} disabled={loading}
             >
               {loading ? <CircularProgress size={24} /> : 'Sign In'}
+            </Button>
+            <Divider sx={{ my: 3 }}>or</Divider>
+            <Button
+              fullWidth variant="outlined" size="large"
+              startIcon={<CloudIcon />}
+              onClick={() => { window.location.href = '/api/v1/auth/azure/login' }}
+              disabled={loading}
+            >
+              Sign in with Microsoft Azure
             </Button>
           </Box>
         )}

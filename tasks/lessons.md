@@ -1,5 +1,27 @@
 # Linux Patch Manager — Lessons Learned
 
+## 2026-05-08: Asserting Unverified Conclusions Is a Critical Failure Mode
+**Pattern:** I repeatedly asserted conclusions without verifying them first, then spun wheels on rabbit holes instead of checking the obvious source.
+**Mistakes made in this session:**
+1. Claimed vaultwarden-secrets wasn't in gitea — WRONG. It was there the whole time.
+2. Claimed Vaultwarden credentials "may be stale" — WRONG. They were correct; my implementation was wrong.
+3. Used wrong credential path (/a0/usr/credentials/gitea/ instead of /a0/usr/credentials/gitea-lxc/).
+4. Spun wheels decompiling .pyc, manual API auth, searching chat history — instead of checking the gitea repo.
+5. Didn't notice SSH key was missing from ~/.ssh/ until connection failed.
+6. Stated uncertainty as fact ("credentials may be stale") when the real issue was my own technical failure.
+**Root cause:** Violating the Verification Principle — asserting conclusions without verification.
+**Rule:** ALWAYS verify before asserting. If I haven't checked, say "I haven't verified this" — never state it as fact.
+**Rule:** When a tool/skill is broken, FIX IT FIRST before attempting manual workarounds.
+**Rule:** Check the obvious source (gitea repo, Vaultwarden store) before spinning wheels on complex alternatives.
+**Status:** Active
+
+## 2026-05-08: Vaultwarden Is the Source of Truth for All Credentials
+**Pattern:** SSH keys in ~/.ssh/ are ephemeral — lost on every container recreation. Local copies are unreliable.
+**Rule:** ALWAYS pull credentials (SSH keys, API tokens, passwords) from Vaultwarden when needed. Do NOT rely on local copies in ~/.ssh/ or /a0/usr/storage/ as they may be stale or missing after container recreation.
+**Rule:** At the start of each session, verify critical credentials by pulling them from Vaultwarden using `python3 /a0/skills/vaultwarden-secrets/scripts/vw_client.py`.
+**Rule:** /a0/usr/storage/echo-ssh-setup/ is NOT the primary source — Vaultwarden is. Local copies are convenience only.
+**Status:** Active
+
 ## 2026-04-24: CI/CD First, Not Manual Builds
 **Pattern:** When creating release packages, set up CI/CD pipeline (Gitea Actions) FIRST before manually building.
 **Why:** Manual builds are one-off and not reproducible. CI/CD ensures every push/tag produces a fresh, consistent package built on the correct target OS (Ubuntu 24.04), with proper glibc compatibility.
@@ -95,3 +117,12 @@ The Docker container intercepted some jobs and ran them in its Alpine environmen
 **Pattern:** The debian/control file has a hardcoded `Version: 1.0.0-1` that doesn't match the Cargo.toml version.
 **Why:** When dpkg sees the same version number (1.0.0-1) for both old and new packages, it may not properly replace files. The build-package.sh script updates the version in the control file during build, but this needs to be verified.
 **Action:** Ensure build-package.sh always updates debian/control Version to match Cargo.toml version before building the .deb.
+
+## 2026-05-08: CSP img-src Must Include data: for QR Codes and Dynamic Images
+**Pattern:** Content Security Policy default-src 'self' blocks data: URIs, preventing base64-encoded images (like QR codes) from displaying.
+**Mistake:** Spent extensive time investigating infrastructure (HAProxy, caching, deployment, auth tokens) when Kelly said 'it's just a display issue.' The actual cause was a missing `img-src 'self' data:;` in the CSP meta tag.
+**Root cause:** The CSP in index.html only had `default-src 'self'` which blocks `data:` image sources. The QR code library generates `data:image/png;base64,...` URIs which were silently blocked by the browser.
+**Fix:** Added `img-src 'self' data:;` to the CSP directive.
+**Rule:** When someone says 'it's just a display issue,' focus on the code (CSP, CSS, rendering) — not infrastructure (caching, proxies, deployment).
+**Rule:** For any image that uses data: URIs (QR codes, inline SVGs, base64 images), ensure CSP includes `img-src 'self' data:;` or equivalent.
+**Status:** Active

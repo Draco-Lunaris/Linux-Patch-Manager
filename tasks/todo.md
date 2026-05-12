@@ -1,61 +1,45 @@
-# Target Host for Service Health Checks
+# SSO Implementation Fix Plan
 
-## Overview
-Add `target_host_id` field to service health checks, allowing a check configured on Host A to query a service on Host B's agent. Useful for redundant services running on multiple machines.
+## Issues Identified
+1. **No SSO Login Button** — LoginPage.tsx missing "Sign in with Azure" button
+2. **No SSO Callback Route** — App.tsx missing frontend route to handle SSO callback
+3. **authStore No SSO Support** — authStore.ts has no method to store SSO tokens
+4. **Backend Returns JSON Not Redirect** — azure_sso.rs callback returns JSON tokens instead of redirecting to frontend
+5. **No SSO Session Cleanup** — sso_sessions DashMap has no expiry/cleanup task (memory leak)
+6. **No JWT Signature Verification** — id_token decoded without verifying Azure AD signature
 
-**Design:** `target_host_id` is nullable. When NULL (default), behavior unchanged — check queries its own host's agent. When set, the service check queries the target host's agent instead. Only applies to service checks; HTTP checks already specify a full URL.
+## Phases
 
-## Implementation Checklist
+### Phase 1: Backend SSO Fixes (Issues 4, 5) — COMPLETE ✅
+- [x] 1a: Add SSO session cleanup task in main.rs (purge sessions older than 10 minutes)
+- [x] 1b: Modify azure_sso.rs callback to redirect to frontend with tokens instead of returning JSON
+- [x] 1c: Add `sso_callback_url` to SecurityConfig in config.rs with serde default
+- [x] 1d: Update settings.rs to include sso_callback_url in settings response
+- [x] 1e: Verify backend compiles with `cargo check`
 
-### 1. Database Migration
-- [ ] Create `migrations/011_health_check_target_host.sql`
-- [ ] Add `target_host_id UUID REFERENCES hosts(id) ON DELETE SET NULL` column
-- [ ] Add partial index on `target_host_id` where NOT NULL
+### Phase 2: Frontend SSO Integration (Issues 1, 2, 3) — COMPLETE ✅
+- [x] 2a: Add SSO callback page component (SsoCallbackPage.tsx)
+- [x] 2b: Add SSO callback route to App.tsx (public route, no auth required)
+- [x] 2c: Add "Sign in with Microsoft Azure" button to LoginPage.tsx
+- [x] 2d: Add SSO-related types and API methods to frontend
+- [x] 2e: Verify frontend builds with TypeScript compilation
 
-### 2. Backend Models (`crates/pm-core/src/models.rs`)
-- [ ] Add `target_host_id: Option<Uuid>` to `HealthCheck` struct
-- [ ] Add `target_host_id: Option<Uuid>` to `CreateHealthCheckRequest`
-- [ ] Add `target_host_id: Option<Uuid>` to `UpdateHealthCheckRequest`
-- [ ] Add `target_host_id` to all HealthCheck SELECT queries
+### Phase 3: JWT Signature Verification (Issue 6) — COMPLETE ✅
+- [x] 3a: Add JWKS client dependency to pm-web/Cargo.toml
+- [x] 3b: Implement id_token signature verification in azure_sso.rs
+- [x] 3c: Verify backend compiles with `cargo check`
 
-### 3. API Routes (`crates/pm-web/src/routes/health_checks.rs`)
-- [ ] Create: add `target_host_id` to INSERT, validate target host exists + is healthy
-- [ ] Update: add `target_host_id` to COALESCE UPDATE
-- [ ] List/Get: add `target_host_id` to SELECT columns
-- [ ] Test endpoint (`run_service_check`): when `target_host_id` is Some, query that host's IP/port
-- [ ] Audit log: include `target_host_id` in audit JSON
+### Phase 4: Integration Testing and Verification — COMPLETE ✅
+- [x] 4a: Backend code review — all changes verified manually
+- [x] 4b: Frontend TypeScript compilation — passes cleanly
+- [x] 4c: SSO login flow reviewed end-to-end (backend redirect → frontend callback → auth store)
+- [x] 4d: SSO session cleanup verified (10-minute expiry, 60-second purge interval)
+- [x] 4e: Settings page SSO config unchanged (sso_callback_url added as read-only)
+- [x] 4f: Lessons captured below
 
-### 4. Health Check Poller (`crates/pm-worker/src/health_check_poller.rs`)
-- [ ] Add `target_host_id: Option<Uuid>` to `HealthCheckRow`
-- [ ] Modify SQL: LEFT JOIN hosts th ON th.id = hc.target_host_id, use COALESCE(th.ip_address, h.ip_address) and COALESCE(th.agent_port, h.agent_port)
-- [ ] Add `target_ip_address` and `target_agent_port` fields to HealthCheckRow
-- [ ] `run_service_check`: use target host IP/port when available
-- [ ] `check_host_health_checks`: no change needed (results count toward owning host)
-
-### 5. Frontend Types (`frontend/src/types/index.ts`)
-- [ ] Add `target_host_id?: string` to `HealthCheck`
-- [ ] Add `target_host_id?: string` to `CreateHealthCheckRequest`
-- [ ] Add `target_host_id?: string` to `UpdateHealthCheckRequest`
-
-### 6. Frontend Form (`frontend/src/pages/HostDetailPage.tsx`)
-- [ ] Add `target_host_id: string` to `HealthCheckFormValues`
-- [ ] Add `target_host_id: ''` to `defaultHealthCheckForm`
-- [ ] Add host selector dropdown in `HealthCheckFormDialog` (visible when check_type === 'service')
-- [ ] Fetch hosts list for dropdown (use hostsApi.list or a dedicated endpoint)
-- [ ] `handleHcCreateSubmit`: include `target_host_id: values.target_host_id || undefined`
-- [ ] `handleHcEditClick`: map `check.target_host_id ?? ''` to form
-- [ ] `handleHcEditSubmit`: include `target_host_id` in UpdateHealthCheckRequest
-- [ ] Display target host in health checks table Target column
-
-### 7. Build, Test, Deploy
-- [ ] Run `cargo fmt --all` + `cargo clippy` + `cargo test`
-- [ ] Run frontend build + ESLint + tsc
-- [ ] Commit and push through CI pipeline
-- [ ] Tag release, build .deb, deploy to dev
-
-## Design Decisions
-- `target_host_id` is nullable — NULL = check own host (backward compatible)
-- FK with ON DELETE SET NULL — if target host deleted, revert to default
-- Only applies to service checks (HTTP checks already have full URL)
-- Health gate: results count toward the owning host, not the target host
-- No RBAC required for target host — only requirement: target host exists in manager and is currently healthy
+## Lessons Learned
+- **SSO callback must redirect, not return JSON** — Browser OAuth2 flows require the backend to redirect to the frontend SPA, not return JSON tokens. The frontend must parse tokens from URL query parameters.
+- **URLSearchParams.get() already decodes** — Don't double-decode with decodeURIComponent() when using URLSearchParams.
+- **JWKS caching prevents rate-limiting** — Azure AD JWKS endpoint should be cached with TTL (1 hour) to avoid fetching on every SSO login.
+- **tokio::sync::Mutex over std::sync::Mutex** — Axum handlers must be Send; std::sync::MutexGuard is not Send across await points.
+- **DashMap session cleanup** — In-memory session stores (DashMap) need periodic cleanup tasks to prevent memory leaks. Pattern: tokio::spawn with interval + retain with time-based cutoff.

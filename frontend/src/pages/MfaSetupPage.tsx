@@ -7,6 +7,7 @@ import {
 import { ContentCopy as CopyIcon } from '@mui/icons-material'
 import QRCode from 'qrcode'
 import { authApi } from '../api/client'
+import { useAuthStore } from '../store/authStore'
 
 const STEPS = ['Get your QR code', 'Verify code', 'Done']
 
@@ -23,6 +24,7 @@ export default function MfaSetupPage() {
     authApi.getMfaSetup()
       .then((res) => {
         setSetup(res.data)
+        console.log('[MFA Setup] Success:', res.status, res.data)
         // Generate QR code from otpauth URI
         if (res.data.otp_uri) {
           QRCode.toDataURL(res.data.otp_uri, {
@@ -31,10 +33,31 @@ export default function MfaSetupPage() {
             color: { dark: '#000000', light: '#ffffff' },
           })
             .then((url) => setQrDataUrl(url))
-            .catch(() => setError('Failed to generate QR code.'))
+            .catch((qrErr) => {
+              console.error('[MFA Setup] QR generation failed:', qrErr)
+              setError('Failed to generate QR code.')
+            })
+        } else {
+          console.error('[MFA Setup] No otp_uri in response:', res.data)
+          setError('MFA setup returned invalid data. No OTP URI found.')
         }
       })
-      .catch(() => setError('Failed to load MFA setup.'))
+      .catch((err) => {
+        const status = err?.response?.status
+        const data = err?.response?.data
+        const message = err?.message
+        const token = useAuthStore.getState().accessToken
+        console.error('[MFA Setup] Failed:', { status, data, message, hasToken: !!token })
+        if (status === 401) {
+          setError('Authentication required. Please log in again.')
+        } else if (status === 403) {
+          setError('You do not have permission to set up MFA.')
+        } else if (message === 'Network Error') {
+          setError('Network error. Please check your connection and try again.')
+        } else {
+          setError(`Failed to load MFA setup: ${message || 'Unknown error'} (Status: ${status || 'N/A'})`)
+        }
+      })
   }, [])
 
   const handleCopySecret = () => {

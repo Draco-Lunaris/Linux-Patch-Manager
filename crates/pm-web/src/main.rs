@@ -10,10 +10,11 @@ use pm_auth::{
     rbac::{require_auth, AuthConfig},
 };
 use pm_core::{config::AppConfig, db, logging, request_id::request_id_middleware};
-use routes::azure_sso::SsoSession;
+use routes::azure_sso::{JwksCache, SsoSession};
 use routes::ws::WsTicket;
 use serde_json::{json, Value};
 use std::{net::SocketAddr, sync::Arc, time::Duration};
+use tokio::sync::Mutex;
 use tower_http::{
     services::{ServeDir, ServeFile},
     trace::TraceLayer,
@@ -30,6 +31,8 @@ pub struct AppState {
     pub ws_tickets: Arc<DashMap<String, WsTicket>>,
     /// In-memory store for SSO PKCE sessions (state → code_verifier).
     pub sso_sessions: Arc<DashMap<String, SsoSession>>,
+    /// Cached Azure AD JWKS for id_token signature verification.
+    pub jwks_cache: Arc<Mutex<JwksCache>>,
     /// Internal certificate authority for mTLS client cert issuance.
     pub ca: Arc<pm_ca::CertAuthority>,
 }
@@ -87,6 +90,7 @@ async fn main() -> anyhow::Result<()> {
 
     let ws_tickets: Arc<DashMap<String, WsTicket>> = Arc::new(DashMap::new());
     let sso_sessions: Arc<DashMap<String, SsoSession>> = Arc::new(DashMap::new());
+    let jwks_cache: Arc<Mutex<JwksCache>> = Arc::new(Mutex::new(JwksCache::default()));
 
     // Background task: purge expired WS tickets every 30 seconds.
     {
@@ -106,6 +110,25 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // Background task: purge expired SSO sessions every 60 seconds (sessions older than 10 minutes).
+    {
+        let sessions = sso_sessions.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                let now = chrono::Utc::now();
+                let cutoff = now - chrono::Duration::minutes(10);
+                let before = sessions.len();
+                sessions.retain(|_, v| v.created_at > cutoff);
+                let removed = before.saturating_sub(sessions.len());
+                if removed > 0 {
+                    tracing::debug!(removed, "Purged expired SSO sessions");
+                }
+            }
+        });
+    }
+
     let state = AppState {
         db: pool,
         config: Arc::new(config.clone()),
@@ -114,6 +137,7 @@ async fn main() -> anyhow::Result<()> {
         ws_tickets,
         sso_sessions,
         ca: Arc::new(ca),
+        jwks_cache,
     };
 
     let app = build_router(state);

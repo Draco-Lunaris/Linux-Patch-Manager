@@ -101,3 +101,8 @@ ca_key_path  = "/etc/patch-manager/ca/ca.key"
 # point these paths to your certificate/key to use your own cert.
 web_tls_cert_path = "/etc/patch-manager/tls/web.crt"
 web_tls_key_path  = "/etc/patch-manager/tls/web.key"
+
+# Frontend URL to redirect the browser to after Azure SSO callback.
+# The backend sends tokens as query parameters to this URL.
+# Default: "http://localhost:5173/auth/sso/callback" (Vite dev server)
+sso_callback_url = "http://localhost:5173/auth/sso/callback"

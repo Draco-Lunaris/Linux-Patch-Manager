@@ -139,7 +139,7 @@ export default function AppLayout() {
       <Divider />
       <Box sx={{ p: 1.5 }}>
         <Typography variant="caption" color="text.secondary">
-          Linux Patch Manager v0.1.0
+           Linux Patch Manager v0.1.3
         </Typography>
       </Box>
     </Box>
