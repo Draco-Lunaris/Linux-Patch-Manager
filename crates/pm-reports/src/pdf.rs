@@ -64,7 +64,7 @@ fn render_bar_chart(
         let n = labels.len().max(1);
 
         let mut chart = ChartBuilder::on(&root)
-            .caption(title, (FontFamily::SansSerif, 20))
+            .caption(title, ("sans-serif", 20).into_font())
             .margin(20u32)
             .x_label_area_size(60u32)
             .y_label_area_size(50u32)
