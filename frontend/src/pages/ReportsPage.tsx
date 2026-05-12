@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Alert,
   Box,
@@ -22,8 +22,8 @@ import {
 import DescriptionIcon from '@mui/icons-material/Description'
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf'
 import VerifiedUserIcon from '@mui/icons-material/VerifiedUser'
-import { reportsApi, settingsApi } from '../api/client'
-import type { ReportType, ReportFormat, AuditIntegrityResult } from '../types'
+import { reportsApi, settingsApi, apiClient } from '../api/client'
+import type { ReportType, ReportFormat, AuditIntegrityResult, Group } from '../types'
 
 // ── Report metadata ───────────────────────────────────────────────────────────
 
@@ -97,10 +97,19 @@ export default function ReportsPage() {
   const [fromDate, setFromDate] = useState<string>(defaultFromDate())
   const [toDate, setToDate] = useState<string>(defaultToDate())
   const [groupId, setGroupId] = useState<string>('')
+  const [groups, setGroups] = useState<Group[]>([])
   const [downloading, setDownloading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [verifyingIntegrity, setVerifyingIntegrity] = useState(false)
   const [integrityResult, setIntegrityResult] = useState<AuditIntegrityResult | null>(null)
+
+  useEffect(() => {
+    apiClient.get<Group[]>('/groups').then((res) => {
+      setGroups(res.data)
+    }).catch(() => {
+      // Groups fetch is optional; silently ignore errors
+    })
+  }, [])
 
   const info = REPORT_INFO[reportType]
 
@@ -111,7 +120,7 @@ export default function ReportsPage() {
       const params: Record<string, string> = {}
       if (fromDate) params.from = new Date(fromDate).toISOString()
       if (toDate) params.to = new Date(toDate + 'T23:59:59Z').toISOString()
-      if (reportType === 'compliance' && groupId.trim()) params.group_id = groupId.trim()
+      if (reportType === 'compliance' && groupId) params.group_id = groupId
 
       const res = await reportsApi.download(reportType, format, params)
 
@@ -203,13 +212,21 @@ export default function ReportsPage() {
             {/* Group Filter — compliance only */}
             {reportType === 'compliance' && (
               <FormControl fullWidth sx={{ mb: 2 }}>
-                <TextField
-                  label="Group ID (optional)"
+                <InputLabel id="group-filter-label">Group (optional)</InputLabel>
+                <Select
+                  labelId="group-filter-label"
                   value={groupId}
+                  label="Group (optional)"
                   onChange={(e) => setGroupId(e.target.value)}
-                  placeholder="e.g. 550e8400-e29b-41d4-a716-446655440000"
-                />
-                <FormHelperText>Filter compliance report by a specific group UUID</FormHelperText>
+                >
+                  <MenuItem value="">All Groups</MenuItem>
+                  {groups.map((g) => (
+                    <MenuItem key={g.id} value={g.id}>
+                      {g.name}
+                    </MenuItem>
+                  ))}
+                </Select>
+                <FormHelperText>Filter compliance report by a specific group</FormHelperText>
               </FormControl>
             )}
 

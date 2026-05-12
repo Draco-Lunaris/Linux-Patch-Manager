@@ -27,10 +27,10 @@ SELECT
     h.fqdn,
     h.health_status::text AS health_status,
     h.last_patch_at,
-    COALESCE(pd.total_packages, 0)  AS total_packages,
-    COALESCE(pd.pending_patches, 0) AS pending_patches,
-    CASE WHEN COALESCE(pd.total_packages,0) = 0 THEN 100.0
-         ELSE ROUND((1.0 - pd.pending_patches::float / NULLIF(pd.total_packages,0)) * 100, 1)
+    COALESCE(jsonb_array_length(pd.installed_packages), 0)  AS total_packages,
+    COALESCE(pd.patch_count, 0) AS pending_patches,
+    CASE WHEN COALESCE(jsonb_array_length(pd.installed_packages), 0) = 0 THEN 100.0
+         ELSE ROUND((1.0 - pd.patch_count::float / NULLIF(jsonb_array_length(pd.installed_packages), 0)) * 100, 1)
     END AS compliance_pct,
     COALESCE(string_agg(DISTINCT g.name, ', '), '') AS group_names
 FROM hosts h
@@ -40,7 +40,7 @@ LEFT JOIN groups g ON g.id = hg.group_id
 WHERE h.id IN (
     SELECT host_id FROM host_groups WHERE group_id = $1
 )
-GROUP BY h.id, pd.total_packages, pd.pending_patches
+GROUP BY h.id, pd.installed_packages, pd.patch_count
 ORDER BY compliance_pct ASC
 ",
         )
@@ -57,17 +57,17 @@ SELECT
     h.fqdn,
     h.health_status::text AS health_status,
     h.last_patch_at,
-    COALESCE(pd.total_packages, 0)  AS total_packages,
-    COALESCE(pd.pending_patches, 0) AS pending_patches,
-    CASE WHEN COALESCE(pd.total_packages,0) = 0 THEN 100.0
-         ELSE ROUND((1.0 - pd.pending_patches::float / NULLIF(pd.total_packages,0)) * 100, 1)
+    COALESCE(jsonb_array_length(pd.installed_packages), 0)  AS total_packages,
+    COALESCE(pd.patch_count, 0) AS pending_patches,
+    CASE WHEN COALESCE(jsonb_array_length(pd.installed_packages), 0) = 0 THEN 100.0
+         ELSE ROUND((1.0 - pd.patch_count::float / NULLIF(jsonb_array_length(pd.installed_packages), 0)) * 100, 1)
     END AS compliance_pct,
     COALESCE(string_agg(DISTINCT g.name, ', '), '') AS group_names
 FROM hosts h
 LEFT JOIN host_patch_data pd ON pd.host_id = h.id
 LEFT JOIN host_groups hg ON hg.host_id = h.id
 LEFT JOIN groups g ON g.id = hg.group_id
-GROUP BY h.id, pd.total_packages, pd.pending_patches
+GROUP BY h.id, pd.installed_packages, pd.patch_count
 ORDER BY compliance_pct ASC
 ",
         )
@@ -220,19 +220,19 @@ SELECT
     h.id::text        AS host_id,
     h.display_name,
     h.fqdn,
-    cve.cve_id,
-    cve.package_name,
-    cve.severity,
-    cve.available_version,
-    pd.updated_at     AS last_seen_at
+    cve_id,
+    patch->>'name'    AS package_name,
+    patch->>'severity' AS severity,
+    patch->>'available_version' AS available_version,
+    pd.polled_at      AS last_seen_at
 FROM hosts h
 JOIN host_patch_data pd ON pd.host_id = h.id
-CROSS JOIN LATERAL jsonb_to_recordset(COALESCE(pd.cve_data, '[]'::jsonb))
-  AS cve(cve_id text, package_name text, severity text, available_version text)
-WHERE ($1::timestamptz IS NULL OR pd.updated_at >= $1)
-  AND ($2::timestamptz IS NULL OR pd.updated_at <= $2)
+CROSS JOIN LATERAL jsonb_array_elements(COALESCE(pd.available_patches, '[]'::jsonb)) AS patch
+CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(patch->'cve_ids', '[]'::jsonb)) AS cve_id
+WHERE ($1::timestamptz IS NULL OR pd.polled_at >= $1)
+  AND ($2::timestamptz IS NULL OR pd.polled_at <= $2)
 ORDER BY
-    CASE cve.severity
+    CASE patch->>'severity'
         WHEN 'critical' THEN 1
         WHEN 'high'     THEN 2
         WHEN 'medium'   THEN 3
@@ -274,18 +274,8 @@ ORDER BY
             }
         },
         Err(e) => {
-            tracing::warn!(error = %e, "vulnerability query failed — returning empty rows");
-            // write a comment row indicating empty data
-            wtr.write_record(&[
-                "(no data)",
-                "",
-                "",
-                "",
-                "",
-                "",
-                "",
-                &format!("query error: {}", e),
-            ])?;
+            tracing::warn!(error = %e, "vulnerability query failed — returning header-only CSV");
+            // Return header-only CSV (no invalid comment rows)
         },
     }
 

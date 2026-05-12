@@ -250,15 +250,15 @@ async fn compliance_pdf(pool: &sqlx::PgPool, params: &ReportParams) -> anyhow::R
         sqlx::query(
             "
 SELECT h.display_name, h.fqdn,
-    COALESCE(pd.total_packages,0) AS total_packages,
-    COALESCE(pd.pending_patches,0) AS pending_patches,
-    CASE WHEN COALESCE(pd.total_packages,0)=0 THEN 100.0
-         ELSE ROUND((1.0-pd.pending_patches::float/NULLIF(pd.total_packages,0))*100,1)
+    COALESCE(jsonb_array_length(pd.installed_packages),0) AS total_packages,
+    COALESCE(pd.patch_count,0) AS pending_patches,
+    CASE WHEN COALESCE(jsonb_array_length(pd.installed_packages),0)=0 THEN 100.0
+         ELSE ROUND((1.0-pd.patch_count::float/NULLIF(jsonb_array_length(pd.installed_packages),0))*100,1)
     END AS compliance_pct,
     h.health_status::text AS health_status
 FROM hosts h LEFT JOIN host_patch_data pd ON pd.host_id=h.id
 WHERE h.id IN (SELECT host_id FROM host_groups WHERE group_id=$1)
-GROUP BY h.id,pd.total_packages,pd.pending_patches
+GROUP BY h.id, pd.installed_packages, pd.patch_count
 ORDER BY compliance_pct ASC",
         )
         .bind(gid)
@@ -269,14 +269,14 @@ ORDER BY compliance_pct ASC",
         sqlx::query(
             "
 SELECT h.display_name, h.fqdn,
-    COALESCE(pd.total_packages,0) AS total_packages,
-    COALESCE(pd.pending_patches,0) AS pending_patches,
-    CASE WHEN COALESCE(pd.total_packages,0)=0 THEN 100.0
-         ELSE ROUND((1.0-pd.pending_patches::float/NULLIF(pd.total_packages,0))*100,1)
+    COALESCE(jsonb_array_length(pd.installed_packages),0) AS total_packages,
+    COALESCE(pd.patch_count,0) AS pending_patches,
+    CASE WHEN COALESCE(jsonb_array_length(pd.installed_packages),0)=0 THEN 100.0
+         ELSE ROUND((1.0-pd.patch_count::float/NULLIF(jsonb_array_length(pd.installed_packages),0))*100,1)
     END AS compliance_pct,
     h.health_status::text AS health_status
 FROM hosts h LEFT JOIN host_patch_data pd ON pd.host_id=h.id
-GROUP BY h.id,pd.total_packages,pd.pending_patches
+GROUP BY h.id, pd.installed_packages, pd.patch_count
 ORDER BY compliance_pct ASC",
         )
         .fetch_all(pool)
@@ -333,7 +333,7 @@ ORDER BY compliance_pct ASC",
             Ok((raw, w, h)) => {
                 pdf.new_page();
                 pdf.write_text("Compliance Chart", 16.0, MARGIN, 200.0, true);
-                if let Err(e) = pdf.embed_image(raw, w, h, MARGIN, 10.0, 0.18, 0.18) {
+                if let Err(e) = pdf.embed_image(raw, w, h, MARGIN, 10.0, 0.28, 0.28) {
                     tracing::warn!(error = %e, "chart embed failed");
                 }
             },
@@ -432,7 +432,7 @@ ORDER BY pjh.started_at DESC",
             Ok((raw, w, h)) => {
                 pdf.new_page();
                 pdf.write_text("Patch Activity Chart", 16.0, MARGIN, 200.0, true);
-                if let Err(e) = pdf.embed_image(raw, w, h, MARGIN, 10.0, 0.18, 0.18) {
+                if let Err(e) = pdf.embed_image(raw, w, h, MARGIN, 10.0, 0.28, 0.28) {
                     tracing::warn!(error = %e, "chart embed failed");
                 }
             },
@@ -451,14 +451,17 @@ async fn vulnerability_pdf(pool: &sqlx::PgPool, params: &ReportParams) -> anyhow
     // Query DB FIRST (before creating any non-Send PdfBuilder)
     let query_result = sqlx::query("
 SELECT h.display_name, h.fqdn,
-    cve.cve_id, cve.package_name, cve.severity, cve.available_version,
-    pd.updated_at AS last_seen_at
+    cve_id,
+    patch->>'name' AS package_name,
+    patch->>'severity' AS severity,
+    patch->>'available_version' AS available_version,
+    pd.polled_at AS last_seen_at
 FROM hosts h JOIN host_patch_data pd ON pd.host_id=h.id
-CROSS JOIN LATERAL jsonb_to_recordset(COALESCE(pd.cve_data,'[]'::jsonb))
-  AS cve(cve_id text,package_name text,severity text,available_version text)
-WHERE ($1::timestamptz IS NULL OR pd.updated_at>=$1)
-  AND ($2::timestamptz IS NULL OR pd.updated_at<=$2)
-ORDER BY CASE cve.severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+CROSS JOIN LATERAL jsonb_array_elements(COALESCE(pd.available_patches,'[]'::jsonb)) AS patch
+CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(patch->'cve_ids','[]'::jsonb)) AS cve_id
+WHERE ($1::timestamptz IS NULL OR pd.polled_at>=$1)
+  AND ($2::timestamptz IS NULL OR pd.polled_at<=$2)
+ORDER BY CASE patch->>'severity' WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
     h.display_name")
         .bind(params.from).bind(params.to).fetch_all(pool).await;
     // Now create PdfBuilder (non-Send Rc types) after all awaits
