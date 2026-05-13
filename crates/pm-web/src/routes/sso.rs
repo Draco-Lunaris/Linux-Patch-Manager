@@ -419,7 +419,7 @@ async fn sso_callback(
     // First try exact match: email AND auth_provider
     let user_opt: Option<DbUserForSso> = match sqlx::query_as(
         r#"SELECT id, username, display_name, role, is_active, mfa_enabled
-           FROM users WHERE email = $1 AND auth_provider = $2"#,
+       FROM users WHERE email = $1 AND auth_provider = $2::auth_provider"#,
     )
     .bind(&email)
     .bind(auth_provider)
@@ -463,7 +463,7 @@ async fn sso_callback(
                     // Link existing local user to SSO provider
                     tracing::info!(user_id = %existing.id, "Linking existing user to SSO provider");
                     if let Err(e) = sqlx::query(
-                        "UPDATE users SET auth_provider = $1, azure_oid = COALESCE(azure_oid, $2), oidc_sub = COALESCE(oidc_sub, $3) WHERE id = $4",
+"UPDATE users SET auth_provider = $1::auth_provider, azure_oid = COALESCE(azure_oid, $2), oidc_sub = COALESCE(oidc_sub, $3) WHERE id = $4",
                     )
                     .bind(auth_provider)
                     .bind(if azure_oid.is_empty() { None } else { Some(azure_oid.as_str()) })
@@ -505,7 +505,7 @@ async fn sso_callback(
                     // No existing user - create new one
                     let id: Uuid = match sqlx::query_scalar(
                         r#"INSERT INTO users (username, display_name, email, role, auth_provider, azure_oid, oidc_sub)
-                           VALUES ($1, $2, $3, 'operator', $4, $5, $6)
+           VALUES ($1, $2, $3, 'operator', $4::auth_provider, $5, $6)
                            RETURNING id"#,
                     )
                     .bind(&preferred_username)
