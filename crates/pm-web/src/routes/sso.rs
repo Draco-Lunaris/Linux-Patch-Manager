@@ -416,6 +416,7 @@ async fn sso_callback(
         _ => "oidc",
     };
 
+    // First try exact match: email AND auth_provider
     let user_opt: Option<DbUserForSso> = match sqlx::query_as(
         r#"SELECT id, username, display_name, role, is_active, mfa_enabled
            FROM users WHERE email = $1 AND auth_provider = $2"#,
@@ -438,47 +439,113 @@ async fn sso_callback(
         },
         Some(u) => u,
         None => {
-            let id: Uuid = match sqlx::query_scalar(
-                r#"INSERT INTO users (username, display_name, email, role, auth_provider, azure_oid, oidc_sub)
-                   VALUES ($1, $2, $3, 'operator', $4, $5, $6)
-                   RETURNING id"#,
+            // Try to find existing user by email alone (may have different auth_provider)
+            let existing_user: Option<DbUserForSso> = match sqlx::query_as(
+                r#"SELECT id, username, display_name, role, is_active, mfa_enabled
+                   FROM users WHERE email = $1"#,
             )
-            .bind(&preferred_username)
-            .bind(&name)
             .bind(&email)
-            .bind(auth_provider)
-            .bind(if azure_oid.is_empty() { None } else { Some(azure_oid.as_str()) })
-            .bind(if provider_subject.is_empty() { None } else { Some(provider_subject.as_str()) })
-            .fetch_one(&state.db)
+            .fetch_optional(&state.db)
             .await
             {
-                Ok(id) => id,
+                Ok(o) => o,
                 Err(e) => {
-                    tracing::error!(error = %e, "Failed to create SSO user");
-                    return Err(error_redirect("internal_error", "Failed to create user"));
+                    tracing::error!(error = %e, "Failed to look up existing user by email");
+                    return Err(error_redirect("internal_error", "Database error"));
                 },
             };
 
-            log_event(
-                &state.db,
-                AuditAction::UserCreated,
-                None,
-                Some(auth_provider),
-                Some("user"),
-                Some(&id.to_string()),
-                json!({ "auth_provider": auth_provider, "email": email }),
-                None,
-                None,
-            )
-            .await;
+            match existing_user {
+                Some(existing) if !existing.is_active => {
+                    return Err(error_redirect("account_disabled", "Account is disabled"));
+                },
+                Some(existing) => {
+                    // Link existing local user to SSO provider
+                    tracing::info!(user_id = %existing.id, "Linking existing user to SSO provider");
+                    if let Err(e) = sqlx::query(
+                        "UPDATE users SET auth_provider = $1, azure_oid = COALESCE(azure_oid, $2), oidc_sub = COALESCE(oidc_sub, $3) WHERE id = $4",
+                    )
+                    .bind(auth_provider)
+                    .bind(if azure_oid.is_empty() { None } else { Some(azure_oid.as_str()) })
+                    .bind(if provider_subject.is_empty() { None } else { Some(provider_subject.as_str()) })
+                    .bind(existing.id)
+                    .execute(&state.db)
+                    .await
+                    {
+                        tracing::error!(error = %e, "Failed to link user to SSO provider");
+                        return Err(error_redirect("internal_error", "Failed to link SSO account"));
+                    }
 
-            DbUserForSso {
-                id,
-                username: preferred_username,
-                display_name: name,
-                role: "operator".to_string(),
-                is_active: true,
-                mfa_enabled: false,
+                    log_event(
+                        &state.db,
+                        AuditAction::UserCreated,
+                        None,
+                        Some(auth_provider),
+                        Some("user"),
+                        Some(&existing.id.to_string()),
+                        json!({ "action": "sso_link", "auth_provider": auth_provider, "email": email }),
+                        None,
+                        None,
+                    )
+                    .await;
+
+                    DbUserForSso {
+                        id: existing.id,
+                        username: existing.username.clone(),
+                        display_name: name
+                            .is_empty()
+                            .then(|| existing.display_name.clone())
+                            .unwrap_or(name),
+                        role: existing.role.clone(),
+                        is_active: existing.is_active,
+                        mfa_enabled: existing.mfa_enabled,
+                    }
+                },
+                None => {
+                    // No existing user - create new one
+                    let id: Uuid = match sqlx::query_scalar(
+                        r#"INSERT INTO users (username, display_name, email, role, auth_provider, azure_oid, oidc_sub)
+                           VALUES ($1, $2, $3, 'operator', $4, $5, $6)
+                           RETURNING id"#,
+                    )
+                    .bind(&preferred_username)
+                    .bind(&name)
+                    .bind(&email)
+                    .bind(auth_provider)
+                    .bind(if azure_oid.is_empty() { None } else { Some(azure_oid.as_str()) })
+                    .bind(if provider_subject.is_empty() { None } else { Some(provider_subject.as_str()) })
+                    .fetch_one(&state.db)
+                    .await
+                    {
+                        Ok(id) => id,
+                        Err(e) => {
+                            tracing::error!(error = %e, "Failed to create SSO user");
+                            return Err(error_redirect("internal_error", "Failed to create user"));
+                        },
+                    };
+
+                    log_event(
+                        &state.db,
+                        AuditAction::UserCreated,
+                        None,
+                        Some(auth_provider),
+                        Some("user"),
+                        Some(&id.to_string()),
+                        json!({ "auth_provider": auth_provider, "email": email }),
+                        None,
+                        None,
+                    )
+                    .await;
+
+                    DbUserForSso {
+                        id,
+                        username: preferred_username,
+                        display_name: name,
+                        role: "operator".to_string(),
+                        is_active: true,
+                        mfa_enabled: false,
+                    }
+                },
             }
         },
     };
