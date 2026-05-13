@@ -293,62 +293,57 @@ async fn update_settings(
     admin_only(&auth)?;
 
     // Update Azure SSO config
-    if let Some(azure) = &req.azure_sso {
-        // Build dynamic UPDATE query — only set fields that are Some
-        let mut sets = Vec::new();
-        let mut vals: Vec<String> = Vec::new();
-        let mut idx = 1;
+    // Use static queries with proper typed bindings to avoid boolean→string mismatch
+    if let Some(azure) = req.azure_sso {
+        let update_secret = azure.client_secret.as_ref().is_some_and(|s| s != MASKED);
 
-        if let Some(v) = azure.enabled {
-            sets.push(format!("enabled = ${}", idx));
-            vals.push(v.to_string());
-            idx += 1;
-        }
-        if let Some(ref v) = azure.tenant_id {
-            sets.push(format!("tenant_id = ${}", idx));
-            vals.push(v.clone());
-            idx += 1;
-        }
-        if let Some(ref v) = azure.client_id {
-            sets.push(format!("client_id = ${}", idx));
-            vals.push(v.clone());
-            idx += 1;
-        }
-        if let Some(ref v) = azure.client_secret {
-            if v != MASKED {
-                sets.push(format!("client_secret = ${}", idx));
-                vals.push(v.clone());
-                idx += 1;
-            }
-        }
-        if let Some(ref v) = azure.redirect_uri {
-            sets.push(format!("redirect_uri = ${}", idx));
-            vals.push(v.clone());
-            idx += 1;
-        }
-        if let Some(ref v) = azure.scopes {
-            sets.push(format!("scopes = ${}", idx));
-            vals.push(v.clone());
-            idx += 1;
-        }
+        let result = if update_secret {
+            sqlx::query(
+                "UPDATE azure_sso_config SET \
+                 enabled = COALESCE($1, enabled), \
+                 tenant_id = COALESCE($2, tenant_id), \
+                 client_id = COALESCE($3, client_id), \
+                 client_secret = $4, \
+                 redirect_uri = COALESCE($5, redirect_uri), \
+                 scopes = COALESCE($6, scopes), \
+                 updated_at = NOW() \
+                 WHERE id = 1",
+            )
+            .bind(azure.enabled)
+            .bind(&azure.tenant_id)
+            .bind(&azure.client_id)
+            .bind(azure.client_secret.as_deref().unwrap_or(""))
+            .bind(&azure.redirect_uri)
+            .bind(&azure.scopes)
+            .execute(&state.db)
+            .await
+        } else {
+            sqlx::query(
+                "UPDATE azure_sso_config SET \
+                 enabled = COALESCE($1, enabled), \
+                 tenant_id = COALESCE($2, tenant_id), \
+                 client_id = COALESCE($3, client_id), \
+                 redirect_uri = COALESCE($4, redirect_uri), \
+                 scopes = COALESCE($5, scopes), \
+                 updated_at = NOW() \
+                 WHERE id = 1",
+            )
+            .bind(azure.enabled)
+            .bind(&azure.tenant_id)
+            .bind(&azure.client_id)
+            .bind(&azure.redirect_uri)
+            .bind(&azure.scopes)
+            .execute(&state.db)
+            .await
+        };
 
-        if !sets.is_empty() {
-            let sql = format!(
-                "UPDATE azure_sso_config SET {}, updated_at = NOW() WHERE id = 1",
-                sets.join(", ")
-            );
-            let mut q = sqlx::query(&sql);
-            for val in &vals {
-                q = q.bind(val);
-            }
-            q.execute(&state.db).await.map_err(|e| {
-                tracing::error!(error = %e, "Failed to update azure_sso_config");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
-                )
-            })?;
-        }
+        result.map_err(|e| {
+            tracing::error!(error = %e, "Failed to update azure_sso_config");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": format!("Failed to update Azure SSO config: {}", e) } })),
+            )
+        })?;
 
         log_event(
             &state.db,

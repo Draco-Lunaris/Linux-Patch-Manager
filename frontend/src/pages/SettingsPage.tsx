@@ -5,6 +5,7 @@ import {
   IconButton, InputLabel, MenuItem, Select, Snackbar, Switch, TextField,
   Toolbar, Typography,
 } from '@mui/material'
+import type { AxiosError } from 'axios'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import SaveIcon from '@mui/icons-material/Save'
 import DeleteIcon from '@mui/icons-material/Delete'
@@ -78,8 +79,12 @@ export default function SettingsPage() {
         notification,
       })
       setSuccess('Settings saved successfully')
-    } catch {
-      setError('Failed to save settings')
+    } catch (err: unknown) {
+      const axiosErr = err as AxiosError<{ error?: { message?: string } }>
+      const msg =
+        axiosErr.response?.data?.error?.message ??
+        (err instanceof Error ? err.message : 'Failed to save settings')
+      setError(msg)
     } finally {
       setSaving(false)
     }
