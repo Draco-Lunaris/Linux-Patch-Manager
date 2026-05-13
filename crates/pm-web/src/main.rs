@@ -233,6 +233,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/status/health", get(health_handler))
         // Public auth routes (no JWT needed)
         .nest("/api/v1/auth", routes::auth::public_router())
+        // Public SSO routes (no JWT needed)
+        .nest("/api/v1/auth/sso", routes::sso::public_router())
         // Public Azure SSO routes (no JWT needed)
         .nest("/api/v1/auth/azure", routes::sso::azure_compat_router())
         // Protected API routes (JWT required)

@@ -11,7 +11,7 @@ import {
   Check as CheckIcon, Close as CloseIcon,
   Cloud as CloudIcon, VpnKey as KeyIcon,
 } from '@mui/icons-material'
-import { authApi, settingsApi } from '../api/client'
+import { authApi, ssoConfigApi } from '../api/client'
 import { useAuthStore } from '../store/authStore'
 import type { User } from '../types'
 
@@ -64,6 +64,7 @@ export default function LoginPage() {
 
   const [ssoEnabled, setSsoEnabled] = useState(false)
   const [ssoDisplayName, setSsoDisplayName] = useState('SSO')
+  const [ssoAuthUrl, setSsoAuthUrl] = useState('/api/v1/auth/sso/login')
 
   const [newPassword, setNewPassword] = useState('')
   const [confirmNewPassword, setConfirmNewPassword] = useState('')
@@ -75,9 +76,10 @@ export default function LoginPage() {
   const pwMismatch = !!(confirmNewPassword && newPassword !== confirmNewPassword)
 
   useEffect(() => {
-    settingsApi.get().then(({ data }) => {
-      setSsoEnabled(data.oidc.enabled)
-      setSsoDisplayName(data.oidc.display_name || 'SSO')
+    ssoConfigApi.get().then(({ data }) => {
+      setSsoEnabled(data.enabled)
+      setSsoDisplayName(data.display_name || 'SSO')
+      if (data.auth_url) setSsoAuthUrl(data.auth_url)
     }).catch(() => { /* SSO settings unavailable */ })
   }, [])
 
@@ -198,7 +200,7 @@ export default function LoginPage() {
             {ssoEnabled && (
               <>
                 <Divider sx={{ my: 3 }}>or</Divider>
-                <Button fullWidth variant="outlined" size="large" startIcon={ssoIcon} onClick={() => { window.location.href = '/api/v1/auth/sso/login' }} disabled={loading}>Sign in with {ssoDisplayName}</Button>
+                <Button fullWidth variant="outlined" size="large" startIcon={ssoIcon} onClick={() => { window.location.href = ssoAuthUrl }} disabled={loading}>Sign in with {ssoDisplayName}</Button>
               </>
             )}
           </Box>

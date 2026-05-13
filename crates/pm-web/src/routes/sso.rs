@@ -124,6 +124,7 @@ pub fn public_router() -> Router<AppState> {
     Router::new()
         .route("/login", get(sso_login))
         .route("/callback", get(sso_callback))
+        .route("/config", get(sso_config))
 }
 
 /// Backward-compatible Azure SSO routes — redirect to generic SSO endpoints.
@@ -131,6 +132,34 @@ pub fn azure_compat_router() -> Router<AppState> {
     Router::new()
         .route("/login", get(azure_login_redirect))
         .route("/callback", get(azure_callback_redirect))
+}
+
+// ============================================================
+// GET /api/v1/auth/sso/config
+// ============================================================
+
+/// Public endpoint returning minimal SSO configuration for the login page.
+/// Returns only: enabled, display_name, auth_url — no secrets exposed.
+async fn sso_config(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let config = match load_oidc_config(&state.db).await {
+        Ok(c) => c,
+        Err(_) => {
+            // If we can't load config, SSO is effectively disabled
+            return Ok(Json(json!({
+                "enabled": false,
+                "display_name": "SSO",
+                "auth_url": ""
+            })));
+        },
+    };
+
+    Ok(Json(json!({
+        "enabled": config.enabled,
+        "display_name": if config.display_name.is_empty() { "SSO".to_string() } else { config.display_name },
+        "auth_url": "/api/v1/auth/sso/login"
+    })))
 }
 
 // ============================================================

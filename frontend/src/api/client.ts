@@ -94,6 +94,18 @@ apiClient.interceptors.response.use(
 )
 
 // ── Auth API functions ───────────────────────────────────────────────────────
+
+export interface SsoConfigResponse {
+  enabled: boolean
+  display_name: string
+  auth_url: string
+}
+
+export const ssoConfigApi = {
+  /** Public endpoint — no JWT required. Returns minimal SSO config for the login page. */
+  get: () => apiClient.get<SsoConfigResponse>('/auth/sso/config'),
+}
+
 export const authApi = {
   login: (username: string, password: string, totpCode?: string) =>
     apiClient.post('/auth/login', { username, password, totp_code: totpCode }),
