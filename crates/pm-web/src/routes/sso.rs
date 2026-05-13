@@ -418,7 +418,7 @@ async fn sso_callback(
 
     // First try exact match: email AND auth_provider
     let user_opt: Option<DbUserForSso> = match sqlx::query_as(
-        r#"SELECT id, username, display_name, role, is_active, mfa_enabled
+        r#"SELECT id, username, display_name, role::text as role, is_active, mfa_enabled
        FROM users WHERE email = $1 AND auth_provider = $2::auth_provider"#,
     )
     .bind(&email)
@@ -441,7 +441,7 @@ async fn sso_callback(
         None => {
             // Try to find existing user by email alone (may have different auth_provider)
             let existing_user: Option<DbUserForSso> = match sqlx::query_as(
-                r#"SELECT id, username, display_name, role, is_active, mfa_enabled
+                r#"SELECT id, username, display_name, role::text as role, is_active, mfa_enabled
                    FROM users WHERE email = $1"#,
             )
             .bind(&email)
@@ -505,7 +505,7 @@ async fn sso_callback(
                     // No existing user - create new one
                     let id: Uuid = match sqlx::query_scalar(
                         r#"INSERT INTO users (username, display_name, email, role, auth_provider, azure_oid, oidc_sub)
-           VALUES ($1, $2, $3, 'operator', $4::auth_provider, $5, $6)
+           VALUES ($1, $2, $3, 'operator'::user_role, $4::auth_provider, $5, $6)
                            RETURNING id"#,
                     )
                     .bind(&preferred_username)
