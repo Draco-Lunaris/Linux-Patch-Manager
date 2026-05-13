@@ -56,6 +56,8 @@ pub enum AuthProvider {
     Local,
     #[sqlx(rename = "azure_sso")]
     AzureSso,
+    Keycloak,
+    Oidc,
 }
 
 impl std::fmt::Display for AuthProvider {
@@ -63,6 +65,8 @@ impl std::fmt::Display for AuthProvider {
         match self {
             Self::Local => write!(f, "local"),
             Self::AzureSso => write!(f, "azure_sso"),
+            Self::Keycloak => write!(f, "keycloak"),
+            Self::Oidc => write!(f, "oidc"),
         }
     }
 }
