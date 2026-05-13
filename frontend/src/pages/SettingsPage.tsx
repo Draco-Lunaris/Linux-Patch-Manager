@@ -12,7 +12,6 @@ import DeleteIcon from '@mui/icons-material/Delete'
 import AddIcon from '@mui/icons-material/Add'
 import CloudIcon from '@mui/icons-material/Cloud'
 import EmailIcon from '@mui/icons-material/Email'
-import VerifiedUserIcon from '@mui/icons-material/VerifiedUser'
 import { settingsApi } from '../api/client'
 import type { AzureSsoConfig, SmtpConfig, PollingConfig, NotificationConfig } from '../types'
 
@@ -38,8 +37,6 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false)
   const [testingAzure, setTestingAzure] = useState(false)
   const [testingSmtp, setTestingSmtp] = useState(false)
-  const [testingIntegrity, setTestingIntegrity] = useState(false)
-  const [integrityResult, setIntegrityResult] = useState<{ intact: boolean; rows_checked: number; errors: Array<{ row_id: number; expected_hash: string; actual_hash: string }> } | null>(null)
   const [azureSsoTestResult, setAzureSsoTestResult] = useState<{ success: boolean; message: string } | null>(null)
   const [smtpTestResult, setSmtpTestResult] = useState<{ success: boolean; message: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -76,7 +73,10 @@ export default function SettingsPage() {
         polling,
         ip_whitelist: ipWhitelist,
         web_tls_strategy: webTlsStrategy,
-        notification,
+        notification: {
+          ...notification,
+          email_from: smtp.from,  // Use SMTP From Address as notification sender
+        },
       })
       setSuccess('Settings saved successfully')
     } catch (err: unknown) {
@@ -87,20 +87,6 @@ export default function SettingsPage() {
       setError(msg)
     } finally {
       setSaving(false)
-    }
-  }
-
-  const handleAuditIntegrity = async () => {
-    setTestingIntegrity(true)
-    setIntegrityResult(null)
-    try {
-      const { data } = await settingsApi.auditIntegrity()
-      setIntegrityResult(data)
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Verification failed'
-      setIntegrityResult({ intact: false, rows_checked: 0, errors: [{ row_id: 0, expected_hash: '', actual_hash: msg }] })
-    } finally {
-      setTestingIntegrity(false)
     }
   }
 
@@ -129,7 +115,10 @@ export default function SettingsPage() {
         polling,
         ip_whitelist: ipWhitelist,
         web_tls_strategy: webTlsStrategy,
-        notification,
+        notification: {
+          ...notification,
+          email_from: smtp.from,  // Use SMTP From Address as notification sender
+        },
       })
       // Then test SMTP
       const { data } = await settingsApi.testSmtp()
@@ -209,10 +198,10 @@ export default function SettingsPage() {
         </AccordionDetails>
       </Accordion>
 
-      {/* Section 2: SMTP Configuration */}
+      {/* Section 2: SMTP Configuration & Email Notifications */}
       <Accordion>
         <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-          <Typography fontWeight={600}>SMTP Configuration</Typography>
+          <Typography fontWeight={600}>SMTP Configuration & Email Notifications</Typography>
         </AccordionSummary>
         <AccordionDetails>
           <Grid container spacing={2}>
@@ -226,15 +215,15 @@ export default function SettingsPage() {
               </Typography>
             </Grid>
             <Grid size={6}>
-              <TextField fullWidth label="SMTP Host" value={smtp.host} onChange={(e) => setSmtp({ ...smtp, host: e.target.value })} />
+              <TextField fullWidth label="SMTP Host" value={smtp.host} onChange={(e) => setSmtp({ ...smtp, host: e.target.value })} disabled={!smtp.enabled} />
             </Grid>
             <Grid size={3}>
-              <TextField fullWidth label="Port" type="number" value={smtp.port} onChange={(e) => setSmtp({ ...smtp, port: Number(e.target.value) })} />
+              <TextField fullWidth label="Port" type="number" value={smtp.port} onChange={(e) => setSmtp({ ...smtp, port: Number(e.target.value) })} disabled={!smtp.enabled} />
             </Grid>
             <Grid size={3}>
               <FormControl fullWidth>
                 <InputLabel>TLS Mode</InputLabel>
-                <Select value={smtp.tls_mode} label="TLS Mode" onChange={(e) => setSmtp({ ...smtp, tls_mode: e.target.value })}>
+                <Select value={smtp.tls_mode} label="TLS Mode" onChange={(e) => setSmtp({ ...smtp, tls_mode: e.target.value })} disabled={!smtp.enabled}>
                   <MenuItem value="none">None</MenuItem>
                   <MenuItem value="starttls">STARTTLS</MenuItem>
                   <MenuItem value="tls">TLS (Implicit)</MenuItem>
@@ -242,13 +231,41 @@ export default function SettingsPage() {
               </FormControl>
             </Grid>
             <Grid size={6}>
-              <TextField fullWidth label="Username" value={smtp.username} onChange={(e) => setSmtp({ ...smtp, username: e.target.value })} />
+              <TextField fullWidth label="Username" value={smtp.username} onChange={(e) => setSmtp({ ...smtp, username: e.target.value })} disabled={!smtp.enabled} />
             </Grid>
             <Grid size={6}>
-              <TextField fullWidth label="Password" type="password" value={smtp.password ?? ''} onChange={(e) => setSmtp({ ...smtp, password: e.target.value })} placeholder="Enter new password or leave masked" />
+              <TextField fullWidth label="Password" type="password" value={smtp.password ?? ''} onChange={(e) => setSmtp({ ...smtp, password: e.target.value })} placeholder="Enter new password or leave masked" disabled={!smtp.enabled} />
             </Grid>
             <Grid size={6}>
-              <TextField fullWidth label="From Address" value={smtp.from} onChange={(e) => setSmtp({ ...smtp, from: e.target.value })} helperText="noreply@example.com" />
+              <TextField fullWidth label="From Address" value={smtp.from} onChange={(e) => setSmtp({ ...smtp, from: e.target.value })} helperText="Sender address for both SMTP and notifications (e.g. noreply@example.com)" disabled={!smtp.enabled} />
+                       </Grid>
+            <Grid size={12}>
+              <FormControlLabel
+                control={<Switch checked={notification.email_enabled} onChange={(e) => setNotification({ ...notification, email_enabled: e.target.checked })} />}
+                label="Enable Email Notifications"
+                disabled={!smtp.enabled}
+              />
+              <Typography variant="body2" color="text.secondary">
+                Requires SMTP server to be enabled
+              </Typography>
+            </Grid>
+            <Grid size={12}>
+              <Typography variant="subtitle2" sx={{ mt: 1, mb: 1 }}>Notification Recipients</Typography>
+              {notification.recipients.map((email, idx) => (
+                <Box key={idx} sx={{ display: 'flex', gap: 1, mb: 1 }}>
+                  <TextField size="small" value={email} onChange={(e) => {
+                    const updated = [...notification.recipients]
+                    updated[idx] = e.target.value
+                    setNotification({ ...notification, recipients: updated })
+                  }} placeholder="admin@example.com" sx={{ flexGrow: 1 }} disabled={!smtp.enabled || !notification.email_enabled} />
+                  <IconButton onClick={() => {
+                    setNotification({ ...notification, recipients: notification.recipients.filter((_, i) => i !== idx) })
+                  }}><DeleteIcon /></IconButton>
+                </Box>
+              ))}
+              <Button variant="outlined" startIcon={<AddIcon />} onClick={() => {
+                setNotification({ ...notification, recipients: [...notification.recipients, ''] })
+              }} disabled={!smtp.enabled || !notification.email_enabled}>Add Recipient</Button>
             </Grid>
             <Grid size={6}>
               <Button variant="outlined" onClick={handleTestSmtp} disabled={testingSmtp || !smtp.host} startIcon={testingSmtp ? <CircularProgress size={20} /> : <EmailIcon />}>
@@ -319,88 +336,15 @@ export default function SettingsPage() {
         </AccordionDetails>
       </Accordion>
 
-      {/* Section 6: Email Notification Settings */}
-      <Accordion>
-        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-          <Typography fontWeight={600}>Email Notifications</Typography>
-        </AccordionSummary>
-        <AccordionDetails>
-          <Grid container spacing={2}>
-            <Grid size={12}>
-              <FormControlLabel
-                control={<Switch checked={notification.email_enabled} onChange={(e) => setNotification({ ...notification, email_enabled: e.target.checked })} />}
-                label="Enable Email Notifications"
-                disabled={!smtp.enabled}
-              />
-              <Typography variant="body2" color="text.secondary">
-                Requires SMTP server to be enabled
-              </Typography>
-            </Grid>
-            <Grid size={6}>
-              <TextField fullWidth label="From Address" value={notification.email_from} onChange={(e) => setNotification({ ...notification, email_from: e.target.value })} helperText="Sender address for notifications" disabled={!smtp.enabled} />
-            </Grid>
-            <Grid size={12}>
-              <Typography variant="subtitle2" sx={{ mt: 1, mb: 1 }}>Recipients</Typography>
-              {notification.recipients.map((email, idx) => (
-                <Box key={idx} sx={{ display: 'flex', gap: 1, mb: 1 }}>
-                  <TextField size="small" value={email} onChange={(e) => {
-                    const updated = [...notification.recipients]
-                    updated[idx] = e.target.value
-                    setNotification({ ...notification, recipients: updated })
-                  }} placeholder="admin@example.com" sx={{ flexGrow: 1 }} disabled={!smtp.enabled} />
-                  <IconButton onClick={() => {
-                    setNotification({ ...notification, recipients: notification.recipients.filter((_, i) => i !== idx) })
-                  }}><DeleteIcon /></IconButton>
-                </Box>
-              ))}
-              <Button variant="outlined" startIcon={<AddIcon />} onClick={() => {
-                setNotification({ ...notification, recipients: [...notification.recipients, ''] })
-              }}>Add Recipient</Button>
-            </Grid>
-          </Grid>
-        </AccordionDetails>
-      </Accordion>
-
-      {/* Section 7: Audit Integrity Verification */}
-      <Accordion>
-        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-          <Typography fontWeight={600}>Audit Integrity Verification</Typography>
-        </AccordionSummary>
-        <AccordionDetails>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Verify the integrity of the audit log hash chain. This checks that all audit entries are properly linked and have not been tampered with.
-          </Typography>
-          <Button variant="outlined" onClick={handleAuditIntegrity} disabled={testingIntegrity} startIcon={testingIntegrity ? <CircularProgress size={20} /> : <VerifiedUserIcon />}>
-            Verify Audit Integrity
-          </Button>
-          {integrityResult && (
-            <Alert severity={integrityResult.intact ? 'success' : 'error'} sx={{ mt: 2 }}>
-              {integrityResult.intact
-                ? `Audit chain intact — ${integrityResult.rows_checked} rows verified`
-                : `Audit chain compromised! ${integrityResult.errors.length} error(s) found across ${integrityResult.rows_checked} rows checked`}
-              {integrityResult.errors.length > 0 && (
-                <Box sx={{ mt: 1 }}>
-                  {integrityResult.errors.slice(0, 5).map((e, i) => (
-                    <Typography key={i} variant="body2">
-                      Row {e.row_id}: expected {e.expected_hash.substring(0, 16)}... got {e.actual_hash.substring(0, 16)}...
-                    </Typography>
-                  ))}
-                  {integrityResult.errors.length > 5 && (
-                    <Typography variant="body2">...and {integrityResult.errors.length - 5} more errors</Typography>
-                  )}
-                </Box>
-              )}
-            </Alert>
-          )}
-        </AccordionDetails>
-      </Accordion>
       <Snackbar
         open={!!success}
         autoHideDuration={4000}
         onClose={() => setSuccess(null)}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
       >
-        <Alert severity="success" onClose={() => setSuccess(null)}>{success}</Alert>
+        <Alert severity="success" onClose={() => setSuccess(null)}>
+          {success}
+        </Alert>
       </Snackbar>
     </Container>
   )
