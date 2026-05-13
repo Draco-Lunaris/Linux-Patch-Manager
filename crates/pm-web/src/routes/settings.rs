@@ -619,6 +619,12 @@ async fn test_smtp(
         .cloned()
         .unwrap_or_else(|| "starttls".to_string());
 
+    let recipients_str = cfg
+        .get("notification_email_recipients")
+        .cloned()
+        .unwrap_or_default();
+    let recipients: Vec<String> = serde_json::from_str(&recipients_str).unwrap_or_default();
+
     if host.is_empty() || from_addr.is_empty() {
         return Ok(Json(json!({
             "success": false,
@@ -626,13 +632,29 @@ async fn test_smtp(
         })));
     }
 
-    let result = send_smtp_test(&host, port, &username, &password, &from_addr, &tls_mode).await;
+    let result = send_smtp_test(
+        &host,
+        port,
+        &username,
+        &password,
+        &from_addr,
+        &tls_mode,
+        &recipients,
+    )
+    .await;
 
     match result {
-        Ok(()) => Ok(Json(json!({
-            "success": true,
-            "message": "Test email sent successfully"
-        }))),
+        Ok(()) => {
+            let recipient_info = if recipients.is_empty() {
+                String::new()
+            } else {
+                format!(" and {} recipient(s)", recipients.len())
+            };
+            Ok(Json(json!({
+                "success": true,
+                "message": format!("Test email sent successfully to from address{}", recipient_info)
+            })))
+        },
         Err(e) => Ok(Json(json!({
             "success": false,
             "message": format!("Failed to send test email: {}", e)
@@ -647,17 +669,35 @@ async fn send_smtp_test(
     password: &str,
     from_addr: &str,
     tls_mode: &str,
+    recipients: &[String],
 ) -> Result<(), String> {
     let from_mailbox: Mailbox = from_addr
         .parse()
         .map_err(|e| format!("Invalid from address: {}", e))?;
 
-    let email = Message::builder()
+    let mut builder = Message::builder()
         .from(from_mailbox.clone())
-        .to(from_mailbox)
+        .to(from_mailbox);
+
+    for recipient in recipients {
+        if let Ok(addr) = recipient.parse() {
+            builder = builder.bcc(addr);
+        }
+    }
+
+    let body = if recipients.is_empty() {
+        "This is a test email from Linux Patch Manager.".to_string()
+    } else {
+        format!(
+            "This is a test email from Linux Patch Manager.\n\nSent to: {}",
+            recipients.join(", ")
+        )
+    };
+
+    let email = builder
         .subject("Linux Patch Manager — SMTP Test")
         .header(ContentType::TEXT_PLAIN)
-        .body("This is a test email from Linux Patch Manager.".to_string())
+        .body(body)
         .map_err(|e| format!("Failed to build email: {}", e))?;
 
     let result = match tls_mode {
