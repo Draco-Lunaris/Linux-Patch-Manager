@@ -212,12 +212,35 @@ export const reportsApi = {
     }),
 }
 // ── Settings API (M10) ────────────────────────────────────────────────────
+
+/** @deprecated Use OidcConfigResponse instead */
 export interface AzureSsoConfig {
   enabled: boolean
   tenant_id: string
   client_id: string
   redirect_uri: string
   scopes: string
+}
+
+export interface OidcConfigResponse {
+  enabled: boolean
+  provider_type: 'keycloak' | 'azure' | 'custom'
+  display_name: string
+  discovery_url: string
+  client_id: string
+  client_secret: string
+  redirect_uri: string
+  scopes: string
+}
+
+export interface OidcDiscoveryResult {
+  success: boolean
+  issuer: string
+  authorization_endpoint: string
+  token_endpoint: string
+  jwks_uri: string
+  userinfo_endpoint?: string | null
+  message?: string
 }
 
 export interface SmtpConfig {
@@ -241,12 +264,13 @@ export interface NotificationConfig {
 }
 
 export interface SettingsResponse {
-  azure_sso: AzureSsoConfig
+  oidc: OidcConfigResponse
   smtp: SmtpConfig
   polling: PollingConfig
   ip_whitelist: string[]
   web_tls_strategy: string
   notification: NotificationConfig
+  sso_callback_url?: string
 }
 
 export interface TestResult {
@@ -267,11 +291,14 @@ export interface AuditIntegrityResult {
 export const settingsApi = {
   get: () => apiClient.get<SettingsResponse>('/settings'),
   update: (data: Partial<SettingsResponse> & {
-    azure_sso?: AzureSsoConfig & { client_secret?: string }
+    oidc?: OidcConfigResponse & { client_secret?: string }
     smtp?: SmtpConfig & { password?: string }
     notification?: NotificationConfig
   }) => apiClient.put<SettingsResponse>('/settings', data),
-  testAzureSso: () => apiClient.post<TestResult>('/settings/azure-sso/test'),
+  discoverOidc: (discoveryUrl: string) => apiClient.post<OidcDiscoveryResult>('/settings/sso/discover', { discovery_url: discoveryUrl }),
+  testOidc: () => apiClient.post<TestResult>('/settings/sso/test'),
+  /** @deprecated Use testOidc instead */
+  testAzureSso: () => apiClient.post<TestResult>('/settings/sso/test'),
   testSmtp: () => apiClient.post<TestResult>('/settings/smtp/test'),
   getIpWhitelist: () => apiClient.get<{ entries: string[] }>('/settings/ip-whitelist'),
   updateIpWhitelist: (entries: string[]) => apiClient.put<{ entries: string[] }>('/settings/ip-whitelist', { entries }),

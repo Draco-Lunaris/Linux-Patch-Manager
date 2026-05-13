@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Box, Button, Container, TextField, Typography,
@@ -9,70 +9,32 @@ import {
 import {
   Visibility, VisibilityOff,
   Check as CheckIcon, Close as CloseIcon,
-  Cloud as CloudIcon,
+  Cloud as CloudIcon, VpnKey as KeyIcon,
 } from '@mui/icons-material'
-import { authApi } from '../api/client'
+import { authApi, settingsApi } from '../api/client'
 import { useAuthStore } from '../store/authStore'
 import type { User } from '../types'
 
-/** Extract a human-readable error message from an Axios error. */
 function getErrorMessage(err: unknown): string {
-  // Network error — no response at all (server unreachable, CORS, DNS failure)
   if (err instanceof Error && err.message === 'Network Error') {
     return 'Unable to connect to the server. Please check your network connection and try again.'
   }
-
-  // Axios-style error with a response body
   const axiosErr = err as { response?: { status?: number; data?: { error?: { code?: string; message?: string } } } }
   const status = axiosErr.response?.status
   const code = axiosErr.response?.data?.error?.code
   const msg = axiosErr.response?.data?.error?.message
-
-  // Rate limited
-  if (status === 429) {
-    return 'Too many login attempts. Please wait a moment and try again.'
-  }
-
-  // MFA required
-  if (code === 'mfa_required') {
-    return 'MFA_REQUIRED'  // sentinel — caller checks this
-  }
-
-  // Password reset required
-  if (code === 'password_reset_required') {
-    return 'PASSWORD_RESET_REQUIRED'
-  }
-
-  // Account locked
-  if (code === 'account_locked') {
-    return 'ACCOUNT_LOCKED'
-  }
-
-  // Account disabled
-  if (code === 'account_disabled') {
-    return 'This account has been disabled. Contact your administrator.'
-  }
-
-  // Server-provided message
-  if (msg) {
-    return msg
-  }
-
-  // Generic status-based messages
-  if (status === 401) {
-    return 'Invalid username or password.'
-  }
-  if (status === 403) {
-    return 'Access denied.'
-  }
-  if (status && status >= 500) {
-    return 'A server error occurred. Please try again later.'
-  }
-
+  if (status === 429) return 'Too many login attempts. Please wait a moment and try again.'
+  if (code === 'mfa_required') return 'MFA_REQUIRED'
+  if (code === 'password_reset_required') return 'PASSWORD_RESET_REQUIRED'
+  if (code === 'account_locked') return 'ACCOUNT_LOCKED'
+  if (code === 'account_disabled') return 'This account has been disabled. Contact your administrator.'
+  if (msg) return msg
+  if (status === 401) return 'Invalid username or password.'
+  if (status === 403) return 'Access denied.'
+  if (status && status >= 500) return 'A server error occurred. Please try again later.'
   return 'Login failed. Please try again.'
 }
 
-/** Password strength checker */
 function checkPasswordStrength(password: string) {
   return {
     length: password.length >= 8,
@@ -100,7 +62,9 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Force change password state
+  const [ssoEnabled, setSsoEnabled] = useState(false)
+  const [ssoDisplayName, setSsoDisplayName] = useState('SSO')
+
   const [newPassword, setNewPassword] = useState('')
   const [confirmNewPassword, setConfirmNewPassword] = useState('')
   const [showNewPassword, setShowNewPassword] = useState(false)
@@ -110,11 +74,17 @@ export default function LoginPage() {
   const pwValid = isPasswordValid(pwChecks)
   const pwMismatch = !!(confirmNewPassword && newPassword !== confirmNewPassword)
 
+  useEffect(() => {
+    settingsApi.get().then(({ data }) => {
+      setSsoEnabled(data.oidc.enabled)
+      setSsoDisplayName(data.oidc.display_name || 'SSO')
+    }).catch(() => { /* SSO settings unavailable */ })
+  }, [])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setError(null)
-
     try {
       const res = await authApi.login(username, password, needsMfa ? totpCode : undefined)
       const { access_token, refresh_token, user } = res.data
@@ -144,7 +114,6 @@ export default function LoginPage() {
     if (!pwValid || pwMismatch) return
     setLoading(true)
     setError(null)
-
     try {
       await authApi.forceChangePassword(username, password, newPassword)
       setPasswordChanged(true)
@@ -177,6 +146,8 @@ export default function LoginPage() {
     setConfirmNewPassword('')
   }
 
+  const ssoIcon = ssoDisplayName.toLowerCase().includes('keycloak') ? <KeyIcon /> : <CloudIcon />
+
   return (
     <Container maxWidth="xs" sx={{ mt: 12 }}>
       <Paper elevation={4} sx={{ p: 4 }}>
@@ -185,155 +156,51 @@ export default function LoginPage() {
         </Typography>
 
         {error && (
-          <Alert
-            severity={forcePasswordReset ? 'warning' : 'error'}
-            sx={{ mb: 2 }}
-            onClose={() => setError(null)}
-          >
+          <Alert severity={forcePasswordReset ? 'warning' : 'error'} sx={{ mb: 2 }} onClose={() => setError(null)}>
             {error}
           </Alert>
         )}
 
         {passwordChanged ? (
           <Box>
-            <Alert severity="success" sx={{ mb: 2 }}>
-              Password changed successfully! Please log in with your new password.
-            </Alert>
-            <Button
-              fullWidth variant="contained" size="large"
-              onClick={handleBackToLogin}
-            >
-              Back to Login
-            </Button>
+            <Alert severity="success" sx={{ mb: 2 }}>Password changed successfully! Please log in with your new password.</Alert>
+            <Button fullWidth variant="contained" size="large" onClick={handleBackToLogin}>Back to Login</Button>
           </Box>
         ) : forcePasswordReset ? (
           <Box component="form" onSubmit={handleForceChangePassword} noValidate>
-            <Typography variant="h6" fontWeight={600} mb={2}>
-              Change Your Password
-            </Typography>
-            <Typography variant="body2" color="text.secondary" mb={2}>
-              Your password has expired and must be changed before you can log in.
-            </Typography>
-            <TextField
-              fullWidth margin="normal" label="Username"
-              value={username} InputProps={{ readOnly: true }}
-            />
-            <TextField
-              fullWidth margin="normal" label="Current Password" type="password"
-              value={password} InputProps={{ readOnly: true }}
-            />
-            <TextField
-              fullWidth margin="normal" label="New Password"
-              type={showNewPassword ? 'text' : 'password'}
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              disabled={loading} required
-              InputProps={{
-                endAdornment: (
-                  <InputAdornment position="end">
-                    <IconButton onClick={() => setShowNewPassword(!showNewPassword)} edge="end">
-                      {showNewPassword ? <VisibilityOff /> : <Visibility />}
-                    </IconButton>
-                  </InputAdornment>
-                ),
-              }}
-            />
+            <Typography variant="h6" fontWeight={600} mb={2}>Change Your Password</Typography>
+            <Typography variant="body2" color="text.secondary" mb={2}>Your password has expired and must be changed before you can log in.</Typography>
+            <TextField fullWidth margin="normal" label="Username" value={username} InputProps={{ readOnly: true }} />
+            <TextField fullWidth margin="normal" label="Current Password" type="password" value={password} InputProps={{ readOnly: true }} />
+            <TextField fullWidth margin="normal" label="New Password" type={showNewPassword ? 'text' : 'password'} value={newPassword} onChange={(e) => setNewPassword(e.target.value)} disabled={loading} required InputProps={{ endAdornment: <InputAdornment position="end"><IconButton onClick={() => setShowNewPassword(!showNewPassword)} edge="end">{showNewPassword ? <VisibilityOff /> : <Visibility />}</IconButton></InputAdornment> }} />
             {newPassword && (
               <Box sx={{ mt: 1, mb: 1 }}>
                 <List dense disablePadding>
-                  <ListItem disableGutters sx={{ py: 0 }}>
-                    <ListItemIcon sx={{ minWidth: 28 }}>
-                      {pwChecks.length ? <CheckIcon color="success" fontSize="small" /> : <CloseIcon color="error" fontSize="small" />}
-                    </ListItemIcon>
-                    <ListItemText primary="At least 8 characters" primaryTypographyProps={{ variant: 'caption' }} />
-                  </ListItem>
-                  <ListItem disableGutters sx={{ py: 0 }}>
-                    <ListItemIcon sx={{ minWidth: 28 }}>
-                      {pwChecks.uppercase ? <CheckIcon color="success" fontSize="small" /> : <CloseIcon color="error" fontSize="small" />}
-                    </ListItemIcon>
-                    <ListItemText primary="At least one uppercase letter" primaryTypographyProps={{ variant: 'caption' }} />
-                  </ListItem>
-                  <ListItem disableGutters sx={{ py: 0 }}>
-                    <ListItemIcon sx={{ minWidth: 28 }}>
-                      {pwChecks.lowercase ? <CheckIcon color="success" fontSize="small" /> : <CloseIcon color="error" fontSize="small" />}
-                    </ListItemIcon>
-                    <ListItemText primary="At least one lowercase letter" primaryTypographyProps={{ variant: 'caption' }} />
-                  </ListItem>
-                  <ListItem disableGutters sx={{ py: 0 }}>
-                    <ListItemIcon sx={{ minWidth: 28 }}>
-                      {pwChecks.digit ? <CheckIcon color="success" fontSize="small" /> : <CloseIcon color="error" fontSize="small" />}
-                    </ListItemIcon>
-                    <ListItemText primary="At least one digit" primaryTypographyProps={{ variant: 'caption' }} />
-                  </ListItem>
-                  <ListItem disableGutters sx={{ py: 0 }}>
-                    <ListItemIcon sx={{ minWidth: 28 }}>
-                      {pwChecks.special ? <CheckIcon color="success" fontSize="small" /> : <CloseIcon color="error" fontSize="small" />}
-                    </ListItemIcon>
-                    <ListItemText primary="At least one special character" primaryTypographyProps={{ variant: 'caption' }} />
-                  </ListItem>
+                  <ListItem disableGutters sx={{ py: 0 }}><ListItemIcon sx={{ minWidth: 28 }}>{pwChecks.length ? <CheckIcon color="success" fontSize="small" /> : <CloseIcon color="error" fontSize="small" />}</ListItemIcon><ListItemText primary="At least 8 characters" primaryTypographyProps={{ variant: 'caption' }} /></ListItem>
+                  <ListItem disableGutters sx={{ py: 0 }}><ListItemIcon sx={{ minWidth: 28 }}>{pwChecks.uppercase ? <CheckIcon color="success" fontSize="small" /> : <CloseIcon color="error" fontSize="small" />}</ListItemIcon><ListItemText primary="At least one uppercase letter" primaryTypographyProps={{ variant: 'caption' }} /></ListItem>
+                  <ListItem disableGutters sx={{ py: 0 }}><ListItemIcon sx={{ minWidth: 28 }}>{pwChecks.lowercase ? <CheckIcon color="success" fontSize="small" /> : <CloseIcon color="error" fontSize="small" />}</ListItemIcon><ListItemText primary="At least one lowercase letter" primaryTypographyProps={{ variant: 'caption' }} /></ListItem>
+                  <ListItem disableGutters sx={{ py: 0 }}><ListItemIcon sx={{ minWidth: 28 }}>{pwChecks.digit ? <CheckIcon color="success" fontSize="small" /> : <CloseIcon color="error" fontSize="small" />}</ListItemIcon><ListItemText primary="At least one digit" primaryTypographyProps={{ variant: 'caption' }} /></ListItem>
+                  <ListItem disableGutters sx={{ py: 0 }}><ListItemIcon sx={{ minWidth: 28 }}>{pwChecks.special ? <CheckIcon color="success" fontSize="small" /> : <CloseIcon color="error" fontSize="small" />}</ListItemIcon><ListItemText primary="At least one special character" primaryTypographyProps={{ variant: 'caption' }} /></ListItem>
                 </List>
               </Box>
             )}
-            <TextField
-              fullWidth margin="normal" label="Confirm New Password" type="password"
-              value={confirmNewPassword}
-              onChange={(e) => setConfirmNewPassword(e.target.value)}
-              disabled={loading} required
-              error={pwMismatch}
-              helperText={pwMismatch ? 'Passwords do not match' : ''}
-            />
-            <Button
-              type="submit" fullWidth variant="contained" size="large"
-              sx={{ mt: 3 }} disabled={loading || !pwValid || pwMismatch}
-            >
-              {loading ? <CircularProgress size={24} /> : 'Change Password'}
-            </Button>
+            <TextField fullWidth margin="normal" label="Confirm New Password" type="password" value={confirmNewPassword} onChange={(e) => setConfirmNewPassword(e.target.value)} disabled={loading} required error={pwMismatch} helperText={pwMismatch ? 'Passwords do not match' : ''} />
+            <Button type="submit" fullWidth variant="contained" size="large" sx={{ mt: 3 }} disabled={loading || !pwValid || pwMismatch}>{loading ? <CircularProgress size={24} /> : 'Change Password'}</Button>
           </Box>
         ) : (
           <Box component="form" onSubmit={handleSubmit} noValidate>
-            <TextField
-              fullWidth margin="normal" label="Username" autoComplete="username"
-              value={username} onChange={(e) => setUsername(e.target.value)}
-              disabled={loading} required autoFocus
-            />
-            <TextField
-              fullWidth margin="normal" label="Password" type={showPassword ? 'text' : 'password'}
-              autoComplete="current-password" value={password}
-              onChange={(e) => setPassword(e.target.value)} disabled={loading} required
-              InputProps={{
-                endAdornment: (
-                  <InputAdornment position="end">
-                    <IconButton onClick={() => setShowPassword(!showPassword)} edge="end">
-                      {showPassword ? <VisibilityOff /> : <Visibility />}
-                    </IconButton>
-                  </InputAdornment>
-                ),
-              }}
-            />
+            <TextField fullWidth margin="normal" label="Username" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} disabled={loading} required autoFocus />
+            <TextField fullWidth margin="normal" label="Password" type={showPassword ? 'text' : 'password'} autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} disabled={loading} required InputProps={{ endAdornment: <InputAdornment position="end"><IconButton onClick={() => setShowPassword(!showPassword)} edge="end">{showPassword ? <VisibilityOff /> : <Visibility />}</IconButton></InputAdornment> }} />
             {needsMfa && (
-              <TextField
-                fullWidth margin="normal" label="MFA Code" inputMode="numeric"
-                inputProps={{ maxLength: 6, pattern: '[0-9]*' }}
-                value={totpCode} onChange={(e) => setTotpCode(e.target.value)}
-                disabled={loading} required autoFocus
-                helperText="Enter the 6-digit code from your authenticator app"
-              />
+              <TextField fullWidth margin="normal" label="MFA Code" inputMode="numeric" inputProps={{ maxLength: 6, pattern: '[0-9]*' }} value={totpCode} onChange={(e) => setTotpCode(e.target.value)} disabled={loading} required autoFocus helperText="Enter the 6-digit code from your authenticator app" />
             )}
-            <Button
-              type="submit" fullWidth variant="contained" size="large"
-              sx={{ mt: 3 }} disabled={loading}
-            >
-              {loading ? <CircularProgress size={24} /> : 'Sign In'}
-            </Button>
-            <Divider sx={{ my: 3 }}>or</Divider>
-            <Button
-              fullWidth variant="outlined" size="large"
-              startIcon={<CloudIcon />}
-              onClick={() => { window.location.href = '/api/v1/auth/azure/login' }}
-              disabled={loading}
-            >
-              Sign in with Microsoft Azure
-            </Button>
+            <Button type="submit" fullWidth variant="contained" size="large" sx={{ mt: 3 }} disabled={loading}>{loading ? <CircularProgress size={24} /> : 'Sign In'}</Button>
+            {ssoEnabled && (
+              <>
+                <Divider sx={{ my: 3 }}>or</Divider>
+                <Button fullWidth variant="outlined" size="large" startIcon={ssoIcon} onClick={() => { window.location.href = '/api/v1/auth/sso/login' }} disabled={loading}>Sign in with {ssoDisplayName}</Button>
+              </>
+            )}
           </Box>
         )}
       </Paper>

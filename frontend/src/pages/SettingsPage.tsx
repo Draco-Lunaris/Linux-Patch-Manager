@@ -12,15 +12,20 @@ import DeleteIcon from '@mui/icons-material/Delete'
 import AddIcon from '@mui/icons-material/Add'
 import CloudIcon from '@mui/icons-material/Cloud'
 import EmailIcon from '@mui/icons-material/Email'
+import VpnKeyIcon from '@mui/icons-material/VpnKey'
+import ExploreIcon from '@mui/icons-material/Explore'
 import { settingsApi } from '../api/client'
-import type { AzureSsoConfig, SmtpConfig, PollingConfig, NotificationConfig } from '../types'
+import type { OidcConfigResponse, OidcDiscoveryResult, SmtpConfig, PollingConfig, NotificationConfig } from '../types'
 
-type AzureSsoForm = AzureSsoConfig & { client_secret?: string }
+type OidcForm = OidcConfigResponse & { client_secret?: string }
 type SmtpForm = SmtpConfig & { password?: string }
 
+const KEYCLOAK_DISCOVERY_URL = 'https://keycloak.moon-dragon.us/realms/moon-dragon.us/.well-known/openid-configuration'
+
 export default function SettingsPage() {
-  const [azureSso, setAzureSso] = useState<AzureSsoForm>({
-    enabled: false, tenant_id: '', client_id: '', client_secret: '', redirect_uri: '', scopes: 'openid email profile',
+  const [oidc, setOidc] = useState<OidcForm>({
+    enabled: false, provider_type: 'azure', display_name: 'Azure AD',
+    discovery_url: '', client_id: '', client_secret: '', redirect_uri: '', scopes: 'openid profile email',
   })
   const [smtp, setSmtp] = useState<SmtpForm>({
     enabled: false, host: '', port: 587, username: '', password: '', from: '', tls_mode: 'starttls',
@@ -35,9 +40,11 @@ export default function SettingsPage() {
   })
 
   const [saving, setSaving] = useState(false)
-  const [testingAzure, setTestingAzure] = useState(false)
+  const [testingOidc, setTestingOidc] = useState(false)
+  const [discoveringOidc, setDiscoveringOidc] = useState(false)
   const [testingSmtp, setTestingSmtp] = useState(false)
-  const [azureSsoTestResult, setAzureSsoTestResult] = useState<{ success: boolean; message: string } | null>(null)
+  const [oidcTestResult, setOidcTestResult] = useState<{ success: boolean; message: string } | null>(null)
+  const [discoveryResult, setDiscoveryResult] = useState<OidcDiscoveryResult | null>(null)
   const [smtpTestResult, setSmtpTestResult] = useState<{ success: boolean; message: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
@@ -47,7 +54,7 @@ export default function SettingsPage() {
     try {
       setLoading(true)
       const { data } = await settingsApi.get()
-      setAzureSso({ ...data.azure_sso, client_secret: '' })
+      setOidc({ ...data.oidc, client_secret: '' })
       setSmtp({ ...data.smtp, password: '' })
       setPolling(data.polling)
       setIpWhitelist(data.ip_whitelist)
@@ -62,20 +69,80 @@ export default function SettingsPage() {
 
   useEffect(() => { loadSettings() }, [loadSettings])
 
-  const handleSave = async () => {
-    setSaving(true)
-    setError(null)
-    setSuccess(null)
+  const handleProviderTypeChange = (providerType: string) => {
+    let discoveryUrl = oidc.discovery_url
+    let displayName = oidc.display_name
+
+    if (providerType === 'keycloak') {
+      discoveryUrl = KEYCLOAK_DISCOVERY_URL
+      displayName = 'Keycloak'
+    } else if (providerType === 'azure') {
+      // Clear discovery URL for Azure — user must enter tenant ID pattern
+      discoveryUrl = ''
+      displayName = 'Azure AD'
+    } else {
+      // Custom — leave discovery URL as-is for user to enter
+      displayName = 'OIDC Provider'
+    }
+
+    setOidc({ ...oidc, provider_type: providerType as OidcConfigResponse['provider_type'], display_name: displayName, discovery_url: discoveryUrl })
+  }
+
+  const handleDiscoverOidc = async () => {
+    if (!oidc.discovery_url) return
+    setDiscoveringOidc(true)
+    setDiscoveryResult(null)
     try {
+      const { data } = await settingsApi.discoverOidc(oidc.discovery_url)
+      setDiscoveryResult(data)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Discovery failed'
+      setDiscoveryResult({ success: false, issuer: '', authorization_endpoint: '', token_endpoint: '', jwks_uri: '', message: msg })
+    } finally {
+      setDiscoveringOidc(false)
+    }
+  }
+
+  const handleTestOidc = async () => {
+    setTestingOidc(true)
+    setOidcTestResult(null)
+    try {
+      // Save settings first so the test uses current form values
       await settingsApi.update({
-        azure_sso: { ...azureSso },
+        oidc: { ...oidc },
         smtp: { ...smtp },
         polling,
         ip_whitelist: ipWhitelist,
         web_tls_strategy: webTlsStrategy,
         notification: {
           ...notification,
-          email_from: smtp.from,  // Use SMTP From Address as notification sender
+          email_from: smtp.from,
+        },
+      })
+      const { data } = await settingsApi.testOidc()
+      setOidcTestResult(data)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Test failed'
+      setOidcTestResult({ success: false, message: msg })
+    } finally {
+      setTestingOidc(false)
+    }
+  }
+
+  const handleSave = async () => {
+    setSaving(true)
+    setError(null)
+    setSuccess(null)
+    try {
+      await settingsApi.update({
+        oidc: { ...oidc },
+        smtp: { ...smtp },
+        polling,
+        ip_whitelist: ipWhitelist,
+        web_tls_strategy: webTlsStrategy,
+        notification: {
+          ...notification,
+          email_from: smtp.from,
         },
       })
       setSuccess('Settings saved successfully')
@@ -90,37 +157,21 @@ export default function SettingsPage() {
     }
   }
 
-  const handleTestAzureSso = async () => {
-    setTestingAzure(true)
-    setAzureSsoTestResult(null)
-    try {
-      const { data } = await settingsApi.testAzureSso()
-      setAzureSsoTestResult(data)
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Test failed'
-      setAzureSsoTestResult({ success: false, message: msg })
-    } finally {
-      setTestingAzure(false)
-    }
-  }
-
   const handleTestSmtp = async () => {
     setTestingSmtp(true)
     setSmtpTestResult(null)
     try {
-      // Save settings first so the test uses current form values
       await settingsApi.update({
-        azure_sso: { ...azureSso },
+        oidc: { ...oidc },
         smtp: { ...smtp },
         polling,
         ip_whitelist: ipWhitelist,
         web_tls_strategy: webTlsStrategy,
         notification: {
           ...notification,
-          email_from: smtp.from,  // Use SMTP From Address as notification sender
+          email_from: smtp.from,
         },
       })
-      // Then test SMTP
       const { data } = await settingsApi.testSmtp()
       setSmtpTestResult(data)
     } catch (err: unknown) {
@@ -158,40 +209,124 @@ export default function SettingsPage() {
 
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}
 
-      {/* Section 1: Azure SSO Configuration */}
+      {/* Section 1: OIDC Provider Configuration */}
       <Accordion defaultExpanded>
         <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-          <Typography fontWeight={600}>Azure SSO Configuration</Typography>
+          <Typography fontWeight={600}>OIDC Provider Configuration</Typography>
         </AccordionSummary>
         <AccordionDetails>
           <Grid container spacing={2}>
             <Grid size={12}>
               <FormControlLabel
-                control={<Switch checked={azureSso.enabled} onChange={(e) => setAzureSso({ ...azureSso, enabled: e.target.checked })} />}
-                label="Enable Azure SSO"
+                control={<Switch checked={oidc.enabled} onChange={(e) => setOidc({ ...oidc, enabled: e.target.checked })} />}
+                label="Enable SSO / OIDC Authentication"
+              />
+            </Grid>
+            <Grid size={4}>
+              <FormControl fullWidth>
+                <InputLabel>Provider Type</InputLabel>
+                <Select
+                  value={oidc.provider_type}
+                  label="Provider Type"
+                  onChange={(e) => handleProviderTypeChange(e.target.value)}
+                  disabled={!oidc.enabled}
+                >
+                  <MenuItem value="keycloak">Keycloak</MenuItem>
+                  <MenuItem value="azure">Azure AD</MenuItem>
+                  <MenuItem value="custom">Custom OIDC</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid size={4}>
+              <TextField
+                fullWidth
+                label="Display Name"
+                value={oidc.display_name}
+                onChange={(e) => setOidc({ ...oidc, display_name: e.target.value })}
+                helperText="Shown on the login button"
+                disabled={!oidc.enabled}
+              />
+            </Grid>
+            <Grid size={12}>
+              <TextField
+                fullWidth
+                label="Discovery URL"
+                value={oidc.discovery_url}
+                onChange={(e) => setOidc({ ...oidc, discovery_url: e.target.value })}
+                placeholder={oidc.provider_type === 'azure' ? 'https://login.microsoftonline.com/<tenant_id>/v2.0/.well-known/openid-configuration' : 'https://sso.example.com/.well-known/openid-configuration'}
+                helperText={oidc.provider_type === 'keycloak' ? 'Auto-filled for Keycloak' : 'OIDC well-known endpoint URL'}
+                disabled={!oidc.enabled}
               />
             </Grid>
             <Grid size={6}>
-              <TextField fullWidth label="Tenant ID" value={azureSso.tenant_id} onChange={(e) => setAzureSso({ ...azureSso, tenant_id: e.target.value })} />
+              <Button
+                variant="outlined"
+                onClick={handleDiscoverOidc}
+                disabled={discoveringOidc || !oidc.discovery_url}
+                startIcon={discoveringOidc ? <CircularProgress size={20} /> : <ExploreIcon />}
+              >
+                Discover Endpoints
+              </Button>
+              {discoveryResult && (
+                <Alert severity={discoveryResult.success ? 'success' : 'error'} sx={{ mt: 1 }}>
+                  {discoveryResult.success
+                    ? `Discovered: ${discoveryResult.issuer}`
+                    : discoveryResult.message || 'Discovery failed'}
+                </Alert>
+              )}
             </Grid>
             <Grid size={6}>
-              <TextField fullWidth label="Client ID" value={azureSso.client_id} onChange={(e) => setAzureSso({ ...azureSso, client_id: e.target.value })} />
+              <TextField
+                fullWidth
+                label="Client ID"
+                value={oidc.client_id}
+                onChange={(e) => setOidc({ ...oidc, client_id: e.target.value })}
+                required
+                disabled={!oidc.enabled}
+              />
             </Grid>
             <Grid size={6}>
-              <TextField fullWidth label="Client Secret" type="password" value={azureSso.client_secret ?? ''} onChange={(e) => setAzureSso({ ...azureSso, client_secret: e.target.value })} placeholder="Enter new secret or leave masked" />
+              <TextField
+                fullWidth
+                label="Client Secret"
+                type="password"
+                value={oidc.client_secret ?? ''}
+                onChange={(e) => setOidc({ ...oidc, client_secret: e.target.value })}
+                placeholder="Enter new secret or leave masked"
+                helperText="Leave empty for public clients (e.g. Keycloak)"
+                disabled={!oidc.enabled}
+              />
             </Grid>
             <Grid size={6}>
-              <TextField fullWidth label="Redirect URI" value={azureSso.redirect_uri} onChange={(e) => setAzureSso({ ...azureSso, redirect_uri: e.target.value })} helperText="e.g. https://patch-manager.example.com/api/v1/auth/azure/callback" />
+              <TextField
+                fullWidth
+                label="Redirect URI"
+                value={oidc.redirect_uri}
+                onChange={(e) => setOidc({ ...oidc, redirect_uri: e.target.value })}
+                helperText="e.g. https://patch-manager.example.com/api/v1/auth/sso/callback"
+                disabled={!oidc.enabled}
+              />
             </Grid>
             <Grid size={6}>
-              <TextField fullWidth label="Scopes" value={azureSso.scopes} onChange={(e) => setAzureSso({ ...azureSso, scopes: e.target.value })} />
+              <TextField
+                fullWidth
+                label="Scopes"
+                value={oidc.scopes}
+                onChange={(e) => setOidc({ ...oidc, scopes: e.target.value })}
+                disabled={!oidc.enabled}
+              />
             </Grid>
             <Grid size={6}>
-              <Button variant="outlined" onClick={handleTestAzureSso} disabled={testingAzure || !azureSso.tenant_id} startIcon={testingAzure ? <CircularProgress size={20} /> : <CloudIcon />}>
+              <Button
+                variant="outlined"
+                onClick={handleTestOidc}
+                disabled={testingOidc || !oidc.discovery_url}
+                startIcon={testingOidc ? <CircularProgress size={20} /> : (oidc.provider_type === 'keycloak' ? <VpnKeyIcon /> : <CloudIcon />)}
+              >
                 Test Connection
               </Button>
-              {azureSsoTestResult && (
-                <Alert severity={azureSsoTestResult.success ? 'success' : 'error'} sx={{ mt: 1 }}>{azureSsoTestResult.message}</Alert>
+              {oidcTestResult && (
+                <Alert severity={oidcTestResult.success ? 'success' : 'error'} sx={{ mt: 1 }}>{oidcTestResult.message}</Alert>
               )}
             </Grid>
           </Grid>

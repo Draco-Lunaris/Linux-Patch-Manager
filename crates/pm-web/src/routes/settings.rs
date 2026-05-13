@@ -2,7 +2,9 @@
 //!
 //! GET  /api/v1/settings              — get all settings (admin only)
 //! PUT  /api/v1/settings              — update settings (admin only)
-//! POST /api/v1/settings/azure-sso/test — test Azure SSO connectivity (admin only)
+//! POST /api/v1/settings/sso/discover — discover OIDC endpoints (admin only)
+//! POST /api/v1/settings/sso/test     — test OIDC provider connectivity (admin only)
+//! POST /api/v1/settings/azure-sso/test — backward-compat alias for SSO test (admin only)
 //! POST /api/v1/settings/smtp/test    — send test email (admin only)
 //! GET  /api/v1/settings/ip-whitelist — get IP whitelist (admin only)
 //! PUT  /api/v1/settings/ip-whitelist — update IP whitelist (admin only)
@@ -34,7 +36,7 @@ use crate::AppState;
 
 #[derive(Debug, Serialize)]
 pub struct SettingsResponse {
-    pub azure_sso: AzureSsoConfig,
+    pub oidc: OidcConfigResponse,
     pub smtp: SmtpConfig,
     pub polling: PollingConfig,
     pub ip_whitelist: Vec<String>,
@@ -44,10 +46,13 @@ pub struct SettingsResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct AzureSsoConfig {
+pub struct OidcConfigResponse {
     pub enabled: bool,
-    pub tenant_id: String,
+    pub provider_type: String, // "keycloak", "azure", "custom"
+    pub display_name: String,
+    pub discovery_url: String,
     pub client_id: String,
+    pub client_secret: String, // Always masked in responses
     pub redirect_uri: String,
     pub scopes: String,
 }
@@ -70,7 +75,7 @@ pub struct PollingConfig {
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateSettingsRequest {
-    pub azure_sso: Option<AzureSsoConfigUpdate>,
+    pub oidc: Option<OidcConfigUpdate>,
     pub smtp: Option<SmtpConfigUpdate>,
     pub polling: Option<PollingConfigUpdate>,
     pub ip_whitelist: Option<Vec<String>>,
@@ -93,13 +98,29 @@ pub struct NotificationConfigUpdate {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct AzureSsoConfigUpdate {
+pub struct OidcConfigUpdate {
     pub enabled: Option<bool>,
-    pub tenant_id: Option<String>,
+    pub provider_type: Option<String>,
+    pub display_name: Option<String>,
+    pub discovery_url: Option<String>,
     pub client_id: Option<String>,
     pub client_secret: Option<String>,
     pub redirect_uri: Option<String>,
     pub scopes: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OidcDiscoveryRequest {
+    pub discovery_url: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OidcDiscoveryResult {
+    pub issuer: String,
+    pub authorization_endpoint: String,
+    pub token_endpoint: String,
+    pub jwks_uri: String,
+    pub userinfo_endpoint: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -131,7 +152,9 @@ pub struct IpWhitelistUpdate {
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(get_settings).put(update_settings))
-        .route("/azure-sso/test", post(test_azure_sso))
+        .route("/sso/discover", post(discover_oidc))
+        .route("/sso/test", post(test_oidc))
+        .route("/azure-sso/test", post(test_azure_sso_compat))
         .route("/smtp/test", post(test_smtp))
         .route(
             "/ip-whitelist",
@@ -175,7 +198,7 @@ async fn load_system_config(
 
 fn build_settings_response(
     cfg: &HashMap<String, String>,
-    azure: AzureSsoConfig,
+    oidc: OidcConfigResponse,
 ) -> SettingsResponse {
     let get = |key: &str| -> String { cfg.get(key).cloned().unwrap_or_default() };
 
@@ -183,7 +206,7 @@ fn build_settings_response(
         serde_json::from_str(&get("notification_email_recipients")).unwrap_or_default();
 
     SettingsResponse {
-        azure_sso: azure,
+        oidc,
         smtp: SmtpConfig {
             enabled: get("smtp_enabled") == "true",
             host: get("smtp_host"),
@@ -227,16 +250,16 @@ async fn update_config_key(
     Ok(())
 }
 
-async fn fetch_azure_sso_config(
+async fn fetch_oidc_config(
     pool: &sqlx::PgPool,
-) -> Result<AzureSsoConfig, (StatusCode, Json<Value>)> {
-    let row: Option<(bool, String, String, String, String)> = sqlx::query_as(
-        "SELECT enabled, tenant_id, client_id, redirect_uri, scopes FROM azure_sso_config WHERE id = 1",
+) -> Result<OidcConfigResponse, (StatusCode, Json<Value>)> {
+    let row: Option<(bool, String, String, String, String, String, String, String)> = sqlx::query_as(
+        "SELECT enabled, provider_type, display_name, discovery_url, client_id, client_secret, redirect_uri, scopes FROM oidc_config WHERE id = 1",
     )
     .fetch_optional(pool)
     .await
     .map_err(|e| {
-        tracing::error!(error = %e, "Failed to load azure_sso_config");
+        tracing::error!(error = %e, "Failed to load oidc_config");
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
@@ -244,19 +267,38 @@ async fn fetch_azure_sso_config(
     })?;
 
     Ok(match row {
-        Some((enabled, tenant_id, client_id, redirect_uri, scopes)) => AzureSsoConfig {
+        Some((
             enabled,
-            tenant_id,
+            provider_type,
+            display_name,
+            discovery_url,
             client_id,
+            client_secret,
+            redirect_uri,
+            scopes,
+        )) => OidcConfigResponse {
+            enabled,
+            provider_type,
+            display_name,
+            discovery_url,
+            client_id,
+            client_secret: if client_secret.is_empty() {
+                String::new()
+            } else {
+                MASKED.to_string()
+            },
             redirect_uri,
             scopes,
         },
-        None => AzureSsoConfig {
+        None => OidcConfigResponse {
             enabled: false,
-            tenant_id: String::new(),
+            provider_type: "azure".to_string(),
+            display_name: "Azure AD".to_string(),
+            discovery_url: String::new(),
             client_id: String::new(),
+            client_secret: String::new(),
             redirect_uri: String::new(),
-            scopes: "openid email profile".to_string(),
+            scopes: "openid profile email".to_string(),
         },
     })
 }
@@ -277,8 +319,8 @@ async fn get_settings(
         "sso_callback_url".to_string(),
         state.config.security.sso_callback_url.clone(),
     );
-    let azure = fetch_azure_sso_config(&state.db).await?;
-    Ok(Json(build_settings_response(&cfg, azure)))
+    let oidc = fetch_oidc_config(&state.db).await?;
+    Ok(Json(build_settings_response(&cfg, oidc)))
 }
 
 // ============================================================
@@ -292,56 +334,66 @@ async fn update_settings(
 ) -> Result<Json<SettingsResponse>, (StatusCode, Json<Value>)> {
     admin_only(&auth)?;
 
-    // Update Azure SSO config
-    // Use static queries with proper typed bindings to avoid boolean→string mismatch
-    if let Some(azure) = req.azure_sso {
-        let update_secret = azure.client_secret.as_ref().is_some_and(|s| s != MASKED);
+    // Update OIDC config
+    if let Some(oidc) = req.oidc {
+        let update_secret = oidc
+            .client_secret
+            .as_ref()
+            .is_some_and(|s| s != MASKED && !s.is_empty());
 
         let result = if update_secret {
             sqlx::query(
-                "UPDATE azure_sso_config SET \
+                "UPDATE oidc_config SET \
                  enabled = COALESCE($1, enabled), \
-                 tenant_id = COALESCE($2, tenant_id), \
-                 client_id = COALESCE($3, client_id), \
-                 client_secret = $4, \
-                 redirect_uri = COALESCE($5, redirect_uri), \
-                 scopes = COALESCE($6, scopes), \
+                 provider_type = COALESCE($2, provider_type), \
+                 display_name = COALESCE($3, display_name), \
+                 discovery_url = COALESCE($4, discovery_url), \
+                 client_id = COALESCE($5, client_id), \
+                 client_secret = $6, \
+                 redirect_uri = COALESCE($7, redirect_uri), \
+                 scopes = COALESCE($8, scopes), \
                  updated_at = NOW() \
                  WHERE id = 1",
             )
-            .bind(azure.enabled)
-            .bind(&azure.tenant_id)
-            .bind(&azure.client_id)
-            .bind(azure.client_secret.as_deref().unwrap_or(""))
-            .bind(&azure.redirect_uri)
-            .bind(&azure.scopes)
+            .bind(oidc.enabled)
+            .bind(&oidc.provider_type)
+            .bind(&oidc.display_name)
+            .bind(&oidc.discovery_url)
+            .bind(&oidc.client_id)
+            .bind(oidc.client_secret.as_deref().unwrap_or(""))
+            .bind(&oidc.redirect_uri)
+            .bind(&oidc.scopes)
             .execute(&state.db)
             .await
         } else {
             sqlx::query(
-                "UPDATE azure_sso_config SET \
+                "UPDATE oidc_config SET \
                  enabled = COALESCE($1, enabled), \
-                 tenant_id = COALESCE($2, tenant_id), \
-                 client_id = COALESCE($3, client_id), \
-                 redirect_uri = COALESCE($4, redirect_uri), \
-                 scopes = COALESCE($5, scopes), \
+                 provider_type = COALESCE($2, provider_type), \
+                 display_name = COALESCE($3, display_name), \
+                 discovery_url = COALESCE($4, discovery_url), \
+                 client_id = COALESCE($5, client_id), \
+                 redirect_uri = COALESCE($6, redirect_uri), \
+                 scopes = COALESCE($7, scopes), \
                  updated_at = NOW() \
                  WHERE id = 1",
             )
-            .bind(azure.enabled)
-            .bind(&azure.tenant_id)
-            .bind(&azure.client_id)
-            .bind(&azure.redirect_uri)
-            .bind(&azure.scopes)
+            .bind(oidc.enabled)
+            .bind(&oidc.provider_type)
+            .bind(&oidc.display_name)
+            .bind(&oidc.discovery_url)
+            .bind(&oidc.client_id)
+            .bind(&oidc.redirect_uri)
+            .bind(&oidc.scopes)
             .execute(&state.db)
             .await
         };
 
         result.map_err(|e| {
-            tracing::error!(error = %e, "Failed to update azure_sso_config");
+            tracing::error!(error = %e, "Failed to update oidc_config");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": { "code": "internal_error", "message": format!("Failed to update Azure SSO config: {}", e) } })),
+                Json(json!({ "error": { "code": "internal_error", "message": format!("Failed to update OIDC config: {}", e) } })),
             )
         })?;
 
@@ -350,9 +402,9 @@ async fn update_settings(
             AuditAction::ConfigChanged,
             Some(auth.user_id),
             Some(&auth.username),
-            Some("azure_sso"),
+            Some("oidc"),
             Some("1"),
-            json!({ "section": "azure_sso" }),
+            json!({ "section": "oidc" }),
             None,
             None,
         )
@@ -497,54 +549,29 @@ async fn update_settings(
         "sso_callback_url".to_string(),
         state.config.security.sso_callback_url.clone(),
     );
-    let azure = fetch_azure_sso_config(&state.db).await?;
-    Ok(Json(build_settings_response(&cfg, azure)))
+    let oidc = fetch_oidc_config(&state.db).await?;
+    Ok(Json(build_settings_response(&cfg, oidc)))
 }
 
 // ============================================================
-// POST /api/v1/settings/azure-sso/test
+// POST /api/v1/settings/sso/discover
 // ============================================================
 
-async fn test_azure_sso(
+async fn discover_oidc(
     State(state): State<AppState>,
     auth: AuthUser,
+    Json(req): Json<OidcDiscoveryRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     admin_only(&auth)?;
 
-    let row: Option<(String, String)> = sqlx::query_as(
-        "SELECT tenant_id, client_id FROM azure_sso_config WHERE id = 1",
-    )
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| {
-        tracing::error!(error = %e, "Failed to load azure_sso_config");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
-        )
-    })?;
-
-    let (tenant_id, _client_id) = match row {
-        Some(r) => r,
-        None => {
-            return Ok(Json(json!({
-                "success": false,
-                "message": "Azure SSO is not configured"
-            })));
-        },
-    };
-
-    if tenant_id.is_empty() {
-        return Ok(Json(json!({
-            "success": false,
-            "message": "Azure tenant ID is not set"
-        })));
+    if req.discovery_url.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(
+                json!({ "error": { "code": "bad_request", "message": "discovery_url is required" } }),
+            ),
+        ));
     }
-
-    let url = format!(
-        "https://login.microsoftonline.com/{}/v2.0/.well-known/openid-configuration",
-        tenant_id
-    );
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
@@ -557,33 +584,127 @@ async fn test_azure_sso(
             )
         })?;
 
-    match client.get(&url).send().await {
+    match client.get(&req.discovery_url).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            let body: Value = resp.json().await.unwrap_or(json!({}));
+            Ok(Json(json!({
+                "success": true,
+                "issuer": body.get("issuer").and_then(|v| v.as_str()).unwrap_or(""),
+                "authorization_endpoint": body.get("authorization_endpoint").and_then(|v| v.as_str()).unwrap_or(""),
+                "token_endpoint": body.get("token_endpoint").and_then(|v| v.as_str()).unwrap_or(""),
+                "jwks_uri": body.get("jwks_uri").and_then(|v| v.as_str()).unwrap_or(""),
+                "userinfo_endpoint": body.get("userinfo_endpoint").and_then(|v| v.as_str()),
+            })))
+        },
+        Ok(resp) => Err((
+            StatusCode::BAD_GATEWAY,
+            Json(
+                json!({ "error": { "code": "discovery_failed", "message": format!("Discovery endpoint returned HTTP {}", resp.status()) } }),
+            ),
+        )),
+        Err(e) => Err((
+            StatusCode::BAD_GATEWAY,
+            Json(
+                json!({ "error": { "code": "discovery_failed", "message": format!("Failed to reach discovery endpoint: {}", e) } }),
+            ),
+        )),
+    }
+}
+
+// ============================================================
+// POST /api/v1/settings/sso/test
+// ============================================================
+
+async fn test_oidc(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    admin_only(&auth)?;
+
+    let row: Option<(bool, String, String)> = sqlx::query_as(
+        "SELECT enabled, provider_type, discovery_url FROM oidc_config WHERE id = 1",
+    )
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, "Failed to load oidc_config");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+        )
+    })?;
+
+    let (enabled, provider_type, discovery_url) = match row {
+        Some(r) => r,
+        None => {
+            return Ok(Json(json!({
+                "success": false,
+                "message": "OIDC is not configured"
+            })));
+        },
+    };
+
+    if !enabled {
+        return Ok(Json(json!({
+            "success": false,
+            "message": "OIDC is not enabled"
+        })));
+    }
+
+    if discovery_url.is_empty() {
+        return Ok(Json(json!({
+            "success": false,
+            "message": "OIDC discovery URL is not set"
+        })));
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to build HTTP client");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": "HTTP client error" } })),
+            )
+        })?;
+
+    match client.get(&discovery_url).send().await {
         Ok(resp) if resp.status().is_success() => {
             let body: Value = resp.json().await.unwrap_or(json!({}));
             let issuer = body.get("issuer").and_then(|v| v.as_str()).unwrap_or("");
-            if issuer.contains(&tenant_id) {
-                Ok(Json(json!({
-                    "success": true,
-                    "message": "Azure AD tenant verified successfully",
-                    "issuer": issuer
-                })))
-            } else {
-                Ok(Json(json!({
-                    "success": true,
-                    "message": "Azure AD endpoint reached, but issuer does not match tenant_id",
-                    "issuer": issuer
-                })))
-            }
+            let provider_label = match provider_type.as_str() {
+                "keycloak" => "Keycloak",
+                "azure" => "Azure AD",
+                _ => "OIDC",
+            };
+            Ok(Json(json!({
+                "success": true,
+                "message": format!("{} provider verified successfully", provider_label),
+                "issuer": issuer,
+                "provider_type": provider_type,
+            })))
         },
         Ok(resp) => Ok(Json(json!({
             "success": false,
-            "message": format!("Failed to reach Azure AD: HTTP {}", resp.status())
+            "message": format!("Failed to reach OIDC provider: HTTP {}", resp.status())
         }))),
         Err(e) => Ok(Json(json!({
             "success": false,
-            "message": format!("Failed to reach Azure AD: {}", e)
+            "message": format!("Failed to reach OIDC provider: {}", e)
         }))),
     }
+}
+
+// ============================================================
+// POST /api/v1/settings/azure-sso/test (backward-compatible alias)
+// ============================================================
+
+async fn test_azure_sso_compat(
+    state: State<AppState>,
+    auth: AuthUser,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    test_oidc(state, auth).await
 }
 
 // ============================================================

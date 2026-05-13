@@ -52,13 +52,15 @@ export default function SsoCallbackPage() {
     }
 
     // Build a full User object from the SSO subset, filling in sensible defaults
+    // auth_provider comes from the backend based on the OIDC provider type
+    const authProvider = (parsedUser.auth_provider as string) || 'azure_sso'
     const user: User = {
       id: (parsedUser.id as string) || '',
       username: (parsedUser.username as string) || '',
       display_name: (parsedUser.display_name as string) || '',
       email: (parsedUser.email as string) || '',
       role: (parsedUser.role as User['role']) || 'operator',
-      auth_provider: 'azure_sso',
+      auth_provider: authProvider as User['auth_provider'],
       mfa_enabled: (parsedUser.mfa_enabled as boolean) ?? false,
       is_active: true,
       force_password_reset: false,

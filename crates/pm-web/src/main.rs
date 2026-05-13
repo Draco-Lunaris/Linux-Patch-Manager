@@ -10,7 +10,7 @@ use pm_auth::{
     rbac::{require_auth, AuthConfig},
 };
 use pm_core::{config::AppConfig, db, logging, request_id::request_id_middleware};
-use routes::azure_sso::{JwksCache, SsoSession};
+use routes::sso::{OidcCache, SsoSession};
 use routes::ws::WsTicket;
 use serde_json::{json, Value};
 use std::{net::SocketAddr, sync::Arc, time::Duration};
@@ -31,8 +31,8 @@ pub struct AppState {
     pub ws_tickets: Arc<DashMap<String, WsTicket>>,
     /// In-memory store for SSO PKCE sessions (state → code_verifier).
     pub sso_sessions: Arc<DashMap<String, SsoSession>>,
-    /// Cached Azure AD JWKS for id_token signature verification.
-    pub jwks_cache: Arc<Mutex<JwksCache>>,
+    /// Cached OIDC discovery document and JWKS for SSO id_token verification.
+    pub oidc_cache: Arc<Mutex<OidcCache>>,
     /// Internal certificate authority for mTLS client cert issuance.
     pub ca: Arc<pm_ca::CertAuthority>,
 }
@@ -90,7 +90,7 @@ async fn main() -> anyhow::Result<()> {
 
     let ws_tickets: Arc<DashMap<String, WsTicket>> = Arc::new(DashMap::new());
     let sso_sessions: Arc<DashMap<String, SsoSession>> = Arc::new(DashMap::new());
-    let jwks_cache: Arc<Mutex<JwksCache>> = Arc::new(Mutex::new(JwksCache::default()));
+    let oidc_cache: Arc<Mutex<OidcCache>> = Arc::new(Mutex::new(OidcCache::default()));
 
     // Background task: purge expired WS tickets every 30 seconds.
     {
@@ -137,7 +137,7 @@ async fn main() -> anyhow::Result<()> {
         ws_tickets,
         sso_sessions,
         ca: Arc::new(ca),
-        jwks_cache,
+        oidc_cache,
     };
 
     let app = build_router(state);
@@ -234,7 +234,7 @@ pub fn build_router(state: AppState) -> Router {
         // Public auth routes (no JWT needed)
         .nest("/api/v1/auth", routes::auth::public_router())
         // Public Azure SSO routes (no JWT needed)
-        .nest("/api/v1/auth/azure", routes::azure_sso::public_router())
+        .nest("/api/v1/auth/azure", routes::sso::azure_compat_router())
         // Protected API routes (JWT required)
         .nest("/api/v1", protected_api)
         // WebSocket browser endpoint — ticket-authenticated, outside JWT middleware
