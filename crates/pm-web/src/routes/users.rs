@@ -96,10 +96,10 @@ async fn create_user(
         )
     })?;
 
-    let role = if req.role == "admin" {
-        "admin"
-    } else {
-        "operator"
+    let role = match req.role.to_lowercase().as_str() {
+        "admin" => "admin",
+        "reporter" => "reporter",
+        _ => "operator",
     };
 
     let id: Uuid = sqlx::query_scalar(
@@ -220,7 +220,11 @@ async fn update_user(
     let role_str = req
         .role
         .as_deref()
-        .map(|r| if r == "admin" { "admin" } else { "operator" });
+        .map(|r| match r.to_lowercase().as_str() {
+            "admin" => "admin",
+            "reporter" => "reporter",
+            _ => "operator",
+        });
 
     let rows = sqlx::query(
         r#"UPDATE users SET
