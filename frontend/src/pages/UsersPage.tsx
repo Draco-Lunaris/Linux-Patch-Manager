@@ -298,6 +298,7 @@ export default function UsersPage() {
             <MenuItem value="all">All</MenuItem>
             <MenuItem value="admin">Admin</MenuItem>
             <MenuItem value="operator">Operator</MenuItem>
+            <MenuItem value="reporter">Reporter</MenuItem>
           </Select>
         </FormControl>
       </Box>
@@ -412,6 +413,7 @@ export default function UsersPage() {
               onChange={e => setAddForm({ ...addForm, role: e.target.value })}>
               <MenuItem value="operator">Operator</MenuItem>
               <MenuItem value="admin">Admin</MenuItem>
+              <MenuItem value="reporter">Reporter</MenuItem>
             </Select>
           </FormControl>
         </DialogContent>
@@ -450,6 +452,7 @@ export default function UsersPage() {
                   onChange={e => setEditForm({ ...editForm, role: e.target.value })}>
                   <MenuItem value="operator">Operator</MenuItem>
                   <MenuItem value="admin">Admin</MenuItem>
+                  <MenuItem value="reporter">Reporter</MenuItem>
                 </Select>
               </FormControl>
               <Box sx={{ display: 'flex', alignItems: 'center', mt: 2 }}>
