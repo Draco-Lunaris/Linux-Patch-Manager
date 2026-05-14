@@ -102,8 +102,8 @@ async fn list_health_checks(
     auth: AuthUser,
     Path(host_id): Path<Uuid>,
 ) -> Result<Json<HealthCheckListResponse>, (StatusCode, Json<Value>)> {
-    // RBAC check for operators
-    if !auth.role.is_admin() {
+    // RBAC: reporters can only see hosts in their groups
+    if !auth.role.can_write() {
         let can_access = operator_can_access_host(&state.db, auth.user_id, host_id)
             .await
             .map_err(|e| {
@@ -208,25 +208,11 @@ async fn create_health_check(
     Path(host_id): Path<Uuid>,
     Json(req): Json<CreateHealthCheckRequest>,
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
-    // RBAC check for operators
-    if !auth.role.is_admin() {
-        let can_access = operator_can_access_host(&state.db, auth.user_id, host_id)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "RBAC check failed");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
-                )
-            })?;
-        if !can_access {
-            return Err((
-                StatusCode::FORBIDDEN,
-                Json(
-                    json!({ "error": { "code": "forbidden", "message": "Not authorized for this host" } }),
-                ),
-            ));
-        }
+    if !auth.role.can_write() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": { "code": "forbidden", "message": "Write access required" } })),
+        ));
     }
 
     // Validate check_type
@@ -426,8 +412,8 @@ async fn get_health_check(
     auth: AuthUser,
     Path((host_id, check_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<HealthCheckWithResult>, (StatusCode, Json<Value>)> {
-    // RBAC check for operators
-    if !auth.role.is_admin() {
+    // RBAC: reporters can only see hosts in their groups
+    if !auth.role.can_write() {
         let can_access = operator_can_access_host(&state.db, auth.user_id, host_id)
             .await
             .map_err(|e| {
@@ -506,25 +492,11 @@ async fn update_health_check(
     Path((host_id, check_id)): Path<(Uuid, Uuid)>,
     Json(req): Json<UpdateHealthCheckRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    // RBAC check for operators
-    if !auth.role.is_admin() {
-        let can_access = operator_can_access_host(&state.db, auth.user_id, host_id)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "RBAC check failed");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
-                )
-            })?;
-        if !can_access {
-            return Err((
-                StatusCode::FORBIDDEN,
-                Json(
-                    json!({ "error": { "code": "forbidden", "message": "Not authorized for this host" } }),
-                ),
-            ));
-        }
+    if !auth.role.can_write() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": { "code": "forbidden", "message": "Write access required" } })),
+        ));
     }
 
     // Verify check exists and belongs to host
@@ -746,25 +718,11 @@ async fn delete_health_check(
     auth: AuthUser,
     Path((host_id, check_id)): Path<(Uuid, Uuid)>,
 ) -> Result<StatusCode, (StatusCode, Json<Value>)> {
-    // RBAC check for operators
-    if !auth.role.is_admin() {
-        let can_access = operator_can_access_host(&state.db, auth.user_id, host_id)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "RBAC check failed");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
-                )
-            })?;
-        if !can_access {
-            return Err((
-                StatusCode::FORBIDDEN,
-                Json(
-                    json!({ "error": { "code": "forbidden", "message": "Not authorized for this host" } }),
-                ),
-            ));
-        }
+    if !auth.role.can_write() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": { "code": "forbidden", "message": "Write access required" } })),
+        ));
     }
 
     let deleted = sqlx::query("DELETE FROM host_health_checks WHERE id = $1 AND host_id = $2")
@@ -811,25 +769,11 @@ async fn test_health_check(
     auth: AuthUser,
     Path((host_id, check_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<HealthCheckTestResponse>, (StatusCode, Json<Value>)> {
-    // RBAC check for operators
-    if !auth.role.is_admin() {
-        let can_access = operator_can_access_host(&state.db, auth.user_id, host_id)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "RBAC check failed");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
-                )
-            })?;
-        if !can_access {
-            return Err((
-                StatusCode::FORBIDDEN,
-                Json(
-                    json!({ "error": { "code": "forbidden", "message": "Not authorized for this host" } }),
-                ),
-            ));
-        }
+    if !auth.role.can_write() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": { "code": "forbidden", "message": "Write access required" } })),
+        ));
     }
 
     // Get the health check

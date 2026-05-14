@@ -37,6 +37,7 @@ import {
   Schedule as ScheduleIcon,
 } from '@mui/icons-material'
 import { maintenanceWindowsApi, hostsApi } from '../api/client'
+import { useAuthStore } from '../store/authStore'
 import type { Host, MaintenanceWindow, WindowRecurrence } from '../types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -311,9 +312,10 @@ interface HostWindowsTableProps {
   onEdit: (w: MaintenanceWindow) => void
   onDelete: (w: MaintenanceWindow) => void
   onAdd: (hostId: string) => void
+  canWrite: boolean
 }
 
-function HostWindowsTable({ host, windows, onEdit, onDelete, onAdd }: HostWindowsTableProps) {
+function HostWindowsTable({ host, windows, onEdit, onDelete, onAdd, canWrite }: HostWindowsTableProps) {
   return (
     <Paper variant="outlined" sx={{ mb: 3 }}>
       <Box
@@ -336,14 +338,14 @@ function HostWindowsTable({ host, windows, onEdit, onDelete, onAdd }: HostWindow
             ({host.fqdn})
           </Typography>
         </Box>
-        <Button
+        {canWrite && <Button
           size="small"
           startIcon={<AddIcon />}
           variant="outlined"
           onClick={() => onAdd(host.id)}
         >
           Add Window
-        </Button>
+        </Button>}
       </Box>
 
       {windows.length === 0 ? (
@@ -362,7 +364,7 @@ function HostWindowsTable({ host, windows, onEdit, onDelete, onAdd }: HostWindow
               <TableCell>Status</TableCell>
               <TableCell>Auto-Apply</TableCell>
               <TableCell>Created</TableCell>
-              <TableCell align="right">Actions</TableCell>
+              {canWrite && <TableCell align="right">Actions</TableCell>}
             </TableRow>
           </TableHead>
           <TableBody>
@@ -394,7 +396,7 @@ function HostWindowsTable({ host, windows, onEdit, onDelete, onAdd }: HostWindow
                   />
                 </TableCell>
                 <TableCell>{fmtDate(w.created_at)}</TableCell>
-                <TableCell align="right">
+                {canWrite && <TableCell align="right">
                   <Tooltip title="Edit">
                     <IconButton size="small" onClick={() => onEdit(w)}>
                       <EditIcon fontSize="small" />
@@ -405,7 +407,7 @@ function HostWindowsTable({ host, windows, onEdit, onDelete, onAdd }: HostWindow
                       <DeleteIcon fontSize="small" />
                     </IconButton>
                   </Tooltip>
-                </TableCell>
+                </TableCell>}
               </TableRow>
             ))}
           </TableBody>
@@ -418,6 +420,8 @@ function HostWindowsTable({ host, windows, onEdit, onDelete, onAdd }: HostWindow
 // ── Main page ──────────────────────────────────────────────────────────────────
 
 export default function MaintenanceWindowsPage() {
+  const user = useAuthStore(state => state.user)
+  const canWrite = user?.role === 'admin' || user?.role === 'operator'
   const [hosts, setHosts] = useState<Host[]>([])
   const [windowsByHost, setWindowsByHost] = useState<Record<string, MaintenanceWindow[]>>({})
   const [loading, setLoading] = useState(true)
@@ -593,9 +597,9 @@ export default function MaintenanceWindowsPage() {
           onEdit={handleEditClick}
           onDelete={handleDeleteClick}
           onAdd={handleAddClick}
+          canWrite={canWrite}
         />
       ))}
-
       {/* Create dialog */}
       <WindowFormDialog
         open={createOpen}

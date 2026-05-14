@@ -1,6 +1,6 @@
 // Core TypeScript types — expanded per milestone
 
-export type UserRole = 'admin' | 'operator'
+export type UserRole = 'admin' | 'operator' | 'reporter'
 export type AuthProvider = 'local' | 'azure_sso' | 'keycloak' | 'oidc'
 export type HostHealthStatus = 'pending' | 'healthy' | 'degraded' | 'unreachable'
 export type JobStatus = 'queued' | 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled'

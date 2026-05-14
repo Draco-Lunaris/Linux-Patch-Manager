@@ -62,10 +62,10 @@ async fn create_group(
     auth: AuthUser,
     Json(req): Json<CreateGroupRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    if !auth.role.is_admin() {
+    if !auth.role.can_write() {
         return Err((
             StatusCode::FORBIDDEN,
-            Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } })),
+            Json(json!({ "error": { "code": "forbidden", "message": "Write access required" } })),
         ));
     }
 
@@ -154,10 +154,10 @@ async fn update_group(
     Path(id): Path<Uuid>,
     Json(req): Json<UpdateGroupRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    if !auth.role.is_admin() {
+    if !auth.role.can_write() {
         return Err((
             StatusCode::FORBIDDEN,
-            Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } })),
+            Json(json!({ "error": { "code": "forbidden", "message": "Write access required" } })),
         ));
     }
 
@@ -187,10 +187,10 @@ async fn delete_group(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    if !auth.role.is_admin() {
+    if !auth.role.can_write() {
         return Err((
             StatusCode::FORBIDDEN,
-            Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } })),
+            Json(json!({ "error": { "code": "forbidden", "message": "Write access required" } })),
         ));
     }
 
@@ -234,10 +234,10 @@ async fn add_user_to_group(
     auth: AuthUser,
     Path((id, user_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    if !auth.role.is_admin() {
+    if !auth.role.can_write() {
         return Err((
             StatusCode::FORBIDDEN,
-            Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } })),
+            Json(json!({ "error": { "code": "forbidden", "message": "Write access required" } })),
         ));
     }
 
@@ -276,10 +276,10 @@ async fn remove_user_from_group(
     auth: AuthUser,
     Path((id, user_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    if !auth.role.is_admin() {
+    if !auth.role.can_write() {
         return Err((
             StatusCode::FORBIDDEN,
-            Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } })),
+            Json(json!({ "error": { "code": "forbidden", "message": "Write access required" } })),
         ));
     }
 

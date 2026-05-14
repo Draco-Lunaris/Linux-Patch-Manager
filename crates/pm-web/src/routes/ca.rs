@@ -104,11 +104,11 @@ fn pem_response(pem: String, filename: &str) -> Result<Response<Body>, (StatusCo
 
 // ── Helper: admin-only guard ──────────────────────────────────────────────────
 
-fn require_admin(user: &AuthUser) -> Result<(), (StatusCode, Json<Value>)> {
-    if !user.role.is_admin() {
+fn require_write_access(user: &AuthUser) -> Result<(), (StatusCode, Json<Value>)> {
+    if !user.role.can_write() {
         return Err((
             StatusCode::FORBIDDEN,
-            Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } })),
+            Json(json!({ "error": { "code": "forbidden", "message": "Write access required" } })),
         ));
     }
     Ok(())
@@ -240,7 +240,7 @@ async fn download_client_cert(
     auth: AuthUser,
     Path(host_id): Path<Uuid>,
 ) -> Result<Response<Body>, (StatusCode, Json<Value>)> {
-    require_admin(&auth)?;
+    require_write_access(&auth)?;
 
     let cert_pem: Option<String> = sqlx::query_scalar(
         r#"SELECT cert_pem
@@ -297,7 +297,7 @@ async fn issue_client_cert(
     Path(host_id): Path<Uuid>,
     Json(req): Json<IssueCertRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    require_admin(&auth)?;
+    require_write_access(&auth)?;
 
     // Look up the host's IP address from the database.
     let ip_address: String = sqlx::query_scalar("SELECT host(ip_address) FROM hosts WHERE id = $1")
@@ -353,7 +353,7 @@ async fn renew_cert(
     auth: AuthUser,
     Path(cert_id): Path<Uuid>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    require_admin(&auth)?;
+    require_write_access(&auth)?;
 
     let issued = state.ca.renew_cert(cert_id, &state.db).await.map_err(|e| {
         let msg = e.to_string();
@@ -398,7 +398,7 @@ async fn reissue_host_cert(
     auth: AuthUser,
     Path(host_id): Path<Uuid>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    require_admin(&auth)?;
+    require_write_access(&auth)?;
 
     // Look up the host's FQDN and IP address for the new certificate CN and SANs.
     let row = sqlx::query("SELECT fqdn, host(ip_address) AS ip_address FROM hosts WHERE id = $1")
@@ -475,7 +475,7 @@ async fn revoke_cert(
     auth: AuthUser,
     Path(cert_id): Path<Uuid>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    require_admin(&auth)?;
+    require_write_access(&auth)?;
 
     state
         .ca

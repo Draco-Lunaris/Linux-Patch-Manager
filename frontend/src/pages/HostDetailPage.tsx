@@ -48,6 +48,7 @@ import {
   ContentCopy as CopyIcon,
 } from '@mui/icons-material'
 import { apiClient, hostsApi, maintenanceWindowsApi, healthChecksApi, certsApi } from '../api/client'
+import { useAuthStore } from '../store/authStore'
 import type {
   CreateHostRequest,
   IssuedCert,
@@ -552,6 +553,8 @@ function CreateHostForm() {
 export default function HostDetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const user = useAuthStore(state => state.user)
+  const canWrite = user?.role === 'admin' || user?.role === 'operator'
   const [host, setHost] = useState<Record<string, unknown> | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -896,7 +899,7 @@ export default function HostDetailPage() {
             {String(host?.fqdn ?? '')}
           </Typography>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            {!certExists && (
+            {canWrite && !certExists && (
               <Button
                 variant="contained"
                 size="small"
@@ -906,7 +909,7 @@ export default function HostDetailPage() {
                 Issue Certificate
               </Button>
             )}
-            {certExists && (
+            {canWrite && certExists && (
               <Button
                 variant="outlined"
                 size="small"
@@ -942,14 +945,14 @@ export default function HostDetailPage() {
             <ScheduleIcon color="primary" />
             <Typography variant="h6" fontWeight={600}>Maintenance Windows</Typography>
           </Box>
-          <Button
+          {canWrite && <Button
             startIcon={<AddIcon />}
             variant="outlined"
             size="small"
             onClick={() => { setCreateForm(defaultForm()); setCreateOpen(true) }}
           >
             Add Window
-          </Button>
+          </Button>}
         </Box>
         <Divider sx={{ mb: 2 }} />
 
@@ -971,7 +974,7 @@ export default function HostDetailPage() {
                 <TableCell>Schedule</TableCell>
                 <TableCell>Recurrence</TableCell>
                 <TableCell>Status</TableCell>
-                <TableCell align="right">Actions</TableCell>
+                {canWrite && <TableCell align="right">Actions</TableCell>}
               </TableRow>
             </TableHead>
             <TableBody>
@@ -991,7 +994,7 @@ export default function HostDetailPage() {
                       size="small"
                     />
                   </TableCell>
-                  <TableCell align="right">
+                  {canWrite && <TableCell align="right">
                     <Tooltip title="Edit">
                       <IconButton size="small" onClick={() => handleEditClick(w)}>
                         <EditIcon fontSize="small" />
@@ -1005,7 +1008,7 @@ export default function HostDetailPage() {
                         <DeleteIcon fontSize="small" />
                       </IconButton>
                     </Tooltip>
-                  </TableCell>
+                  </TableCell>}
                 </TableRow>
               ))}
             </TableBody>
@@ -1020,7 +1023,7 @@ export default function HostDetailPage() {
             <MonitorHeartIcon color="primary" />
             <Typography variant="h6" fontWeight={600}>Health Checks</Typography>
           </Box>
-          <Button
+          {canWrite && <Button
             startIcon={<AddIcon />}
             variant="outlined"
             size="small"
@@ -1028,7 +1031,7 @@ export default function HostDetailPage() {
             onClick={() => { setHcCreateForm(defaultHealthCheckForm()); setHcCreateOpen(true) }}
           >
             Add Health Check
-          </Button>
+          </Button>}
         </Box>
         <Divider sx={{ mb: 2 }} />
 
@@ -1054,7 +1057,7 @@ export default function HostDetailPage() {
                 <TableCell>Detail</TableCell>
                 <TableCell>Latency</TableCell>
                 <TableCell>Last Checked</TableCell>
-                <TableCell align="right">Actions</TableCell>
+                {canWrite && <TableCell align="right">Actions</TableCell>}
               </TableRow>
             </TableHead>
             <TableBody>
@@ -1092,7 +1095,8 @@ export default function HostDetailPage() {
                     <Switch
                       size="small"
                       checked={check.enabled}
-                      onChange={() => handleToggleEnabled(check)}
+                      onChange={canWrite ? () => handleToggleEnabled(check) : undefined}
+                      disabled={!canWrite}
                     />
                   </TableCell>
                   <TableCell>
@@ -1108,7 +1112,7 @@ export default function HostDetailPage() {
                       ? new Date(check.last_result.checked_at).toLocaleString()
                       : '—'}
                   </TableCell>
-                  <TableCell align="right">
+                  {canWrite && <TableCell align="right">
                     <Tooltip title="Test now">
                       <IconButton
                         size="small"
@@ -1134,7 +1138,7 @@ export default function HostDetailPage() {
                         <DeleteIcon fontSize="small" />
                       </IconButton>
                     </Tooltip>
-                  </TableCell>
+                  </TableCell>}
                 </TableRow>
               ))}
             </TableBody>

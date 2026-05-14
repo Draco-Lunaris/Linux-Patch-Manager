@@ -504,9 +504,9 @@ async fn sso_callback(
                 None => {
                     // No existing user - create new one
                     let id: Uuid = match sqlx::query_scalar(
-                        r#"INSERT INTO users (username, display_name, email, role, auth_provider, azure_oid, oidc_sub)
-           VALUES ($1, $2, $3, 'operator'::user_role, $4::auth_provider, $5, $6)
-                           RETURNING id"#,
+                    r#"INSERT INTO users (username, display_name, email, role, auth_provider, azure_oid, oidc_sub)
+           VALUES ($1, $2, $3, 'reporter'::user_role, $4::auth_provider, $5, $6)
+                            RETURNING id"#,
                     )
                     .bind(&preferred_username)
                     .bind(&name)
@@ -541,7 +541,7 @@ async fn sso_callback(
                         id,
                         username: preferred_username,
                         display_name: name,
-                        role: "operator".to_string(),
+                        role: "reporter".to_string(),
                         is_active: true,
                         mfa_enabled: false,
                     }

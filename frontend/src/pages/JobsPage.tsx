@@ -33,6 +33,7 @@ import {
   WifiOff as WifiOffIcon,
 } from '@mui/icons-material'
 import { jobsApi } from '../api/client'
+import { useAuthStore } from '../store/authStore'
 import { useJobWebSocket } from '../hooks/useJobWebSocket'
 import type { JobStatus, JobKind, PatchJobSummary, PatchJob, PatchJobHost, JobWsEvent } from '../types'
 
@@ -153,6 +154,7 @@ interface JobRowProps {
   detail: PatchJob | null
   detailLoading: boolean
   detailError: string | null
+  canWrite: boolean
 }
 
 function JobRow({
@@ -166,6 +168,7 @@ function JobRow({
   detail,
   detailLoading,
   detailError,
+  canWrite,
 }: JobRowProps) {
   const canCancel = job.status === 'queued' || job.status === 'pending'
   const canRollback = job.status === 'succeeded'
@@ -224,7 +227,7 @@ function JobRow({
           </Typography>
         </TableCell>
         <TableCell onClick={(e) => e.stopPropagation()}>
-          <Box display="flex" gap={0.5}>
+          {canWrite ? <Box display="flex" gap={0.5}>
             {canCancel && (
               <Tooltip title="Cancel job">
                 <span>
@@ -261,7 +264,7 @@ function JobRow({
                 </span>
               </Tooltip>
             )}
-          </Box>
+          </Box> : null}
         </TableCell>
       </TableRow>
 
@@ -289,6 +292,8 @@ function JobRow({
 
 // ── JobsPage ──────────────────────────────────────────────────────────────────
 export default function JobsPage() {
+  const user = useAuthStore(state => state.user)
+  const canWrite = user?.role === 'admin' || user?.role === 'operator'
   const [jobs, setJobs] = useState<PatchJobSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -512,7 +517,7 @@ export default function JobsPage() {
                 <TableCell align="right">Failed</TableCell>
                 <TableCell>Schedule</TableCell>
                 <TableCell>Notes</TableCell>
-                <TableCell>Actions</TableCell>
+                {canWrite && <TableCell>Actions</TableCell>}
               </TableRow>
             </TableHead>
             <TableBody>
@@ -544,6 +549,7 @@ export default function JobsPage() {
                     detail={details[job.id] ?? null}
                     detailLoading={detailLoading[job.id] ?? false}
                     detailError={detailError[job.id] ?? null}
+                    canWrite={canWrite}
                   />
                 ))
               )}

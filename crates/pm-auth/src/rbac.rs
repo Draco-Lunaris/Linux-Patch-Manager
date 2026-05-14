@@ -36,6 +36,7 @@ pub struct AuthUser {
 pub enum UserRole {
     Admin,
     Operator,
+    Reporter,
 }
 
 impl UserRole {
@@ -43,6 +44,7 @@ impl UserRole {
         match s {
             "admin" => Some(Self::Admin),
             "operator" => Some(Self::Operator),
+            "reporter" => Some(Self::Reporter),
             _ => None,
         }
     }
@@ -51,12 +53,18 @@ impl UserRole {
         match self {
             Self::Admin => "admin",
             Self::Operator => "operator",
+            Self::Reporter => "reporter",
         }
     }
 
     /// Admin can do everything; operator has limited scope.
     pub fn is_admin(&self) -> bool {
         matches!(self, Self::Admin)
+    }
+
+    /// Admin and Operator can write; Reporter is read-only.
+    pub fn can_write(&self) -> bool {
+        matches!(self, Self::Admin | Self::Operator)
     }
 }
 

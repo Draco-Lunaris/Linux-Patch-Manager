@@ -15,6 +15,7 @@ import EmailIcon from '@mui/icons-material/Email'
 import VpnKeyIcon from '@mui/icons-material/VpnKey'
 import ExploreIcon from '@mui/icons-material/Explore'
 import { settingsApi } from '../api/client'
+import { useAuthStore } from '../store/authStore'
 import type { OidcConfigResponse, OidcDiscoveryResult, SmtpConfig, PollingConfig, NotificationConfig } from '../types'
 
 type OidcForm = OidcConfigResponse & { client_secret?: string }
@@ -23,6 +24,8 @@ type SmtpForm = SmtpConfig & { password?: string }
 const KEYCLOAK_DISCOVERY_URL = 'https://keycloak.moon-dragon.us/realms/moon-dragon.us/.well-known/openid-configuration'
 
 export default function SettingsPage() {
+  const user = useAuthStore(state => state.user)
+  const canWrite = user?.role === 'admin' || user?.role === 'operator'
   const [oidc, setOidc] = useState<OidcForm>({
     enabled: false, provider_type: 'azure', display_name: 'Azure AD',
     discovery_url: '', client_id: '', client_secret: '', redirect_uri: '', scopes: 'openid profile email',
@@ -202,9 +205,9 @@ export default function SettingsPage() {
     <Container maxWidth="lg" sx={{ mt: 3 }}>
       <Toolbar disableGutters sx={{ mb: 3, justifyContent: 'space-between' }}>
         <Typography variant="h5" fontWeight={700}>Settings</Typography>
-        <Button variant="contained" onClick={handleSave} disabled={saving} startIcon={saving ? <CircularProgress size={20} /> : <SaveIcon />}>
+        {canWrite && <Button variant="contained" onClick={handleSave} disabled={saving} startIcon={saving ? <CircularProgress size={20} /> : <SaveIcon />}>
           Save Settings
-        </Button>
+        </Button>}
       </Toolbar>
 
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>{error}</Alert>}

@@ -286,7 +286,7 @@ function KeyDisplayDialog({ open, cert, hostname, onClose }: KeyDisplayDialogPro
 
 export default function CertificatesPage() {
   const user = useAuthStore((s) => s.user)
-  const isAdmin = user?.role === 'admin'
+  const canWrite = user?.role === 'admin' || user?.role === 'operator'
 
   const [certs, setCerts] = useState<Certificate[]>([])
   const [loading, setLoading] = useState(true)
@@ -378,7 +378,7 @@ export default function CertificatesPage() {
         <Typography variant="h5" fontWeight={700} sx={{ flexGrow: 1 }}>
           Certificate Management
         </Typography>
-        {isAdmin && (
+        {canWrite && (
           <Button
             variant="outlined"
             startIcon={<SecurityIcon />}
@@ -496,7 +496,7 @@ export default function CertificatesPage() {
                       </Typography>
                     </TableCell>
                     <TableCell align="right">
-                      {isAdmin && (
+                      {canWrite && (
                         <>
                           <Tooltip title="Renew certificate">
                             <Button

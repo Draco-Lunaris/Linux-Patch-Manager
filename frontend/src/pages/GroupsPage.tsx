@@ -6,9 +6,12 @@ import {
 } from '@mui/material'
 import { Add as AddIcon, Delete as DeleteIcon } from '@mui/icons-material'
 import { apiClient } from '../api/client'
+import { useAuthStore } from '../store/authStore'
 import type { Group } from '../types'
 
 export default function GroupsPage() {
+  const user = useAuthStore(state => state.user)
+  const canWrite = user?.role === 'admin' || user?.role === 'operator'
   const [groups, setGroups] = useState<Group[]>([])
   const [loading, setLoading] = useState(true)
   const [open, setOpen] = useState(false)
@@ -39,13 +42,13 @@ export default function GroupsPage() {
     <Container maxWidth="lg" sx={{ mt: 3 }}>
       <Toolbar disableGutters sx={{ mb: 2 }}>
         <Typography variant="h5" fontWeight={700} sx={{ flexGrow: 1 }}>Groups</Typography>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={() => setOpen(true)}>Create Group</Button>
+        {canWrite && <Button variant="contained" startIcon={<AddIcon />} onClick={() => setOpen(true)}>Create Group</Button>}
       </Toolbar>
       {loading ? <Box display="flex" justifyContent="center" mt={4}><CircularProgress /></Box> : (
         <TableContainer component={Paper}>
           <Table size="small">
             <TableHead><TableRow>
-              <TableCell>Name</TableCell><TableCell>Description</TableCell><TableCell>Created</TableCell><TableCell>Actions</TableCell>
+              <TableCell>Name</TableCell><TableCell>Description</TableCell><TableCell>Created</TableCell>{canWrite && <TableCell>Actions</TableCell>}
             </TableRow></TableHead>
             <TableBody>
               {groups.map(g => (
@@ -53,9 +56,9 @@ export default function GroupsPage() {
                   <TableCell sx={{ fontWeight: 600 }}>{g.name}</TableCell>
                   <TableCell>{g.description || '—'}</TableCell>
                   <TableCell>{new Date(g.created_at).toLocaleDateString()}</TableCell>
-                  <TableCell>
+                  {canWrite && <TableCell>
                     <Tooltip title="Delete"><IconButton size="small" color="error" onClick={() => handleDelete(g.id)}><DeleteIcon fontSize="small" /></IconButton></Tooltip>
-                  </TableCell>
+                  </TableCell>}
                 </TableRow>
               ))}
             </TableBody>

@@ -7,6 +7,7 @@ import {
 import { Add as AddIcon, Refresh as RefreshIcon, Delete as DeleteIcon, CheckCircle as CheckCircleIcon, Cancel as CancelIcon, Remove as RemoveIcon } from '@mui/icons-material'
 import { useNavigate } from 'react-router-dom'
 import { apiClient, hostsApi } from '../api/client'
+import { useAuthStore } from '../store/authStore'
 import type { Host, HostHealthStatus } from '../types'
 
 const statusColor = (s: HostHealthStatus) =>
@@ -14,6 +15,8 @@ const statusColor = (s: HostHealthStatus) =>
 
 export default function HostsPage() {
   const navigate = useNavigate()
+  const user = useAuthStore(state => state.user)
+  const canWrite = user?.role === 'admin' || user?.role === 'operator'
   const [hosts, setHosts] = useState<Host[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -55,7 +58,7 @@ export default function HostsPage() {
         <TextField size="small" placeholder="Search..." value={search}
           onChange={e => setSearch(e.target.value)} sx={{ mr: 2 }} />
         <Tooltip title="Refresh"><IconButton onClick={load}><RefreshIcon /></IconButton></Tooltip>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/hosts/new')} sx={{ ml: 1 }}>Add Host</Button>
+        {canWrite && <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/hosts/new')} sx={{ ml: 1 }}>Add Host</Button>}
       </Toolbar>
       {loading ? <Box display="flex" justifyContent="center" mt={4}><CircularProgress /></Box> : (
         <TableContainer component={Paper}>
@@ -69,7 +72,7 @@ export default function HostsPage() {
                 <TableCell>Health</TableCell>
                 <TableCell>Checks</TableCell>
                 <TableCell>Agent</TableCell>
-                <TableCell>Actions</TableCell>
+                {canWrite && <TableCell>Actions</TableCell>}
               </TableRow>
             </TableHead>
             <TableBody>
@@ -93,7 +96,7 @@ export default function HostsPage() {
                     )}
                   </TableCell>
                   <TableCell>{h.agent_version ?? '—'}</TableCell>
-                  <TableCell onClick={e => e.stopPropagation()}>
+                  {canWrite && <TableCell onClick={e => e.stopPropagation()}>
                     <Tooltip title="Request refresh">
                       <IconButton size="small" color="primary"
                         disabled={refreshing === h.id}
@@ -106,7 +109,7 @@ export default function HostsPage() {
                     <Tooltip title="Delete"><IconButton size="small" color="error">
                       <DeleteIcon fontSize="small" />
                     </IconButton></Tooltip>
-                  </TableCell>
+                  </TableCell>}
                 </TableRow>
               ))}
             </TableBody>

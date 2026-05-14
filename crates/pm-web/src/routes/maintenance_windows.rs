@@ -103,6 +103,13 @@ async fn create_window(
     Path(host_id): Path<Uuid>,
     Json(req): Json<CreateMaintenanceWindowRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if !auth.role.can_write() {
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "Write access required",
+        ));
+    }
     // Validate: weekly requires recurrence_day 0-6
     if req.recurrence == pm_core::models::WindowRecurrence::Weekly {
         match req.recurrence_day {
@@ -218,6 +225,13 @@ async fn update_window(
     Path((host_id, win_id)): Path<(Uuid, Uuid)>,
     Json(req): Json<UpdateMaintenanceWindowRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if !auth.role.can_write() {
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "Write access required",
+        ));
+    }
     // Fetch existing record (verify ownership and existence).
     let existing: Option<MaintenanceWindow> = sqlx::query_as(
         r#"
@@ -349,6 +363,13 @@ async fn delete_window(
     auth: AuthUser,
     Path((host_id, win_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if !auth.role.can_write() {
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "Write access required",
+        ));
+    }
     let result = sqlx::query("DELETE FROM maintenance_windows WHERE id = $1 AND host_id = $2")
         .bind(win_id)
         .bind(host_id)

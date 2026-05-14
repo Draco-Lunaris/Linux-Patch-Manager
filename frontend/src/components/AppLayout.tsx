@@ -29,6 +29,7 @@ interface NavItem {
   path: string
   icon: React.ReactElement
   adminOnly?: boolean
+  writeOnly?: boolean
 }
 
 const navGroups: { heading: string; items: NavItem[] }[] = [
@@ -43,23 +44,23 @@ const navGroups: { heading: string; items: NavItem[] }[] = [
     items: [
       { label: 'Hosts', path: '/hosts', icon: <HostsIcon /> },
       { label: 'Groups', path: '/groups', icon: <GroupsIcon /> },
-      { label: 'Deploy', path: '/deployment', icon: <DeployIcon /> },
+      { label: 'Deploy', path: '/deployment', icon: <DeployIcon />, writeOnly: true },
     ],
   },
   {
     heading: 'Operations',
     items: [
       { label: 'Jobs', path: '/jobs', icon: <JobsIcon /> },
-      { label: 'Maintenance', path: '/maintenance', icon: <MaintenanceIcon /> },
+      { label: 'Maintenance', path: '/maintenance', icon: <MaintenanceIcon />, writeOnly: true },
     ],
   },
   {
     heading: 'Administration',
     items: [
       { label: 'Users', path: '/users', icon: <UsersIcon />, adminOnly: true },
-      { label: 'Certificates', path: '/certificates', icon: <CertsIcon />, adminOnly: true },
+      { label: 'Certificates', path: '/certificates', icon: <CertsIcon /> },
       { label: 'Reports', path: '/reports', icon: <ReportsIcon /> },
-      { label: 'Settings', path: '/settings', icon: <SettingsIcon />, adminOnly: true },
+      { label: 'Settings', path: '/settings', icon: <SettingsIcon /> },
     ],
   },
 ]
@@ -72,7 +73,7 @@ export default function AppLayout() {
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null)
 
   const isAdmin = user?.role === 'admin'
-
+  const canWrite = user?.role === 'admin' || user?.role === 'operator'
   const handleDrawerToggle = () => setMobileOpen(!mobileOpen)
   const handleMenuOpen = (e: React.MouseEvent<HTMLElement>) => setAnchorEl(e.currentTarget)
   const handleMenuClose = () => setAnchorEl(null)
@@ -97,7 +98,11 @@ export default function AppLayout() {
       <Divider />
       <Box sx={{ flex: 1, overflowY: 'auto', py: 1 }}>
         {navGroups.map((group) => {
-          const visibleItems = group.items.filter((item) => !item.adminOnly || isAdmin)
+          const visibleItems = group.items.filter((item) => {
+            if (item.adminOnly && !isAdmin) return false
+            if (item.writeOnly && !canWrite) return false
+            return true
+          })
           if (visibleItems.length === 0) return null
           return (
             <Box key={group.heading} sx={{ mb: 1 }}>

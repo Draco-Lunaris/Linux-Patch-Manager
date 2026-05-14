@@ -7,7 +7,7 @@
 //! GET    /api/v1/hosts/{id}/groups — list groups for host
 //! POST   /api/v1/hosts/{id}/groups — assign host to group
 //! DELETE /api/v1/hosts/{id}/groups/{group_id} — remove host from group
-//! POST   /api/v1/hosts/{id}/refresh           — queue on-demand refresh (operator+)
+//! POST   /api/v1/hosts/{id}/refresh           — queue on-demand refresh (write access)
 
 use axum::{
     extract::{Path, Query, State},
@@ -214,10 +214,10 @@ async fn register_host(
     Json(req): Json<CreateHostRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     // Admin only
-    if !auth.role.is_admin() {
+    if !auth.role.can_write() {
         return Err((
             StatusCode::FORBIDDEN,
-            Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } })),
+            Json(json!({ "error": { "code": "forbidden", "message": "Write access required" } })),
         ));
     }
 
@@ -348,10 +348,10 @@ async fn remove_host(
     auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    if !auth.role.is_admin() {
+    if !auth.role.can_write() {
         return Err((
             StatusCode::FORBIDDEN,
-            Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } })),
+            Json(json!({ "error": { "code": "forbidden", "message": "Write access required" } })),
         ));
     }
 
@@ -451,10 +451,10 @@ async fn add_host_to_group(
     Path(id): Path<Uuid>,
     Json(req): Json<AddToGroupRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    if !auth.role.is_admin() {
+    if !auth.role.can_write() {
         return Err((
             StatusCode::FORBIDDEN,
-            Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } })),
+            Json(json!({ "error": { "code": "forbidden", "message": "Write access required" } })),
         ));
     }
 
@@ -496,10 +496,10 @@ async fn remove_host_from_group(
     auth: AuthUser,
     Path((id, group_id)): Path<(Uuid, Uuid)>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    if !auth.role.is_admin() {
+    if !auth.role.can_write() {
         return Err((
             StatusCode::FORBIDDEN,
-            Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } })),
+            Json(json!({ "error": { "code": "forbidden", "message": "Write access required" } })),
         ));
     }
 
@@ -562,9 +562,15 @@ async fn resolve_fqdn(fqdn: &str) -> Result<String, String> {
 /// Requires Operator or Admin role (any authenticated user).
 async fn refresh_host(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Path(id): Path<Uuid>,
 ) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
+    if !auth.role.can_write() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": { "code": "forbidden", "message": "Write access required" } })),
+        ));
+    }
     // Verify the host exists.
     let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM hosts WHERE id = $1)")
         .bind(id)

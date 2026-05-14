@@ -45,10 +45,10 @@ async fn start_cidr_scan(
     auth: AuthUser,
     Json(req): Json<DiscoveryCidrRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    if !auth.role.is_admin() {
+    if !auth.role.can_write() {
         return Err((
             StatusCode::FORBIDDEN,
-            Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } })),
+            Json(json!({ "error": { "code": "forbidden", "message": "Write access required" } })),
         ));
     }
 
@@ -221,10 +221,10 @@ async fn register_discovered_host(
     Path(id): Path<Uuid>,
     Json(req): Json<RegisterDiscoveredRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    if !auth.role.is_admin() {
+    if !auth.role.can_write() {
         return Err((
             StatusCode::FORBIDDEN,
-            Json(json!({ "error": { "code": "forbidden", "message": "Admin role required" } })),
+            Json(json!({ "error": { "code": "forbidden", "message": "Write access required" } })),
         ));
     }
 

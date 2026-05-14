@@ -116,6 +116,13 @@ async fn create_job(
     auth: AuthUser,
     Json(req): Json<CreateJobRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if !auth.role.can_write() {
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "Write access required",
+        ));
+    }
     if req.host_ids.is_empty() {
         return Err(err(
             StatusCode::BAD_REQUEST,
@@ -430,13 +437,13 @@ async fn cancel_job(
         row.ok_or_else(|| err(StatusCode::NOT_FOUND, "not_found", "Job not found"))?;
 
     // Only admin or the job creator may cancel.
-    if !auth.role.is_admin() {
+    if !auth.role.can_write() {
         let is_creator = creator_id.map_or(false, |cid| cid == auth.user_id);
         if !is_creator {
             return Err(err(
                 StatusCode::FORBIDDEN,
                 "forbidden",
-                "Only admin or the job creator may cancel this job",
+                "Write access required",
             ));
         }
     }
@@ -535,11 +542,11 @@ async fn rollback_job(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     // Admin-only operation.
-    if !auth.role.is_admin() {
+    if !auth.role.can_write() {
         return Err(err(
             StatusCode::FORBIDDEN,
             "forbidden",
-            "Admin role required to create rollback jobs",
+            "Write access required",
         ));
     }
 

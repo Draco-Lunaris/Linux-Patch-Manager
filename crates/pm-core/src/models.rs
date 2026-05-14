@@ -38,6 +38,7 @@ impl std::fmt::Display for HostHealthStatus {
 pub enum UserRole {
     Admin,
     Operator,
+    Reporter,
 }
 
 impl std::fmt::Display for UserRole {
@@ -45,6 +46,7 @@ impl std::fmt::Display for UserRole {
         match self {
             Self::Admin => write!(f, "admin"),
             Self::Operator => write!(f, "operator"),
+            Self::Reporter => write!(f, "reporter"),
         }
     }
 }

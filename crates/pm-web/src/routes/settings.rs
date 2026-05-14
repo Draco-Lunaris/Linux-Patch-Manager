@@ -169,11 +169,11 @@ pub fn router() -> Router<AppState> {
 
 const MASKED: &str = "********";
 
-fn admin_only(auth: &AuthUser) -> Result<(), (StatusCode, Json<Value>)> {
-    if !auth.role.is_admin() {
+fn write_access_required(auth: &AuthUser) -> Result<(), (StatusCode, Json<Value>)> {
+    if !auth.role.can_write() {
         return Err((
             StatusCode::FORBIDDEN,
-            Json(json!({ "error": { "code": "forbidden", "message": "Admin access required" } })),
+            Json(json!({ "error": { "code": "forbidden", "message": "Write access required" } })),
         ));
     }
     Ok(())
@@ -311,7 +311,7 @@ async fn get_settings(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> Result<Json<SettingsResponse>, (StatusCode, Json<Value>)> {
-    admin_only(&auth)?;
+    write_access_required(&auth)?;
     let cfg = load_system_config(&state.db).await?;
     // Inject read-only config values from TOML file (not stored in DB)
     let mut cfg = cfg;
@@ -332,7 +332,7 @@ async fn update_settings(
     auth: AuthUser,
     Json(req): Json<UpdateSettingsRequest>,
 ) -> Result<Json<SettingsResponse>, (StatusCode, Json<Value>)> {
-    admin_only(&auth)?;
+    write_access_required(&auth)?;
 
     // Update OIDC config
     if let Some(oidc) = req.oidc {
@@ -562,7 +562,7 @@ async fn discover_oidc(
     auth: AuthUser,
     Json(req): Json<OidcDiscoveryRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    admin_only(&auth)?;
+    write_access_required(&auth)?;
 
     if req.discovery_url.is_empty() {
         return Err((
@@ -619,7 +619,7 @@ async fn test_oidc(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    admin_only(&auth)?;
+    write_access_required(&auth)?;
 
     let row: Option<(bool, String, String)> = sqlx::query_as(
         "SELECT enabled, provider_type, discovery_url FROM oidc_config WHERE id = 1",
@@ -715,7 +715,7 @@ async fn test_smtp(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    admin_only(&auth)?;
+    write_access_required(&auth)?;
 
     let cfg = load_system_config(&state.db).await?;
 
@@ -870,7 +870,7 @@ async fn get_ip_whitelist(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    admin_only(&auth)?;
+    write_access_required(&auth)?;
 
     let value: Option<String> = sqlx::query_scalar(
         "SELECT value FROM system_config WHERE key = 'ip_whitelist'",
@@ -898,7 +898,7 @@ async fn update_ip_whitelist(
     auth: AuthUser,
     Json(req): Json<IpWhitelistUpdate>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    admin_only(&auth)?;
+    write_access_required(&auth)?;
 
     // Validate each entry
     for entry in &req.entries {
@@ -943,7 +943,7 @@ async fn audit_integrity(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    admin_only(&auth)?;
+    write_access_required(&auth)?;
 
     let result = verify_integrity(&state.db).await;
 
