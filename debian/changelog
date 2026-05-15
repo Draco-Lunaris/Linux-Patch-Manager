@@ -1,3 +1,15 @@
+linux-patch-manager (0.1.6-1) noble; urgency=medium
+
+  * Phase 4: Exhaustive analysis fixes, security hardening, and code quality improvements
+  * Implemented CRL generation and verification for mTLS agent certificates
+  * Added IP-based rate limiting middleware using governor crate
+  * Hardened error handling and removed silent unwrap_or_default failures
+  * Fixed blocking I/O in agent_loader to use async tokio::fs
+  * Made allow_reboot configurable per job via database column
+  * Improved audit integrity verification and reporting limits
+
+ -- Echo <echo@moon-dragon.us>  Fri, 15 May 2026 22:11:45 +0000
+
 linux-patch-manager (1.0.0-1) noble; urgency=medium
 
   * Initial release of Linux Patch Manager
