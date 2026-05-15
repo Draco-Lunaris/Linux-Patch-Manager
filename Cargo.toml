@@ -80,3 +80,6 @@ sha2 = { version = "0.10" }
 aes-gcm = { version = "0.10" }
 ipnet = { version = "2" }
 url = { version = "2" }
+
+# Email
+lettre = { version = "0.11.22", features = ["tokio1-rustls-transport"] }
