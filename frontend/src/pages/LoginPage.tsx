@@ -15,6 +15,26 @@ import { authApi, ssoConfigApi } from '../api/client'
 import { useAuthStore } from '../store/authStore'
 import type { User } from '../types'
 
+// ── WebAuthn utility functions ──────────────────────────────────────────────
+
+function arrayBufferToBase64url(buffer: ArrayBuffer): string {
+  return btoa(String.fromCharCode(...new Uint8Array(buffer)))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '')
+}
+
+function base64urlToArrayBuffer(base64url: string): ArrayBuffer {
+  const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/')
+  const padding = '='.repeat((4 - (base64.length % 4)) % 4)
+  const binary = atob(base64 + padding)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i)
+  }
+  return bytes.buffer
+}
+
 function getErrorMessage(err: unknown): string {
   if (err instanceof Error && err.message === 'Network Error') {
     return 'Unable to connect to the server. Please check your network connection and try again.'
@@ -25,6 +45,7 @@ function getErrorMessage(err: unknown): string {
   const msg = axiosErr.response?.data?.error?.message
   if (status === 429) return 'Too many login attempts. Please wait a moment and try again.'
   if (code === 'mfa_required') return 'MFA_REQUIRED'
+  if (code === 'mfa_required_webauthn') return 'MFA_REQUIRED_WEBAUTHN'
   if (code === 'password_reset_required') return 'PASSWORD_RESET_REQUIRED'
   if (code === 'account_locked') return 'ACCOUNT_LOCKED'
   if (code === 'account_disabled') return 'This account has been disabled. Contact your administrator.'
@@ -58,6 +79,8 @@ export default function LoginPage() {
   const [totpCode, setTotpCode] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [needsMfa, setNeedsMfa] = useState(false)
+  const [needsWebAuthn, setNeedsWebAuthn] = useState(false)
+  const [webAuthnLoading, setWebAuthnLoading] = useState(false)
   const [forcePasswordReset, setForcePasswordReset] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -98,6 +121,9 @@ export default function LoginPage() {
       if (message === 'MFA_REQUIRED') {
         setNeedsMfa(true)
         setError('Please enter your MFA code.')
+      } else if (message === 'MFA_REQUIRED_WEBAUTHN') {
+        setNeedsWebAuthn(true)
+        setError('Please authenticate with your security key.')
       } else if (message === 'PASSWORD_RESET_REQUIRED') {
         setForcePasswordReset(true)
         setError('You must change your password before logging in.')
@@ -108,6 +134,68 @@ export default function LoginPage() {
       }
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleWebAuthnLogin = async () => {
+    setWebAuthnLoading(true)
+    setError(null)
+    try {
+      const startRes = await authApi.webauthnAuthenticateStart()
+      const { challenge_key, assertion_options } = startRes.data
+
+      const publicKey = assertion_options.publicKey
+      const publicKeyCredentialRequestOptions: PublicKeyCredentialRequestOptions = {
+        ...publicKey,
+        challenge: base64urlToArrayBuffer(publicKey.challenge),
+        allowCredentials: publicKey.allowCredentials?.map((c: { type: string; id: string }) => ({
+          ...c,
+          id: base64urlToArrayBuffer(c.id),
+        })),
+      }
+
+      const assertion = await navigator.credentials.get({
+        publicKey: publicKeyCredentialRequestOptions,
+      }) as PublicKeyCredential | null
+
+      if (!assertion) {
+        setError('Security key authentication was cancelled.')
+        return
+      }
+
+      const response = assertion.response as AuthenticatorAssertionResponse
+      const serializedAssertion = {
+        id: assertion.id,
+        rawId: arrayBufferToBase64url(assertion.rawId),
+        type: assertion.type,
+        response: {
+          authenticatorData: arrayBufferToBase64url(response.authenticatorData),
+          clientDataJSON: arrayBufferToBase64url(response.clientDataJSON),
+          signature: arrayBufferToBase64url(response.signature),
+          userHandle: response.userHandle ? arrayBufferToBase64url(response.userHandle) : null,
+        },
+      }
+
+      const completeRes = await authApi.webauthnAuthenticateComplete(challenge_key, serializedAssertion)
+      if (completeRes.data.access_token && completeRes.data.refresh_token) {
+        const { access_token, refresh_token, user } = completeRes.data
+        setTokens(access_token, refresh_token)
+        setUser(user as User)
+        navigate('/dashboard', { replace: true })
+      } else {
+        setError('WebAuthn authentication succeeded. Please try logging in again.')
+        setNeedsWebAuthn(false)
+      }
+    } catch (err: unknown) {
+      const error = err as { name?: string; response?: { data?: { error?: { message?: string } } }; message?: string };
+      if (error.name === 'NotAllowedError') {
+        setError('Security key authentication was cancelled or timed out.');
+      } else {
+        const msg = error.response?.data?.error?.message || error.message || 'Authentication failed.';
+        setError(`Security key authentication failed: ${msg}`);
+      }
+    } finally {
+      setWebAuthnLoading(false)
     }
   }
 
@@ -196,11 +284,29 @@ export default function LoginPage() {
             {needsMfa && (
               <TextField fullWidth margin="normal" label="MFA Code" inputMode="numeric" inputProps={{ maxLength: 6, pattern: '[0-9]*' }} value={totpCode} onChange={(e) => setTotpCode(e.target.value)} disabled={loading} required autoFocus helperText="Enter the 6-digit code from your authenticator app" />
             )}
+            {needsWebAuthn && (
+              <Box sx={{ mt: 2, mb: 2 }}>
+                <Button
+                  fullWidth
+                  variant="contained"
+                  size="large"
+                  startIcon={<KeyIcon />}
+                  onClick={handleWebAuthnLogin}
+                  disabled={webAuthnLoading}
+                  sx={{ mb: 1 }}
+                >
+                  {webAuthnLoading ? <CircularProgress size={24} /> : 'Use Security Key'}
+                </Button>
+                <Typography variant="caption" color="text.secondary" display="block" textAlign="center">
+                  Touch your security key or use your device biometrics to authenticate.
+                </Typography>
+              </Box>
+            )}
             <Button type="submit" fullWidth variant="contained" size="large" sx={{ mt: 3 }} disabled={loading}>{loading ? <CircularProgress size={24} /> : 'Sign In'}</Button>
             {ssoEnabled && (
               <>
                 <Divider sx={{ my: 3 }}>or</Divider>
-                <Button fullWidth variant="outlined" size="large" startIcon={ssoIcon} onClick={() => { window.location.href = ssoAuthUrl }} disabled={loading}>Sign in with {ssoDisplayName}</Button>
+                <Button fullWidth variant="outlined" size="large" startIcon={ssoIcon} onClick={() => { const state = Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b => b.toString(16).padStart(2, '0')).join(''); sessionStorage.setItem('sso_csrf_state', state); window.location.href = ssoAuthUrl }} disabled={loading}>Sign in with {ssoDisplayName}</Button>
               </>
             )}
           </Box>

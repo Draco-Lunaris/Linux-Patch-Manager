@@ -121,6 +121,25 @@ export const authApi = {
 
   verifyMfa: (secretBase32: string, code: string) =>
     apiClient.post('/auth/mfa/verify', { secret_base32: secretBase32, code }),
+
+  // WebAuthn MFA stubs
+  webauthnAuthenticateStart: () =>
+    apiClient.post('/auth/mfa/webauthn/authenticate/start'),
+
+  webauthnAuthenticateComplete: (challengeKey: string, serializedAssertion: unknown) =>
+    apiClient.post('/auth/mfa/webauthn/authenticate/complete', { challenge_key: challengeKey, serialized_assertion: serializedAssertion }),
+
+  webauthnListCredentials: () =>
+    apiClient.get('/auth/mfa/webauthn/credentials'),
+
+  webauthnRegisterStart: (keyName?: string) =>
+    apiClient.post('/auth/mfa/webauthn/register/start', { key_name: keyName }),
+
+  webauthnRegisterComplete: (challengeKey: string, serializedCredential: unknown, keyName?: string) =>
+    apiClient.post('/auth/mfa/webauthn/register/complete', { challenge_key: challengeKey, serialized_credential: serializedCredential, key_name: keyName }),
+
+  webauthnDeleteCredential: (id: string) =>
+    apiClient.delete(`/auth/mfa/webauthn/credentials/${id}`),
 }
 
 // ── Fleet API functions ──────────────────────────────────────────────────────

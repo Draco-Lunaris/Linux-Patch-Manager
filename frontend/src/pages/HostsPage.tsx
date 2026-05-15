@@ -1,8 +1,9 @@
 import { useEffect, useState, useCallback } from 'react'
 import {
-  Box, Button, Chip, CircularProgress, Container, IconButton,
-  Paper, Table, TableBody, TableCell, TableContainer, TableHead,
-  TableRow, TextField, Toolbar, Tooltip, Typography,
+  Box, Button, Chip, CircularProgress, Container, Dialog, DialogTitle,
+  DialogContent, DialogActions, IconButton, Paper, Snackbar, Alert,
+  Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
+  TablePagination, TextField, Toolbar, Tooltip, Typography,
 } from '@mui/material'
 import { Add as AddIcon, Refresh as RefreshIcon, Delete as DeleteIcon, CheckCircle as CheckCircleIcon, Cancel as CancelIcon, Remove as RemoveIcon } from '@mui/icons-material'
 import { useNavigate } from 'react-router-dom'
@@ -19,19 +20,24 @@ export default function HostsPage() {
   const canWrite = user?.role === 'admin' || user?.role === 'operator'
   const [hosts, setHosts] = useState<Host[]>([])
   const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(0)
+  const [rowsPerPage, setRowsPerPage] = useState(25)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [refreshing, setRefreshing] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Host | null>(null)
+  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({ open: false, message: '', severity: 'success' })
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await apiClient.get('/hosts', { params: { limit: 100 } })
+      const offset = page * rowsPerPage
+      const res = await apiClient.get('/hosts', { params: { limit: rowsPerPage, offset } })
       setHosts(res.data.hosts)
       setTotal(res.data.total)
     } catch { /* handled by interceptor */ }
     finally { setLoading(false) }
-  }, [])
+  }, [page, rowsPerPage])
 
   const handleRefresh = async (e: React.MouseEvent, hostId: string) => {
     e.stopPropagation()
@@ -44,12 +50,34 @@ export default function HostsPage() {
     }
   }
 
-  useEffect(() => { load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  const handleDelete = async () => {
+    if (!deleteTarget) return
+    try {
+      await hostsApi.delete(deleteTarget.id)
+      setSnackbar({ open: true, message: `Host "${deleteTarget.display_name || deleteTarget.fqdn}" deleted`, severity: 'success' })
+      load()
+    } catch {
+      setSnackbar({ open: true, message: `Failed to delete host "${deleteTarget.display_name || deleteTarget.fqdn}"`, severity: 'error' })
+    } finally {
+      setDeleteTarget(null)
+    }
+  }
+
+  useEffect(() => { load() }, [load])
 
   const filtered = hosts.filter(h =>
     h.fqdn.toLowerCase().includes(search.toLowerCase()) ||
     h.display_name.toLowerCase().includes(search.toLowerCase())
   )
+
+  const handleChangePage = (_event: React.MouseEvent<HTMLButtonElement> | null, newPage: number) => {
+    setPage(newPage)
+  }
+
+  const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setRowsPerPage(parseInt(event.target.value, 10))
+    setPage(0)
+  }
 
   return (
     <Container maxWidth="xl" sx={{ mt: 3 }}>
@@ -60,7 +88,7 @@ export default function HostsPage() {
         <Tooltip title="Refresh"><IconButton onClick={load}><RefreshIcon /></IconButton></Tooltip>
         {canWrite && <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/hosts/new')} sx={{ ml: 1 }}>Add Host</Button>}
       </Toolbar>
-      {loading ? <Box display="flex" justifyContent="center" mt={4}><CircularProgress /></Box> : (
+      {loading ? <Box display="flex" justifyContent="center" mt="4"><CircularProgress /></Box> : (
         <TableContainer component={Paper}>
           <Table size="small">
             <TableHead>
@@ -106,7 +134,7 @@ export default function HostsPage() {
                           : <RefreshIcon fontSize="small" />}
                       </IconButton>
                     </Tooltip>
-                    <Tooltip title="Delete"><IconButton size="small" color="error">
+                    <Tooltip title="Delete"><IconButton size="small" color="error" onClick={(e) => { e.stopPropagation(); setDeleteTarget(h) }}>
                       <DeleteIcon fontSize="small" />
                     </IconButton></Tooltip>
                   </TableCell>}
@@ -114,11 +142,33 @@ export default function HostsPage() {
               ))}
             </TableBody>
           </Table>
+          <TablePagination
+            component="div"
+            count={total}
+            page={page}
+            onPageChange={handleChangePage}
+            rowsPerPage={rowsPerPage}
+            onRowsPerPageChange={handleChangeRowsPerPage}
+            rowsPerPageOptions={[10, 25, 50, 100]}
+          />
         </TableContainer>
       )}
-      <Typography variant="caption" color="text.secondary" mt={1} display="block">
-        Showing {filtered.length} of {total} hosts
-      </Typography>
+
+      <Dialog open={deleteTarget !== null} onClose={() => setDeleteTarget(null)}>
+        <DialogTitle>Confirm Delete</DialogTitle>
+        <DialogContent>
+          Are you sure you want to delete host &ldquo;{deleteTarget?.display_name || deleteTarget?.fqdn}&rdquo;?
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteTarget(null)}>Cancel</Button>
+          <Button onClick={handleDelete} color="error" variant="contained">Delete</Button>
+        </DialogActions>
+      </Dialog>
+      <Snackbar open={snackbar.open} autoHideDuration={4000} onClose={() => setSnackbar(s => ({ ...s, open: false }))}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
+        <Alert severity={snackbar.severity} onClose={() => setSnackbar(s => ({ ...s, open: false }))}
+          sx={{ width: '100%' }}>{snackbar.message}</Alert>
+      </Snackbar>
     </Container>
   )
 }
