@@ -13,6 +13,7 @@ Linux Patch Manager provides a centralized web interface to manage patching and 
 - **Secure by Design** — mTLS authentication, role-based access control, audit logging
 - **Batch Operations** — Apply patches and updates across multiple hosts simultaneously
 - **Scheduling** — Plan and schedule patch windows with approval workflows
+- **Self-Enrollment** — Automated agent enrollment with PKI provisioning and admin approval workflow
 - **Reporting** — Compliance reporting and patch status dashboards
 
 ## Architecture
@@ -50,7 +51,7 @@ Linux Patch Manager is a web application that acts as a management plane, commun
 Download the latest `.deb` package from the [Gitea Releases](https://gitea-lxc.moon-dragon.us/echo/linux_patch_manager/releases) page:
 
 ```bash
-wget https://gitea-lxc.moon-dragon.us/echo/linux_patch_manager/releases/download/v0.0.2/linux-patch-manager_1.0.0-1_amd64.deb
+wget https://gitea-lxc.moon-dragon.us/echo/linux_patch_manager/releases/download/v0.1.7/linux-patch-manager_0.1.7-1_amd64.deb
 ```
 
 ### 2. Install Dependencies
@@ -63,13 +64,13 @@ sudo apt install -y postgresql-16 libssl3
 ### 3. Install the Package
 
 ```bash
-sudo dpkg -i linux-patch-manager_1.0.0-1_amd64.deb
+sudo dpkg -i linux-patch-manager_0.1.7-1_amd64.deb
 ```
 
 Or with automatic dependency resolution:
 
 ```bash
-sudo apt install ./linux-patch-manager_1.0.0-1_amd64.deb
+sudo apt install ./linux-patch-manager_0.1.7-1_amd64.deb
 ```
 
 ## Configuration
@@ -195,6 +196,7 @@ The `.deb` package will be created in the project root directory.
 
 | Document | Description |
 |----------|-------------|
+| [docs/REST_API.md](docs/REST_API.md) | Complete REST API reference (including Self-Enrollment endpoints) |
 | [SPEC.md](SPEC.md) | Full project specification |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Architecture and design decisions |
 | [REQUIREMENTS.md](REQUIREMENTS.md) | Functional and non-functional requirements |
