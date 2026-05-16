@@ -463,58 +463,70 @@ export default function CertificatesPage() {
               </TableRow>
             </TableHead>
             <TableBody>
-              {certs.map((cert) => {
-                const expiring = cert.status === 'active' && isExpiringSoon(cert.expires_at)
+              {Object.values(
+                certs.reduce((acc, cert) => {
+                  const groupKey = cert.host_id || 'unassigned'
+                  if (!acc[groupKey]) acc[groupKey] = []
+                  acc[groupKey].push(cert)
+                  return acc
+                }, {} as Record<string, Certificate[]>)
+              ).map((group) => {
+                const primary = group[0]
+                const isPair = group.length > 1
+                const expiring = primary.status === 'active' && isExpiringSoon(primary.expires_at)
                 return (
-                  <TableRow key={cert.id} hover>
+                  <TableRow key={primary.id} hover>
                     <TableCell>
-                      <Typography variant="body2" fontWeight={500}>
-                        {cert.common_name}
-                      </Typography>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Typography variant="body2" fontWeight={500}>
+                          {primary.common_name}
+                        </Typography>
+                        {isPair && <Chip label={`${group.length} items`} size="small" color="secondary" variant="outlined" />}
+                      </Box>
                     </TableCell>
                     <TableCell>
                       <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: 12 }}>
-                        {cert.serial_number}
+                        {primary.serial_number}
                       </Typography>
                     </TableCell>
-                    <TableCell>{statusChip(cert.status)}</TableCell>
+                    <TableCell>{statusChip(primary.status)}</TableCell>
                     <TableCell>
-                      <Typography variant="body2">{fmtDate(cert.issued_at)}</Typography>
+                      <Typography variant="body2">{fmtDate(primary.issued_at)}</Typography>
                     </TableCell>
                     <TableCell>
                       <Typography
                         variant="body2"
                         sx={{ color: expiring ? 'error.main' : 'inherit', fontWeight: expiring ? 600 : 400 }}
                       >
-                        {fmtDate(cert.expires_at)}
+                        {fmtDate(primary.expires_at)}
                         {expiring && ' ⚠️'}
                       </Typography>
                     </TableCell>
                     <TableCell>
                       <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: 11 }}>
-                        {cert.host_id ?? <em>Root CA</em>}
+                        {primary.host_id ?? <em>Root CA</em>}
                       </Typography>
                     </TableCell>
                     <TableCell align="right">
                       {canWrite && (
                         <>
-                          <Tooltip title="Renew certificate">
+                          <Tooltip title={`Renew certificate ${isPair ? 'pair' : ''}`}>
                             <Button
                               size="small"
                               variant="outlined"
                               sx={{ mr: 1 }}
-                              onClick={() => handleRenew(cert.id)}
+                              onClick={() => handleRenew(primary.id)}
                             >
                               Renew
                             </Button>
                           </Tooltip>
-                          {cert.status === 'active' && (
-                            <Tooltip title="Revoke certificate">
+                          {primary.status === 'active' && (
+                            <Tooltip title={`Revoke certificate ${isPair ? 'pair' : ''}`}>
                               <Button
                                 size="small"
                                 variant="outlined"
                                 color="error"
-                                onClick={() => handleRevoke(cert.id)}
+                                onClick={() => handleRevoke(primary.id)}
                               >
                                 Revoke
                               </Button>
