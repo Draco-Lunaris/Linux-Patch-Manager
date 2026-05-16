@@ -124,6 +124,51 @@ pub struct HostSummary {
 }
 
 // ============================================================
+// Host Enrollment
+// ============================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct EnrollmentRequest {
+    pub id: Uuid,
+    pub machine_id: String,
+    pub fqdn: String,
+    pub ip_address: String,
+    pub os_details: serde_json::Value,
+    pub polling_token: String,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+}
+
+/// Payload for initial host enrollment request.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct CreateEnrollmentRequest {
+    pub machine_id: String,
+    pub fqdn: String,
+    pub ip_address: String,
+    pub os_details: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "lowercase")]
+pub enum EnrollmentStatusResponse {
+    Pending,
+    Approved {
+        ca_crt: String,
+        server_crt: String,
+        server_key: String,
+    },
+    Denied,
+    NotFound,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PkiBundle {
+    pub ca_crt: String,
+    pub server_crt: String,
+    pub server_key: String,
+}
+
+// ============================================================
 // Health Checks
 // ============================================================
 

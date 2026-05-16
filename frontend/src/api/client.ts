@@ -372,3 +372,26 @@ export const usersApi = {
   adminDisableMfa: (id: string) => apiClient.delete(`/users/${id}/mfa`),
   disableMfa: (password: string) => apiClient.delete('/auth/mfa', { data: { password } }),
 }
+
+// ── Enrollment API (Admin) ────────────────────────────────────────────────
+export interface EnrollmentRequest {
+  id: string
+  machine_id: string
+  fqdn: string
+  ip_address: string
+  os_details: Record<string, unknown>
+  polling_token: string
+  created_at: string
+  expires_at: string
+}
+
+export const enrollmentApi = {
+  listPending: (): Promise<EnrollmentRequest[]> =>
+    apiClient.get<EnrollmentRequest[]>('/admin/enrollments').then(r => r.data),
+
+  approve: (id: string): Promise<void> =>
+    apiClient.post(`/admin/enrollments/${id}/approve`).then(() => {}),
+
+  deny: (id: string): Promise<void> =>
+    apiClient.delete(`/admin/enrollments/${id}/deny`).then(() => {}),
+}

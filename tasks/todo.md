@@ -43,3 +43,32 @@
 - **JWKS caching prevents rate-limiting** — Azure AD JWKS endpoint should be cached with TTL (1 hour) to avoid fetching on every SSO login.
 - **tokio::sync::Mutex over std::sync::Mutex** — Axum handlers must be Send; std::sync::MutexGuard is not Send across await points.
 - **DashMap session cleanup** — In-memory session stores (DashMap) need periodic cleanup tasks to prevent memory leaks. Pattern: tokio::spawn with interval + retain with time-based cutoff.
+
+# Host Self-Enrollment Implementation Plan
+
+## Phases
+
+### Phase 1: Database & Core Models
+- [x] 1a: Create SQL migration for `enrollment_requests` table
+- [x] 1b: Define Rust data models for `EnrollmentRequest` in `pm-core`
+- [x] 1c: Add DB interaction methods (insert, list, delete) in `pm-core`
+
+### Phase 2: Client-Facing API (pm-web)
+- [ ] 2a: Implement `POST /api/v1/enroll` to accept payloads and generate `polling_token`
+- [ ] 2b: Implement `GET /api/v1/enroll/status/{token}` to return pending/approved (PKI) statuses
+- [ ] 2c: Implement IP-based rate limiting for the `/enroll` endpoint
+
+### Phase 3: Admin-Facing API (pm-web)
+- [x] 3a: Implement `GET /api/v1/admin/enrollments` to list pending queue
+- [x] 3b: Implement `POST /api/v1/admin/enrollments/{id}/approve` (generate PKI via `pm-ca`, migrate to `hosts` table)
+- [x] 3c: Implement `DELETE /api/v1/admin/enrollments/{id}/deny` to purge request
+
+### Phase 4: Background Workers (pm-worker)
+- [x] 4a: Create a scheduled task to purge `enrollment_requests` older than 24 hours
+
+### Phase 5: Frontend UI (pm-web/React)
+- [x] 5a: Add enrollment API methods and types to frontend
+- [x] 5b: Update `Hosts` view to include "Pending Enrollments" filter and visual badge
+- [x] 5c: Render pending hosts in the table with highlight styling
+- [x] 5d: Add Approve/Deny action buttons to pending host rows
+- [x] 5e: Implement "merge/overwrite" interactive modal for `fqdn`/`ip_address` collisions on approval

@@ -9,11 +9,17 @@ use pm_auth::{
     jwt,
     rbac::{require_auth, AuthConfig},
 };
-use pm_core::{config::AppConfig, db, logging, request_id::request_id_middleware};
+use pm_core::{
+    config::AppConfig, db, logging, models::PkiBundle, request_id::request_id_middleware,
+};
 use routes::sso::{OidcCache, SsoSession};
 use routes::ws::WsTicket;
 use serde_json::{json, Value};
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::sync::Mutex;
 use tower_http::{
     services::{ServeDir, ServeFile},
@@ -35,6 +41,10 @@ pub struct AppState {
     pub oidc_cache: Arc<Mutex<OidcCache>>,
     /// Internal certificate authority for mTLS client cert issuance.
     pub ca: Arc<pm_ca::CertAuthority>,
+    /// IP-based rate limits for enrollment requests.
+    pub enrollment_rate_limits: Arc<DashMap<IpAddr, Instant>>,
+    /// Short-lived cache for approved enrollment PKI bundles.
+    pub approved_enrollments: Arc<DashMap<String, PkiBundle>>,
 }
 
 #[tokio::main]
@@ -91,6 +101,8 @@ async fn main() -> anyhow::Result<()> {
     let ws_tickets: Arc<DashMap<String, WsTicket>> = Arc::new(DashMap::new());
     let sso_sessions: Arc<DashMap<String, SsoSession>> = Arc::new(DashMap::new());
     let oidc_cache: Arc<Mutex<OidcCache>> = Arc::new(Mutex::new(OidcCache::default()));
+    let enrollment_rate_limits: Arc<DashMap<IpAddr, Instant>> = Arc::new(DashMap::new());
+    let approved_enrollments: Arc<DashMap<String, PkiBundle>> = Arc::new(DashMap::new());
 
     // Background task: purge expired WS tickets every 30 seconds.
     {
@@ -129,6 +141,31 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // Background task: purge expired enrollment rate limits every 5 minutes.
+    {
+        let limits = enrollment_rate_limits.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(300));
+            loop {
+                interval.tick().await;
+                let now = Instant::now();
+                limits.retain(|_, v| now.duration_since(*v) < Duration::from_secs(3600));
+            }
+        });
+    }
+
+    // Background task: purge approved enrollment PKI bundles every 10 minutes.
+    {
+        let approved = approved_enrollments.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(600));
+            loop {
+                interval.tick().await;
+                approved.clear();
+            }
+        });
+    }
+
     let state = AppState {
         db: pool,
         config: Arc::new(config.clone()),
@@ -137,6 +174,8 @@ async fn main() -> anyhow::Result<()> {
         ws_tickets,
         sso_sessions,
         ca: Arc::new(ca),
+        enrollment_rate_limits,
+        approved_enrollments,
         oidc_cache,
     };
 
@@ -223,6 +262,8 @@ pub fn build_router(state: AppState) -> Router {
         )
         // Settings (admin-only)
         .nest("/settings", routes::settings::router())
+        // Admin enrollment routes (JWT protected, Admin role enforced)
+        .nest("/admin", routes::enrollment::admin_router())
         // Apply auth middleware to all the above
         .route_layer(middleware::from_fn(move |req, next| {
             let auth_config = auth_config.clone();
@@ -233,6 +274,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/status/health", get(health_handler))
         // Public auth routes (no JWT needed)
         .nest("/api/v1/auth", routes::auth::public_router())
+        // Public enrollment endpoints (rate-limited, no JWT)
+        .nest("/api/v1", routes::enrollment::router())
         // Public SSO routes (no JWT needed)
         .nest("/api/v1/auth/sso", routes::sso::public_router())
         // Public Azure SSO routes (no JWT needed)

@@ -1,6 +1,8 @@
 use crate::config::DatabaseConfig;
+use crate::models::{CreateEnrollmentRequest, EnrollmentRequest};
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use std::time::Duration;
+use uuid::Uuid;
 
 /// Initialize and return a PostgreSQL connection pool.
 pub async fn init_pool(cfg: &DatabaseConfig) -> Result<PgPool, sqlx::Error> {
@@ -54,6 +56,53 @@ pub async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateE
     }
 
     result
+}
+
+// ============================================================
+// Enrollment Requests
+// ============================================================
+
+pub async fn create_enrollment_request(
+    pool: &PgPool,
+    req: CreateEnrollmentRequest,
+    token_hash: String,
+) -> Result<EnrollmentRequest, sqlx::Error> {
+    sqlx::query_as::<
+        _,
+        EnrollmentRequest,
+    >(
+        r#"
+        INSERT INTO enrollment_requests (machine_id, fqdn, ip_address, os_details, polling_token)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id, machine_id, fqdn, ip_address, os_details, polling_token, created_at, expires_at
+        "#,
+    )
+    .bind(req.machine_id)
+    .bind(req.fqdn)
+    .bind(req.ip_address)
+    .bind(req.os_details)
+    .bind(token_hash)
+    .fetch_one(pool)
+    .await
+}
+
+pub async fn list_enrollment_requests(
+    pool: &PgPool,
+) -> Result<Vec<EnrollmentRequest>, sqlx::Error> {
+    sqlx::query_as::<_, EnrollmentRequest>(
+        "SELECT id, machine_id, fqdn, ip_address, os_details, polling_token, created_at, expires_at FROM enrollment_requests ORDER BY created_at DESC",
+    )
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn delete_enrollment_request(pool: &PgPool, id: Uuid) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM enrollment_requests WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await?;
+
+    Ok(result.rows_affected())
 }
 
 /// Check that the database schema is at the expected version.

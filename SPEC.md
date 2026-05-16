@@ -124,6 +124,37 @@ Management plane web application communicating with Linux Patch API agents on ea
 - WebSocket streaming for real-time job status from agents
 - Base path: `/api/v1/`, Port: 12443, TLS 1.3 only
 
+## Host Self-Enrollment
+
+**1. Database Architecture**
+- **Table:** A new `enrollment_requests` table to isolate unverified data from the active `hosts` table.
+- **Schema Fields:** `id`, `machine_id` (from `/etc/machine-id`), `fqdn`, `ip_address`, `os_details`, `polling_token` (hashed), `created_at`, `expires_at`.
+
+**2. REST API Contract (Client-Facing)**
+- `POST /api/v1/enroll`: 
+  - **Payload:** `{ machine_id, fqdn, ip_address, os_details }`
+  - **Response:** Returns a temporary `polling_token`.
+- `GET /api/v1/enroll/status/{token}`: 
+  - **Pending:** HTTP 202.
+  - **Approved:** HTTP 200 containing the PKI bundle (`ca.crt`, `server.crt`, `server.key`).
+  - **Denied/Expired:** HTTP 404 or 403.
+
+**3. REST API Contract (Admin-Facing)**
+- `GET /api/v1/admin/enrollments`: Lists the pending queue.
+- `POST /api/v1/admin/enrollments/{id}/approve`: Generates client PKI, moves record to `hosts` table.
+- `DELETE /api/v1/admin/enrollments/{id}/deny`: Purges the request.
+
+**4. Security & Lifecycle Guardrails**
+- **Rate Limiting:** Strict IP-based rate limits on the initial `POST` endpoint to prevent DoS.
+- **Auto-Purge:** A background task to delete unapproved pending requests older than 24 hours.
+- **PKI Handoff:** The manager (`pm-ca`) acts as the Certificate Authority and generates the server auth certificate to maintain parity with the existing trusted deployment model.
+
+**5. User Interface (UI)**
+- **Visibility:** Pending hosts integrated into the main Hosts view.
+- **Indicators:** Queue counter/visual badge on the interface, with pending rows highlighted.
+- **Filtering:** Dedicated filter to toggle the enrollment queue.
+- **Conflict Resolution:** Interactive "merge/overwrite" prompt if approval detects an `fqdn` or `ip_address` collision with the active `hosts` table.
+
 ## Certificate Management
 
 - Internal CA managed by Patch Manager, installed on the same host

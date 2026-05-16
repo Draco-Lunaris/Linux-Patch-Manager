@@ -2501,6 +2501,7 @@ dependencies = [
  "base64",
  "chrono",
  "dashmap",
+ "hex",
  "ipnet",
  "jsonwebtoken",
  "lettre",

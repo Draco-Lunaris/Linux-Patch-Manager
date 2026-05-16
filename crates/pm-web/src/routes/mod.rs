@@ -2,6 +2,7 @@
 pub mod auth;
 pub mod ca;
 pub mod discovery;
+pub mod enrollment;
 pub mod groups;
 pub mod health_checks;
 pub mod hosts;

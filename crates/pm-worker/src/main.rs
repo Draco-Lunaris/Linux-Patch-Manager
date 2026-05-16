@@ -14,6 +14,7 @@ mod patch_poller;
 mod refresh_listener;
 mod ws_relay;
 
+use chrono::Utc;
 use pm_core::{config::AppConfig, db, logging};
 use sqlx::PgPool;
 use std::{sync::Arc, time::Duration};
@@ -31,7 +32,7 @@ use ws_relay::run_ws_relay;
 /// Minimum number of applied migrations the worker requires before
 /// accepting work. Prevents the worker from running against a schema
 /// that hasn't been migrated yet.
-const REQUIRED_MIGRATION_COUNT: i64 = 8;
+const REQUIRED_MIGRATION_COUNT: i64 = 16;
 
 /// How long to wait between schema-version checks before giving up.
 const SCHEMA_CHECK_TIMEOUT: Duration = Duration::from_secs(120);
@@ -94,6 +95,9 @@ async fn main() -> anyhow::Result<()> {
     // Health check poller — runs configured service/HTTP health checks
     let health_check_handle = tokio::spawn(run_health_check_poller(pool.clone(), config.clone()));
 
+    // Enrollment cleanup task (runs every hour)
+    let enrollment_cleanup_handle = tokio::spawn(run_enrollment_cleanup_task(pool.clone()));
+
     tracing::info!("Worker tasks started");
 
     // Wait for all tasks (they run indefinitely)
@@ -106,6 +110,8 @@ async fn main() -> anyhow::Result<()> {
         maint_sched_handle,
         ws_relay_handle,
         audit_verifier_handle,
+        health_check_handle,
+        enrollment_cleanup_handle,
     );
 
     Ok(())
@@ -171,6 +177,32 @@ async fn run_heartbeat(pool: PgPool, interval_secs: u64) {
         match result {
             Ok(_) => tracing::debug!("Worker heartbeat written"),
             Err(e) => tracing::error!(error = %e, "Worker heartbeat failed"),
+        }
+    }
+}
+
+/// Periodically deletes expired enrollment requests.
+async fn run_enrollment_cleanup_task(pool: PgPool) {
+    let mut interval = tokio::time::interval(Duration::from_secs(3600)); // Every hour
+    interval.tick().await; // Initial tick to run immediately if needed
+
+    loop {
+        interval.tick().await;
+        let now = Utc::now();
+        match sqlx::query("DELETE FROM enrollment_requests WHERE expires_at < $1")
+            .bind(now)
+            .execute(&pool)
+            .await
+        {
+            Ok(result) => {
+                if result.rows_affected() > 0 {
+                    tracing::info!(
+                        removed = result.rows_affected(),
+                        "Purged expired enrollment requests"
+                    );
+                }
+            },
+            Err(e) => tracing::error!(error = %e, "Failed to purge expired enrollment requests"),
         }
     }
 }

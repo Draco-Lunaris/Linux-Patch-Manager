@@ -1,3 +1,14 @@
+linux-patch-manager (0.1.7-1) noble; urgency=medium
+
+  * Host Self-Enrollment: Added REST API and UI for automated agent enrollment
+  * Database: Added enrollment_requests table and migration 016
+  * Security: Implemented IP-based rate limiting on public enrollment endpoints
+  * Backend: Added background worker to purge expired enrollment requests (24h)
+  * Frontend: Integrated pending enrollment queue with conflict resolution modal
+  * Specs: Updated SPEC.md for manager and linux_patch_api self-enrollment workflows
+
+ -- Echo <echo@moon-dragon.us>  Fri, 16 May 2026 11:44:08 -0500
+
 linux-patch-manager (0.1.6-1) noble; urgency=medium
 
   * Phase 4: Exhaustive analysis fixes, security hardening, and code quality improvements

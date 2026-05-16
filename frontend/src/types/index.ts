@@ -376,3 +376,23 @@ export interface UpdateHealthCheckRequest {
   basic_auth_pass?: string
   target_host_id?: string | null
 }
+
+// ── Enrollment (Self-Enrollment) ─────────────────────────────────────────
+export interface EnrollmentRequest {
+  id: string
+  machine_id: string
+  fqdn: string
+  ip_address: string
+  os_details: Record<string, unknown>
+  polling_token: string    // hashed token stored in DB
+  created_at: string
+  expires_at: string
+}
+
+export interface EnrollmentConflictResponse {
+  error: string
+  conflict: {
+    existing_host: Host
+    message: string
+  }
+}
