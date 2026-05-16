@@ -465,7 +465,7 @@ export default function CertificatesPage() {
             <TableBody>
               {Object.values(
                 certs.reduce((acc, cert) => {
-                  const groupKey = cert.host_id || 'unassigned'
+                  const groupKey = `${cert.host_id || 'unassigned'}-${cert.status}`
                   if (!acc[groupKey]) acc[groupKey] = []
                   acc[groupKey].push(cert)
                   return acc
