@@ -29,7 +29,7 @@ pub struct HostConflict {
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/enroll", post(enroll_host))
-        .route("/enroll/status/:token", get(enroll_status))
+        .route("/enroll/status/{token}", get(enroll_status))
 }
 
 /// POST /api/v1/enroll
@@ -98,7 +98,7 @@ async fn enroll_host(
         .into_response())
 }
 
-/// GET /api/v1/enroll/status/:token
+/// GET /api/v1/enroll/status/{token}
 /// Returns status of enrollment (pending/approved/denied/not_found).
 async fn enroll_status(
     State(state): State<AppState>,
@@ -141,8 +141,8 @@ async fn enroll_status(
 pub fn admin_router() -> Router<AppState> {
     Router::new()
         .route("/enrollments", get(list_admin_enrollments))
-        .route("/enrollments/:id/approve", post(approve_enrollment))
-        .route("/enrollments/:id/deny", delete(deny_enrollment))
+        .route("/enrollments/{id}/approve", post(approve_enrollment))
+        .route("/enrollments/{id}/deny", delete(deny_enrollment))
 }
 
 /// GET /api/v1/admin/enrollments
