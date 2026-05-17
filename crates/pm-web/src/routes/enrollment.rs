@@ -37,17 +37,20 @@ pub fn router() -> Router<AppState> {
 async fn enroll_host(
     State(state): State<AppState>,
     headers: HeaderMap,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(payload): Json<CreateEnrollmentRequest>,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     // 1. IP-based Rate Limiting
-    // Prefer real IP from headers if behind proxy (e.g., X-Forwarded-For), else use SocketAddr
+    // Prefer real IP from headers if behind proxy (e.g., X-Forwarded-For)
     let ip = headers
         .get("x-forwarded-for")
         .and_then(|h| h.to_str().ok())
         .and_then(|h| h.split(',').next())
         .and_then(|h| h.trim().parse::<IpAddr>().ok())
-        .unwrap_or_else(|| addr.ip());
+        .unwrap_or_else(|| {
+            tracing::warn!("No X-Forwarded-For header found for enrollment request from public endpoint");
+            // Default to a placeholder IP since we can't extract the socket addr without the ConnectInfo layer
+            "0.0.0.0".parse().unwrap()
+        });
 
     {
         let mut rate_limits = state
