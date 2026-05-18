@@ -351,7 +351,9 @@ impl CertAuthority {
         let mut sans = vec![SanType::DnsName(
             Ia5String::try_from(hostname.to_owned()).context("hostname is not valid IA5")?,
         )];
-        if let Ok(ip) = ip_address.parse::<IpAddr>() {
+        // Strip CIDR netmask (e.g. "192.168.3.36/32") before parsing
+        let ip_str = ip_address.split('/').next().unwrap_or(ip_address);
+        if let Ok(ip) = ip_str.parse::<IpAddr>() {
             sans.push(SanType::IpAddress(ip));
         } else {
             tracing::warn!(
