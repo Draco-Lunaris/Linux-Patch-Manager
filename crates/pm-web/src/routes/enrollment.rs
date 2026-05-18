@@ -47,7 +47,9 @@ async fn enroll_host(
         .and_then(|h| h.split(',').next())
         .and_then(|h| h.trim().parse::<IpAddr>().ok())
         .unwrap_or_else(|| {
-            tracing::warn!("No X-Forwarded-For header found for enrollment request from public endpoint");
+            tracing::warn!(
+                "No X-Forwarded-For header found for enrollment request from public endpoint"
+            );
             // Default to a placeholder IP since we can't extract the socket addr without the ConnectInfo layer
             "0.0.0.0".parse().unwrap()
         });
