@@ -225,7 +225,33 @@ async fn approve_enrollment(
         ));
     }
 
-    // Generate PKI bundle using CA
+    // Move to hosts table FIRST (certificates table has FK reference to hosts)
+    let os_name = enrollment_request
+        .os_details
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    sqlx::query(
+        r#"
+        INSERT INTO hosts (id, fqdn, ip_address, os_name, registered_at, updated_at)
+        VALUES ($1, $2, $3::inet, $4, NOW(), NOW())
+        "#,
+    )
+    .bind(enrollment_request.id)
+    .bind(&enrollment_request.fqdn)
+    .bind(&enrollment_request.ip_address.to_string())
+    .bind(os_name)
+    .execute(&state.db)
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, "Failed to insert host after approval");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": "Database error" })),
+        )
+    })?;
+
+    // Generate PKI bundle using CA (after host row exists)
     let issued = state
         .ca
         .issue_client_cert(
@@ -242,33 +268,6 @@ async fn approve_enrollment(
                 Json(serde_json::json!({ "error": "Certificate generation failed" })),
             )
         })?;
-
-    // Move to hosts table
-    let os_name = enrollment_request
-        .os_details
-        .get("name")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    sqlx::query(
-        r#"
-        INSERT INTO hosts (id, fqdn, ip_address, os_name, registered_at, updated_at, machine_id)
-        VALUES ($1, $2, $3::inet, $4, NOW(), NOW(), $5)
-        "#,
-    )
-    .bind(enrollment_request.id)
-    .bind(&enrollment_request.fqdn)
-    .bind(&enrollment_request.ip_address.to_string())
-    .bind(os_name)
-    .bind(enrollment_request.machine_id)
-    .execute(&state.db)
-    .await
-    .map_err(|e| {
-        tracing::error!(error = %e, "Failed to insert host after approval");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": "Database error" })),
-        )
-    })?;
 
     // Delete from enrollment_requests table
     db::delete_enrollment_request(&state.db, id)
