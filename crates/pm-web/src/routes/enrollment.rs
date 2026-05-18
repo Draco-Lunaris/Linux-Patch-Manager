@@ -209,7 +209,7 @@ async fn approve_enrollment(
 
     // Check for FQDN/IP collision in hosts table
     if let Some(existing_host) = sqlx::query_as::<_, Host>(
-        "SELECT id, fqdn, ip_address, display_name, os_family, os_name, arch, agent_version, health_status, last_health_at, last_patch_at, agent_port, notes, registered_at, updated_at FROM hosts WHERE fqdn = $1 OR ip_address = $2"
+        "SELECT id, fqdn, ip_address::text, display_name, os_family, os_name, arch, agent_version, health_status, last_health_at, last_patch_at, agent_port, notes, registered_at, updated_at FROM hosts WHERE fqdn = $1 OR ip_address = $2::inet"
     )
     .bind(&enrollment_request.fqdn)
     .bind(&enrollment_request.ip_address.to_string())
@@ -252,7 +252,7 @@ async fn approve_enrollment(
     sqlx::query(
         r#"
         INSERT INTO hosts (id, fqdn, ip_address, os_name, registered_at, updated_at, machine_id)
-        VALUES ($1, $2, $3, $4, NOW(), NOW(), $5)
+        VALUES ($1, $2, $3::inet, $4, NOW(), NOW(), $5)
         "#,
     )
     .bind(enrollment_request.id)
