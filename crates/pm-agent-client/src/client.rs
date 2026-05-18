@@ -105,7 +105,7 @@ impl AgentClient {
             .add_root_certificate(ca_cert)
             .timeout(REQUEST_TIMEOUT)
             .build()
-            .map_err(|e| AgentClientError::Request(e))?;
+            .map_err(AgentClientError::Request)?;
 
         let clean_ip = host_ip.split('/').next().unwrap_or(host_ip);
         let base_url = format!("https://{}:{}/api/v1", clean_ip, port);

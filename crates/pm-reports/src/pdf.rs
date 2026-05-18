@@ -169,6 +169,7 @@ impl PdfBuilder {
         self.current_y -= ROW_H;
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn embed_image(
         &self,
         raw_rgb: Vec<u8>,

@@ -13,7 +13,7 @@ use axum::{
 };
 use chrono::{Duration, Utc};
 use pm_auth::rbac::AuthUser;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::postgres::PgListener;
 use ulid::Ulid;
@@ -188,10 +188,8 @@ async fn handle_browser_ws(mut socket: WebSocket, db: sqlx::PgPool, ticket: WsTi
                         tracing::info!(user_id = %ticket.user_id, "Browser WS closed by client");
                         break;
                     }
-                    Some(Ok(Message::Ping(data))) => {
-                        if socket.send(Message::Pong(data)).await.is_err() {
-                            break;
-                        }
+                    Some(Ok(Message::Ping(data))) if socket.send(Message::Pong(data.clone())).await.is_err() => {
+                        break;
                     }
                     Some(Err(e)) => {
                         tracing::debug!(error = %e, user_id = %ticket.user_id, "Browser WS recv error");

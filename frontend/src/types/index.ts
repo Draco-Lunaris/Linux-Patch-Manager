@@ -37,6 +37,12 @@ export interface CreateHostRequest {
   group_ids?: string[]
 }
 
+export interface UpdateHostRequest {
+  fqdn?: string
+  ip_address?: string
+  display_name?: string
+}
+
 export interface Group {
   id: string
   name: string

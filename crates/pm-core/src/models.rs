@@ -107,6 +107,14 @@ pub struct CreateHostRequest {
     pub group_ids: Option<Vec<Uuid>>,
 }
 
+/// Payload for updating an existing host.
+#[derive(Debug, Deserialize)]
+pub struct UpdateHostRequest {
+    pub fqdn: Option<String>,
+    pub ip_address: Option<String>,
+    pub display_name: Option<String>,
+}
+
 /// Host list item (lighter projection for list views)
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct HostSummary {
@@ -135,6 +143,8 @@ pub struct EnrollmentRequest {
     pub ip_address: String,
     pub os_details: serde_json::Value,
     pub polling_token: String,
+    /// Short hostname provided during enrollment (optional).
+    pub hostname: Option<String>,
     pub created_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
 }
@@ -146,6 +156,8 @@ pub struct CreateEnrollmentRequest {
     pub fqdn: String,
     pub ip_address: String,
     pub os_details: serde_json::Value,
+    /// Short hostname (from /etc/hostname, optional).
+    pub hostname: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

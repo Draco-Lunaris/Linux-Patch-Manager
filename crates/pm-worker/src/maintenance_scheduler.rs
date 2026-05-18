@@ -45,6 +45,7 @@ struct AutoApplyWindow {
 }
 
 #[derive(Debug, FromRow)]
+#[allow(dead_code)]
 struct PendingPatchHost {
     host_id: Uuid,
     patch_count: i32,

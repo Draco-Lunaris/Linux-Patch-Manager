@@ -72,9 +72,9 @@ pub async fn create_enrollment_request(
         EnrollmentRequest,
     >(
         r#"
-        INSERT INTO enrollment_requests (machine_id, fqdn, ip_address, os_details, polling_token)
-        VALUES ($1, $2, $3::inet, $4, $5)
-        RETURNING id, machine_id, fqdn, ip_address::text, os_details, polling_token, created_at, expires_at
+        INSERT INTO enrollment_requests (machine_id, fqdn, ip_address, os_details, polling_token, hostname)
+        VALUES ($1, $2, $3::inet, $4, $5, $6)
+        RETURNING id, machine_id, fqdn, ip_address::text, os_details, polling_token, hostname, created_at, expires_at
         "#,
     )
     .bind(req.machine_id)
@@ -82,6 +82,7 @@ pub async fn create_enrollment_request(
     .bind(req.ip_address)
     .bind(req.os_details)
     .bind(token_hash)
+    .bind(&req.hostname)
     .fetch_one(pool)
     .await
 }
@@ -90,7 +91,7 @@ pub async fn list_enrollment_requests(
     pool: &PgPool,
 ) -> Result<Vec<EnrollmentRequest>, sqlx::Error> {
     sqlx::query_as::<_, EnrollmentRequest>(
-        "SELECT id, machine_id, fqdn, ip_address::text, os_details, polling_token, created_at, expires_at FROM enrollment_requests ORDER BY created_at DESC",
+        "SELECT id, machine_id, fqdn, ip_address::text, os_details, polling_token, hostname, created_at, expires_at FROM enrollment_requests ORDER BY created_at DESC",
     )
     .fetch_all(pool)
     .await

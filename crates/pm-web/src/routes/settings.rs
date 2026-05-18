@@ -115,6 +115,7 @@ pub struct OidcDiscoveryRequest {
 }
 
 #[derive(Debug, Serialize)]
+#[allow(dead_code)]
 pub struct OidcDiscoveryResult {
     pub issuer: String,
     pub authorization_endpoint: String,
@@ -558,7 +559,7 @@ async fn update_settings(
 // ============================================================
 
 async fn discover_oidc(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     auth: AuthUser,
     Json(req): Json<OidcDiscoveryRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {

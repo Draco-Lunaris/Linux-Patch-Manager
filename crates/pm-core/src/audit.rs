@@ -97,6 +97,7 @@ impl AuditAction {
 /// Computes a hash chain entry using the previous row's hash.
 /// Non-fatal: logs errors but does not propagate them to avoid
 /// disrupting the primary operation.
+#[allow(clippy::too_many_arguments)]
 pub async fn log_event(
     pool: &PgPool,
     action: AuditAction,
@@ -126,6 +127,7 @@ pub async fn log_event(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn write_audit_row(
     pool: &PgPool,
     action: AuditAction,

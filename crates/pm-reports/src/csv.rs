@@ -77,7 +77,7 @@ ORDER BY compliance_pct ASC
     };
 
     let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record(&[
+    wtr.write_record([
         "host_id",
         "display_name",
         "fqdn",
@@ -115,7 +115,7 @@ ORDER BY compliance_pct ASC
         ])?;
     }
 
-    Ok(wtr.into_inner().context("csv flush failed")?)
+    wtr.into_inner().context("csv flush failed")
 }
 
 // ---------------------------------------------------------------------------
@@ -152,7 +152,7 @@ ORDER BY pjh.started_at DESC
     .context("patch history query failed")?;
 
     let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record(&[
+    wtr.write_record([
         "job_id",
         "job_kind",
         "job_status",
@@ -194,7 +194,7 @@ ORDER BY pjh.started_at DESC
         ])?;
     }
 
-    Ok(wtr.into_inner().context("csv flush failed")?)
+    wtr.into_inner().context("csv flush failed")
 }
 
 // ---------------------------------------------------------------------------
@@ -203,7 +203,7 @@ ORDER BY pjh.started_at DESC
 
 async fn vulnerability_csv(pool: &sqlx::PgPool, params: &ReportParams) -> anyhow::Result<Vec<u8>> {
     let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record(&[
+    wtr.write_record([
         "host_id",
         "display_name",
         "fqdn",
@@ -279,7 +279,7 @@ ORDER BY
         },
     }
 
-    Ok(wtr.into_inner().context("csv flush failed")?)
+    wtr.into_inner().context("csv flush failed")
 }
 
 // ---------------------------------------------------------------------------
@@ -312,7 +312,7 @@ LIMIT 10000
     .context("audit query failed")?;
 
     let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record(&[
+    wtr.write_record([
         "id",
         "created_at",
         "action",
@@ -347,5 +347,5 @@ LIMIT 10000
         ])?;
     }
 
-    Ok(wtr.into_inner().context("csv flush failed")?)
+    wtr.into_inner().context("csv flush failed")
 }

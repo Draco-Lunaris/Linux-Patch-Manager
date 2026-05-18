@@ -95,20 +95,11 @@ pub struct OidcDiscovery {
 }
 
 /// Cache for OIDC discovery documents and JWKS with TTL-based refresh.
+#[derive(Default)]
 pub struct OidcCache {
     pub discovery: Option<OidcDiscovery>,
     pub jwks: Option<serde_json::Value>,
     pub jwks_fetched_at: Option<chrono::DateTime<Utc>>,
-}
-
-impl Default for OidcCache {
-    fn default() -> Self {
-        Self {
-            discovery: None,
-            jwks: None,
-            jwks_fetched_at: None,
-        }
-    }
 }
 
 /// JWKS cache TTL in seconds (1 hour).
@@ -492,10 +483,11 @@ async fn sso_callback(
                     DbUserForSso {
                         id: existing.id,
                         username: existing.username.clone(),
-                        display_name: name
-                            .is_empty()
-                            .then(|| existing.display_name.clone())
-                            .unwrap_or(name),
+                        display_name: if name.is_empty() {
+                            existing.display_name.clone()
+                        } else {
+                            name
+                        },
                         role: existing.role.clone(),
                         is_active: existing.is_active,
                         mfa_enabled: existing.mfa_enabled,

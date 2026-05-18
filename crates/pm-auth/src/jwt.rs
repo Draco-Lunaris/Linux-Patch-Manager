@@ -121,6 +121,7 @@ pub fn load_verify_key(path: &str) -> Result<String, JwtError> {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 mod tests {
     use super::*;
 

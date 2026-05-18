@@ -174,7 +174,7 @@ async fn probe_and_store(pool: sqlx::PgPool, scan_id: Uuid, ip: IpAddr, port: u1
 /// Simple reverse DNS lookup.
 fn dns_lookup_for_ip(ip: IpAddr) -> Option<String> {
     use std::net::{SocketAddr, ToSocketAddrs};
-    let addr = SocketAddr::new(ip, 0);
+    let _addr = SocketAddr::new(ip, 0);
     // Standard library doesn't have reverse lookup; use getaddrinfo via format
     let host = format!("{ip}");
     // Best-effort: try to resolve numeric address to hostname

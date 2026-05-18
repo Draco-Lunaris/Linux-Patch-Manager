@@ -1,6 +1,6 @@
 use crate::AppState;
 use axum::{
-    extract::{ConnectInfo, Path, State},
+    extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
@@ -16,7 +16,7 @@ use pm_core::{
 };
 use rand::{distributions::Alphanumeric, Rng};
 use serde::Serialize;
-use std::net::{IpAddr, SocketAddr};
+use std::net::IpAddr;
 use std::time::Instant;
 
 #[derive(Debug, Clone, Serialize)]
@@ -167,7 +167,7 @@ async fn list_admin_enrollments(
 
     db::list_enrollment_requests(&state.db)
         .await
-        .map(|requests| Json(requests))
+        .map(Json)
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to list enrollment requests");
             (
@@ -212,7 +212,7 @@ async fn approve_enrollment(
         "SELECT id, fqdn, ip_address::text, display_name, os_family, os_name, arch, agent_version, health_status, last_health_at, last_patch_at, agent_port, notes, registered_at, updated_at FROM hosts WHERE fqdn = $1 OR ip_address = $2::inet"
     )
     .bind(&enrollment_request.fqdn)
-    .bind(&enrollment_request.ip_address.to_string())
+    .bind(enrollment_request.ip_address.to_string())
     .fetch_optional(&state.db)
     .await
     .map_err(|e| {
@@ -231,16 +231,21 @@ async fn approve_enrollment(
         .get("name")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+    let display_name = enrollment_request
+        .hostname
+        .clone()
+        .unwrap_or_else(|| enrollment_request.fqdn.clone());
     sqlx::query(
         r#"
-        INSERT INTO hosts (id, fqdn, ip_address, os_name, registered_at, updated_at)
-        VALUES ($1, $2, $3::inet, $4, NOW(), NOW())
+        INSERT INTO hosts (id, fqdn, ip_address, os_name, display_name, registered_at, updated_at)
+        VALUES ($1, $2, $3::inet, $4, $5, NOW(), NOW())
         "#,
     )
     .bind(enrollment_request.id)
     .bind(&enrollment_request.fqdn)
-    .bind(&enrollment_request.ip_address.to_string())
+    .bind(enrollment_request.ip_address.to_string())
     .bind(os_name)
+    .bind(&display_name)
     .execute(&state.db)
     .await
     .map_err(|e| {

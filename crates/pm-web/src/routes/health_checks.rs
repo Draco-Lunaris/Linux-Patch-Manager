@@ -11,7 +11,7 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::Json,
-    routing::{delete, get, post, put},
+    routing::{get, post},
     Router,
 };
 use pm_auth::rbac::AuthUser;
@@ -24,7 +24,7 @@ use pm_core::{
     },
 };
 use reqwest::tls::Version;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -631,7 +631,6 @@ async fn update_health_check(
         set_clauses.push(format!("basic_auth_pass_encrypted = ${}", param_idx));
         param_idx += 1;
         set_clauses.push(format!("basic_auth_pass_nonce = ${}", param_idx));
-        param_idx += 1;
     }
 
     if set_clauses.is_empty() {
@@ -644,7 +643,7 @@ async fn update_health_check(
     }
 
     // Always update updated_at
-    set_clauses.push(format!("updated_at = NOW()"));
+    set_clauses.push("updated_at = NOW()".to_string());
 
     // Use a simpler approach: query the current row, apply changes, update
     // This avoids complex dynamic SQL binding issues
@@ -945,7 +944,7 @@ async fn run_service_check(check: &HealthCheck, state: &AppState) -> CheckResult
                         }
                         CheckResult {
                             healthy: false,
-                            detail: format!("Failed to parse agent response"),
+                            detail: "Failed to parse agent response".to_string(),
                             latency_ms: Some(latency),
                         }
                     },

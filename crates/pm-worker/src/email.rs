@@ -9,7 +9,6 @@ use lettre::{
     transport::smtp::authentication::Credentials,
     AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
 };
-use serde_json;
 use sqlx::PgPool;
 
 use pm_core::audit::{log_event, AuditAction};
@@ -290,6 +289,7 @@ pub async fn send_job_completion_email(
 }
 
 /// Send a maintenance window reminder email.
+#[allow(dead_code)]
 pub async fn send_maintenance_window_reminder_email(
     pool: &PgPool,
     host_fqdn: &str,

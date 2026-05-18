@@ -614,6 +614,46 @@ export default function HostDetailPage() {
   // Hosts list for target_host_id dropdown
   const [hosts, setHosts] = useState<{ id: string; display_name: string; fqdn: string }[]>([])
 
+  // ── Host editing state ────────────────────────────────────────────────────
+  const [editing, setEditing] = useState(false)
+  const [editFqdn, setEditFqdn] = useState('')
+  const [editIp, setEditIp] = useState('')
+  const [editDisplayName, setEditDisplayName] = useState('')
+  const [savingHost, setSavingHost] = useState(false)
+
+  const enterEdit = () => {
+    setEditFqdn(String(host?.fqdn ?? ''))
+    setEditIp(String(host?.ip_address ?? ''))
+    setEditDisplayName(String(host?.display_name ?? ''))
+    setEditing(true)
+  }
+
+  const cancelEdit = () => {
+    setEditing(false)
+    setSavingHost(false)
+  }
+
+  const handleSaveHost = async () => {
+    if (!id) return
+    setSavingHost(true)
+    try {
+      const res = await hostsApi.update(id, {
+        fqdn: editFqdn !== String(host?.fqdn ?? '') ? editFqdn : undefined,
+        ip_address: editIp !== String(host?.ip_address ?? '') ? editIp : undefined,
+        display_name: editDisplayName !== String(host?.display_name ?? '') ? editDisplayName : undefined,
+      })
+      setHost(res.data)
+      setEditing(false)
+      showSnack('Host updated', 'success')
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { error?: { message?: string } } } })
+        ?.response?.data?.error?.message ?? 'Failed to update host'
+      showSnack(msg, 'error')
+    } finally {
+      setSavingHost(false)
+    }
+  }
+
   // ── Fetch host ────────────────────────────────────────────────────────────
   useEffect(() => {
     if (id === 'new') { setLoading(false); return }
@@ -899,7 +939,39 @@ export default function HostDetailPage() {
             {String(host?.fqdn ?? '')}
           </Typography>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            {canWrite && !certExists && (
+            {canWrite && !editing && (
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<EditIcon />}
+                onClick={enterEdit}
+              >
+                Edit
+              </Button>
+            )}
+            {canWrite && editing && (
+              <>
+                <Button
+                  variant="contained"
+                  size="small"
+                  startIcon={<CheckCircleIcon />}
+                  onClick={handleSaveHost}
+                  disabled={savingHost}
+                >
+                  {savingHost ? <CircularProgress size={16} /> : 'Save'}
+                </Button>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  startIcon={<CancelIcon />}
+                  onClick={cancelEdit}
+                  disabled={savingHost}
+                >
+                  Cancel
+                </Button>
+              </>
+            )}
+            {!editing && canWrite && !certExists && (
               <Button
                 variant="contained"
                 size="small"
@@ -909,7 +981,7 @@ export default function HostDetailPage() {
                 Issue Certificate
               </Button>
             )}
-            {canWrite && certExists && (
+            {!editing && canWrite && certExists && (
               <Button
                 variant="outlined"
                 size="small"
@@ -920,21 +992,46 @@ export default function HostDetailPage() {
                 Re-issue Certificate
               </Button>
             )}
-
           </Box>
         </Box>
         <Divider sx={{ mb: 2 }} />
         <Grid container spacing={2}>
-          {host && Object.entries(host).map(([k, v]) =>
-            v !== null && v !== '' ? (
-              <Grid size={{ xs: 12, sm: 6, md: 4 }} key={k}>
-                <Typography variant="caption" color="text.secondary" display="block">
-                  {k.replace(/_/g, ' ').toUpperCase()}
-                </Typography>
-                <Typography variant="body2">{String(v)}</Typography>
-              </Grid>
-            ) : null
-          )}
+          {host && (<>
+            <Grid size={{ xs: 12, sm: 6, md: 4 }}>
+              <Typography variant="caption" color="text.secondary" display="block">FQDN</Typography>
+              {editing ? (
+                <TextField size="small" fullWidth value={editFqdn} onChange={e => setEditFqdn(e.target.value)} />
+              ) : (
+                <Typography variant="body2">{String(host.fqdn)}</Typography>
+              )}
+            </Grid>
+            <Grid size={{ xs: 12, sm: 6, md: 4 }}>
+              <Typography variant="caption" color="text.secondary" display="block">IP ADDRESS</Typography>
+              {editing ? (
+                <TextField size="small" fullWidth value={editIp} onChange={e => setEditIp(e.target.value)} />
+              ) : (
+                <Typography variant="body2">{String(host.ip_address)}</Typography>
+              )}
+            </Grid>
+            <Grid size={{ xs: 12, sm: 6, md: 4 }}>
+              <Typography variant="caption" color="text.secondary" display="block">DISPLAY NAME</Typography>
+              {editing ? (
+                <TextField size="small" fullWidth value={editDisplayName} onChange={e => setEditDisplayName(e.target.value)} />
+              ) : (
+                <Typography variant="body2">{String(host.display_name)}</Typography>
+              )}
+            </Grid>
+            {Object.entries(host).filter(([k]) => !['fqdn','ip_address','display_name'].includes(k)).map(([k, v]) =>
+              v !== null && v !== '' ? (
+                <Grid size={{ xs: 12, sm: 6, md: 4 }} key={k}>
+                  <Typography variant="caption" color="text.secondary" display="block">
+                    {k.replace(/_/g, ' ').toUpperCase()}
+                  </Typography>
+                  <Typography variant="body2">{String(v)}</Typography>
+                </Grid>
+              ) : null
+            )}
+          </>)}
         </Grid>
       </Paper>
 

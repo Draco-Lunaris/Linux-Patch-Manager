@@ -29,7 +29,7 @@ pub fn load_or_create_key(path: &Path) -> Result<[u8; 32], CryptoError> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(CryptoError::Io)?;
         }
-        fs::write(path, &key).map_err(CryptoError::Io)?;
+        fs::write(path, key).map_err(CryptoError::Io)?;
         // Set permissions to 0600 (owner read/write only)
         #[cfg(unix)]
         {

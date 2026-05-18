@@ -69,6 +69,7 @@ pub struct SessionUser {
 
 /// Database user row fetched during login.
 #[derive(Debug, sqlx::FromRow)]
+#[allow(dead_code)]
 struct DbUser {
     id: Uuid,
     username: String,

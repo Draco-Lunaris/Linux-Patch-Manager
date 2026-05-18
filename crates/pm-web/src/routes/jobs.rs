@@ -438,7 +438,7 @@ async fn cancel_job(
 
     // Only admin or the job creator may cancel.
     if !auth.role.can_write() {
-        let is_creator = creator_id.map_or(false, |cid| cid == auth.user_id);
+        let is_creator = creator_id == Some(auth.user_id);
         if !is_creator {
             return Err(err(
                 StatusCode::FORBIDDEN,

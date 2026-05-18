@@ -152,6 +152,8 @@ export const hostsApi = {
   list: (params?: Record<string, unknown>) => apiClient.get('/hosts', { params }),
   get: (id: string) => apiClient.get(`/hosts/${id}`),
   register: (body: CreateHostRequest) => apiClient.post('/hosts', body),
+  update: (id: string, body: Record<string, string | undefined>) =>
+    apiClient.put(`/hosts/${id}`, body),
   delete: (id: string) => apiClient.delete(`/hosts/${id}`),
   refresh: (id: string) => apiClient.post(`/hosts/${id}/refresh`),
 }

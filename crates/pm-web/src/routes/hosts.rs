@@ -4,6 +4,7 @@
 //! POST   /api/v1/hosts            — register new host (admin only)
 //! GET    /api/v1/hosts/{id}       — get host detail
 //! DELETE /api/v1/hosts/{id}       — remove host (admin only)
+//! PUT    /api/v1/hosts/{id}       — update host (write access)
 //! GET    /api/v1/hosts/{id}/groups — list groups for host
 //! POST   /api/v1/hosts/{id}/groups — assign host to group
 //! DELETE /api/v1/hosts/{id}/groups/{group_id} — remove host from group
@@ -19,7 +20,7 @@ use axum::{
 use pm_auth::rbac::AuthUser;
 use pm_core::{
     audit::{log_event, AuditAction},
-    models::{CreateHostRequest, Group, HostSummary},
+    models::{CreateHostRequest, Group, HostSummary, UpdateHostRequest},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -30,7 +31,7 @@ use crate::AppState;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_hosts).post(register_host))
-        .route("/{id}", get(get_host).delete(remove_host))
+        .route("/{id}", get(get_host).put(update_host).delete(remove_host))
         .route(
             "/{id}/groups",
             get(list_host_groups).post(add_host_to_group),
@@ -42,6 +43,7 @@ pub fn router() -> Router<AppState> {
 // ── Query params ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct HostListQuery {
     pub group_id: Option<Uuid>,
     pub health_status: Option<String>,
@@ -396,6 +398,69 @@ async fn remove_host(
 
     tracing::info!(host_id = %id, "Host removed");
     Ok(Json(json!({ "message": "Host removed" })))
+}
+
+// ── PUT /api/v1/hosts/:id ─────────────────────────────────────────────────────
+
+async fn update_host(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(req): Json<UpdateHostRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if !auth.role.can_write() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": { "code": "forbidden", "message": "Write access required" } })),
+        ));
+    }
+
+    // Update only fields that were provided; COALESCE preserves existing values.
+    let host = sqlx::query_scalar(
+        r#"
+        WITH updated AS (
+            UPDATE hosts SET
+                fqdn         = COALESCE($1, fqdn),
+                ip_address   = COALESCE($2::inet, ip_address),
+                display_name = COALESCE($3, display_name),
+                updated_at   = NOW()
+            WHERE id = $4
+            RETURNING id
+        )
+        SELECT row_to_json(h) FROM (
+            SELECT id, fqdn, host(ip_address)::text AS ip_address, display_name,
+                   os_family, os_name, arch, agent_version, health_status,
+                   last_health_at, last_patch_at, agent_port, notes,
+                   registered_at, updated_at
+            FROM hosts WHERE id = (SELECT id FROM updated)
+        ) h
+        "#,
+    )
+    .bind(&req.fqdn)
+    .bind(&req.ip_address)
+    .bind(&req.display_name)
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, host_id = %id, "Failed to update host");
+        let msg = if e.to_string().contains("unique") {
+            "A host with this FQDN and IP already exists".to_string()
+        } else {
+            "Database error".to_string()
+        };
+        (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": { "code": "conflict", "message": msg } })),
+        )
+    })?;
+
+    host.map(Json).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": { "code": "not_found", "message": "Host not found" } })),
+        )
+    })
 }
 
 // ── GET /api/v1/hosts/:id/groups ──────────────────────────────────────────────

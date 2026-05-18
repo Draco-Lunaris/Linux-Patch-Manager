@@ -22,6 +22,7 @@ use pm_agent_client::{AgentClient, AgentClientError};
 
 /// Row fetched for each enabled health check, joined with host connection info.
 #[derive(FromRow)]
+#[allow(dead_code)]
 struct HealthCheckRow {
     id: Uuid,
     host_id: Uuid,
