@@ -91,7 +91,8 @@ jwt_access_ttl_secs = 900
 agent_client_cert_path = "/etc/patch-manager/certs/client.crt"
 agent_client_key_path  = "/etc/patch-manager/certs/client.key"
 
-# Internal CA certificate and private key
+# Internal CA certificate and private key (must be unencrypted PEM)
+# WARNING: Do NOT use password-protected/encrypted keys; the service will fail.
 # Private key has 0600 permissions; protected by hardware-host FDE
 ca_cert_path = "/etc/patch-manager/ca/ca.crt"
 ca_key_path  = "/etc/patch-manager/ca/ca.key"

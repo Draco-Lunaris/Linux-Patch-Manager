@@ -126,3 +126,16 @@ The Docker container intercepted some jobs and ran them in its Alpine environmen
 **Rule:** When someone says 'it's just a display issue,' focus on the code (CSP, CSS, rendering) — not infrastructure (caching, proxies, deployment).
 **Rule:** For any image that uses data: URIs (QR codes, inline SVGs, base64 images), ensure CSP includes `img-src 'self' data:;` or equivalent.
 **Status:** Active
+
+## 2026-05-18: Credential Bootstrap — Systemic Fix for Recurring Auth Failures
+**Pattern:** SSH keys and Vaultwarden access lost on every container restart. Repeated auth failures at session start across multiple sessions.
+**Mistake:** Relied on file storage (/a0/usr/storage/) instead of Vaultwarden as authoritative source. Didn't verify credentials before attempting SSH. Vaultwarden-secrets skill was missing from /a0/skills/.
+**Correction:** Kelly identified this as a systemic issue, not isolated incidents.
+**Fix applied:**
+1. Restored vaultwarden-secrets skill to /a0/skills/ from gitea repo
+2. Added Session Bootstrap section to 01-identity.md — auto-verify SSH keys, vw_client.py, bw CLI, and gitea key at chat start
+3. Updated Credential Type Registry in 02-architecture.md — Vaultwarden is authoritative source, /a0/usr/storage/ is backup only
+4. Installed pycryptodome dependency for vw_client.py
+**Rule:** At session start, run bootstrap checks silently. If ~/.ssh/id_ed25519 missing, retrieve from Vaultwarden via vw_client.py (not from file storage).
+**Rule:** vw_client.py is primary (sub-second). bw CLI is fallback only (9-12s per operation).
+**Status:** Active

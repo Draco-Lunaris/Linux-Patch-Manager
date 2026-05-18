@@ -88,9 +88,12 @@ async fn main() -> anyhow::Result<()> {
     let pool = db::init_pool(&config.database).await?;
     db::run_migrations(&pool).await?;
 
-    // Initialise the internal CA.  Panics in production if CA files are missing
-    // or corrupt — this is intentional; the service cannot operate without mTLS.
-    let ca_base = std::path::Path::new("/etc/patch-manager/ca");
+    // Initialise the internal CA using the configured certificate paths.
+    // The CA certificate and key must exist at the configured locations and be
+    // unencrypted PEM. If absent, a new CA is generated in that directory.
+    let ca_base = std::path::Path::new(&config.security.ca_cert_path)
+        .parent()
+        .expect("CA certificate path must have a parent directory");
     let ca = pm_ca::CertAuthority::init(ca_base, &pool)
         .await
         .unwrap_or_else(|e| {
