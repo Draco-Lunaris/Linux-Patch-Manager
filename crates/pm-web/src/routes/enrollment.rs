@@ -226,9 +226,32 @@ async fn approve_enrollment(
     }
 
     // Move to hosts table FIRST (certificates table has FK reference to hosts)
+    let os_family = enrollment_request
+        .os_details
+        .get("os")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
     let os_name = enrollment_request
         .os_details
         .get("name")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .or_else(|| {
+            // Build os_name from os + os_version if "name" is absent
+            let os = enrollment_request
+                .os_details
+                .get("os")
+                .and_then(|v| v.as_str())?;
+            let ver = enrollment_request
+                .os_details
+                .get("os_version")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            Some(format!("{} {}", os, ver).trim().to_string())
+        });
+    let arch = enrollment_request
+        .os_details
+        .get("architecture")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
     let display_name = enrollment_request
@@ -237,14 +260,16 @@ async fn approve_enrollment(
         .unwrap_or_else(|| enrollment_request.fqdn.clone());
     sqlx::query(
         r#"
-        INSERT INTO hosts (id, fqdn, ip_address, os_name, display_name, registered_at, updated_at)
-        VALUES ($1, $2, $3::inet, $4, $5, NOW(), NOW())
+        INSERT INTO hosts (id, fqdn, ip_address, os_family, os_name, arch, display_name, registered_at, updated_at)
+        VALUES ($1, $2, $3::inet, $4, $5, $6, $7, NOW(), NOW())
         "#,
     )
     .bind(enrollment_request.id)
     .bind(&enrollment_request.fqdn)
     .bind(enrollment_request.ip_address.to_string())
-    .bind(os_name)
+    .bind(&os_family)
+    .bind(&os_name)
+    .bind(&arch)
     .bind(&display_name)
     .execute(&state.db)
     .await

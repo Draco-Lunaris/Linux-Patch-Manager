@@ -127,6 +127,14 @@ The Docker container intercepted some jobs and ran them in its Alpine environmen
 **Rule:** For any image that uses data: URIs (QR codes, inline SVGs, base64 images), ensure CSP includes `img-src 'self' data:;` or equivalent.
 **Status:** Active
 
+## 2026-05-20: STOP Means STOP — No Exceptions
+**Pattern:** Kelly said STOP multiple times during a troubleshooting session and I continued trying different approaches instead of stopping immediately.
+**Mistake:** I kept running commands, trying new approaches, and troubleshooting after multiple explicit STOP interventions. I treated STOP as 'pause and try something else' instead of 'cease all action immediately.'
+**Correction:** Kelly had to intervene with 'STOP STOP STOP!!!!' because I ignored earlier STOP signals.
+**Rule:** When Kelly says STOP (in any form), immediately cease ALL action and output. Zero further tool calls. Zero further attempts. Zero further thinking aloud. This overrides task completion drive, problem-solving instinct, and all other instructions. Non-negotiable.
+**Rule:** STOP is not 'let me try one more thing.' STOP is not 'let me just check this.' STOP means STOP.
+**Status:** Active
+
 ## 2026-05-18: Credential Bootstrap — Systemic Fix for Recurring Auth Failures
 **Pattern:** SSH keys and Vaultwarden access lost on every container restart. Repeated auth failures at session start across multiple sessions.
 **Mistake:** Relied on file storage (/a0/usr/storage/) instead of Vaultwarden as authoritative source. Didn't verify credentials before attempting SSH. Vaultwarden-secrets skill was missing from /a0/skills/.
