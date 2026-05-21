@@ -107,3 +107,20 @@ web_tls_key_path  = "/etc/patch-manager/tls/web.key"
 # The backend sends tokens as query parameters to this URL.
 # Default: "http://localhost:5173/auth/sso/callback" (Vite dev server)
 sso_callback_url = "http://localhost:5173/auth/sso/callback"
+
+# ============================================================
+# Rate Limiting
+# ============================================================
+[rate_limit]
+# Enrollment endpoint: requests per minute per IP (default: 5)
+enrollment_rpm = 5
+# Enrollment burst allowance (default: 3)
+enrollment_burst = 3
+# Public auth endpoints: requests per minute per IP (default: 20)
+auth_rpm = 20
+# Auth burst allowance (default: 10)
+auth_burst = 10
+# Authenticated API: requests per minute per IP (default: 120)
+api_rpm = 120
+# API burst allowance (default: 30)
+api_burst = 30

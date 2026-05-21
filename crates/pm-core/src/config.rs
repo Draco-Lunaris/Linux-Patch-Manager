@@ -1,6 +1,61 @@
 use config::{Config, ConfigError, Environment, File};
 use serde::{Deserialize, Serialize};
 
+/// Rate limiting configuration per route group.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RateLimitConfig {
+    /// Enrollment endpoint: requests per minute per IP (default: 5)
+    #[serde(default = "default_enrollment_rpm")]
+    pub enrollment_rpm: u32,
+    /// Enrollment burst allowance (default: 3)
+    #[serde(default = "default_enrollment_burst")]
+    pub enrollment_burst: u32,
+    /// Public auth endpoints: requests per minute per IP (default: 20)
+    #[serde(default = "default_auth_rpm")]
+    pub auth_rpm: u32,
+    /// Auth burst allowance (default: 10)
+    #[serde(default = "default_auth_burst")]
+    pub auth_burst: u32,
+    /// Authenticated API: requests per minute per IP (default: 120)
+    #[serde(default = "default_api_rpm")]
+    pub api_rpm: u32,
+    /// API burst allowance (default: 30)
+    #[serde(default = "default_api_burst")]
+    pub api_burst: u32,
+}
+
+fn default_enrollment_rpm() -> u32 {
+    5
+}
+fn default_enrollment_burst() -> u32 {
+    3
+}
+fn default_auth_rpm() -> u32 {
+    20
+}
+fn default_auth_burst() -> u32 {
+    10
+}
+fn default_api_rpm() -> u32 {
+    120
+}
+fn default_api_burst() -> u32 {
+    30
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            enrollment_rpm: default_enrollment_rpm(),
+            enrollment_burst: default_enrollment_burst(),
+            auth_rpm: default_auth_rpm(),
+            auth_burst: default_auth_burst(),
+            api_rpm: default_api_rpm(),
+            api_burst: default_api_burst(),
+        }
+    }
+}
+
 /// Top-level application configuration.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AppConfig {
@@ -9,6 +64,8 @@ pub struct AppConfig {
     pub worker: WorkerConfig,
     pub logging: LoggingConfig,
     pub security: SecurityConfig,
+    #[serde(default)]
+    pub rate_limit: RateLimitConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -151,6 +208,7 @@ impl Default for AppConfig {
                 web_tls_key_path: "/etc/patch-manager/tls/web.key".to_string(),
                 sso_callback_url: default_sso_callback_url(),
             },
+            rate_limit: RateLimitConfig::default(),
         }
     }
 }

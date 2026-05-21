@@ -1,7 +1,7 @@
 use crate::AppState;
 use axum::{
     extract::{Path, State},
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
     response::{IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
@@ -16,8 +16,6 @@ use pm_core::{
 };
 use rand::{distributions::Alphanumeric, Rng};
 use serde::Serialize;
-use std::net::IpAddr;
-use std::time::Instant;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct HostConflict {
@@ -34,43 +32,12 @@ pub fn router() -> Router<AppState> {
 
 /// POST /api/v1/enroll
 /// Initiates host self-enrollment.
+/// Rate limiting is handled by tower-governor middleware (per-IP, configurable).
 async fn enroll_host(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(payload): Json<CreateEnrollmentRequest>,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
-    // 1. IP-based Rate Limiting
-    // Prefer real IP from headers if behind proxy (e.g., X-Forwarded-For)
-    let ip = headers
-        .get("x-forwarded-for")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|h| h.split(',').next())
-        .and_then(|h| h.trim().parse::<IpAddr>().ok())
-        .unwrap_or_else(|| {
-            tracing::warn!(
-                "No X-Forwarded-For header found for enrollment request from public endpoint"
-            );
-            // Default to a placeholder IP since we can't extract the socket addr without the ConnectInfo layer
-            "0.0.0.0".parse().unwrap()
-        });
-
-    {
-        let mut rate_limits = state
-            .enrollment_rate_limits
-            .entry(ip)
-            .or_insert(Instant::now() - std::time::Duration::from_secs(3600));
-        let last_request = rate_limits.value();
-        if last_request.elapsed().as_secs() < 60 {
-            // 1 request per minute per IP
-            return Err((
-                StatusCode::TOO_MANY_REQUESTS,
-                Json(serde_json::json!({ "error": "Rate limit exceeded. Try again in a minute." })),
-            ));
-        }
-        *rate_limits = Instant::now();
-    }
-
-    // 2. Generate secure random polling token
+    // Generate secure random polling token
     let polling_token: String = rand::thread_rng()
         .sample_iter(&Alphanumeric)
         .take(64)

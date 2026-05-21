@@ -81,5 +81,9 @@ aes-gcm = { version = "0.10" }
 ipnet = { version = "2" }
 url = { version = "2" }
 
+# Rate limiting
+tower_governor = { version = "0.8", features = ["tracing"] }
+governor = "0.6"
+
 # Email
 lettre = { version = "0.11.22", features = ["tokio1-rustls-transport"] }

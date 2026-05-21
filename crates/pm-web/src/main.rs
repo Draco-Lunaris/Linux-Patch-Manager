@@ -15,12 +15,11 @@ use pm_core::{
 use routes::sso::{OidcCache, SsoSession};
 use routes::ws::WsTicket;
 use serde_json::{json, Value};
-use std::{
-    net::{IpAddr, SocketAddr},
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
+use tower_governor::{
+    governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor, GovernorLayer,
+};
 use tower_http::{
     services::{ServeDir, ServeFile},
     trace::TraceLayer,
@@ -41,8 +40,6 @@ pub struct AppState {
     pub oidc_cache: Arc<Mutex<OidcCache>>,
     /// Internal certificate authority for mTLS client cert issuance.
     pub ca: Arc<pm_ca::CertAuthority>,
-    /// IP-based rate limits for enrollment requests.
-    pub enrollment_rate_limits: Arc<DashMap<IpAddr, Instant>>,
     /// Short-lived cache for approved enrollment PKI bundles.
     pub approved_enrollments: Arc<DashMap<String, PkiBundle>>,
 }
@@ -104,7 +101,6 @@ async fn main() -> anyhow::Result<()> {
     let ws_tickets: Arc<DashMap<String, WsTicket>> = Arc::new(DashMap::new());
     let sso_sessions: Arc<DashMap<String, SsoSession>> = Arc::new(DashMap::new());
     let oidc_cache: Arc<Mutex<OidcCache>> = Arc::new(Mutex::new(OidcCache::default()));
-    let enrollment_rate_limits: Arc<DashMap<IpAddr, Instant>> = Arc::new(DashMap::new());
     let approved_enrollments: Arc<DashMap<String, PkiBundle>> = Arc::new(DashMap::new());
 
     // Background task: purge expired WS tickets every 30 seconds.
@@ -144,19 +140,6 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // Background task: purge expired enrollment rate limits every 5 minutes.
-    {
-        let limits = enrollment_rate_limits.clone();
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(300));
-            loop {
-                interval.tick().await;
-                let now = Instant::now();
-                limits.retain(|_, v| now.duration_since(*v) < Duration::from_secs(3600));
-            }
-        });
-    }
-
     // Background task: purge approved enrollment PKI bundles every 10 minutes.
     {
         let approved = approved_enrollments.clone();
@@ -177,7 +160,6 @@ async fn main() -> anyhow::Result<()> {
         ws_tickets,
         sso_sessions,
         ca: Arc::new(ca),
-        enrollment_rate_limits,
         approved_enrollments,
         oidc_cache,
     };
@@ -205,7 +187,7 @@ async fn main() -> anyhow::Result<()> {
 
         tracing::info!(%addr, "Listening (HTTPS)");
         axum_server::bind_rustls(addr, tls_config)
-            .serve(app.into_make_service())
+            .serve(app.into_make_service_with_connect_info::<SocketAddr>())
             .await?;
     } else {
         tracing::warn!(
@@ -216,7 +198,11 @@ async fn main() -> anyhow::Result<()> {
         );
         tracing::info!(%addr, "Listening (HTTP — no TLS)");
         let listener = tokio::net::TcpListener::bind(addr).await?;
-        axum::serve(listener, app).await?;
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await?;
     }
 
     Ok(())
@@ -226,8 +212,59 @@ async fn main() -> anyhow::Result<()> {
 pub fn build_router(state: AppState) -> Router {
     let static_dir = state.config.server.static_dir.clone();
     let auth_config = state.auth_config.clone();
+    let rl = &state.config.rate_limit;
 
-    // All protected API routes — require valid JWT
+    // Enrollment rate limiting: strict (5 req/min per IP, burst 3)
+    // Uses SmartIpKeyExtractor to respect X-Forwarded-For behind reverse proxy.
+    // governor quota: 1 request per 12_000ms = ~5/min sustained
+    let enrollment_governor = Arc::new(
+        GovernorConfigBuilder::default()
+            .key_extractor(SmartIpKeyExtractor)
+            .per_millisecond(12_000)
+            .burst_size(rl.enrollment_burst)
+            .finish()
+            .expect("Invalid enrollment governor config"),
+    );
+
+    // Auth rate limiting: moderate (20 req/min per IP, burst 10)
+    // Uses SmartIpKeyExtractor to respect X-Forwarded-For behind reverse proxy.
+    // governor quota: 1 request per 3_000ms = ~20/min sustained
+    let auth_governor = Arc::new(
+        GovernorConfigBuilder::default()
+            .key_extractor(SmartIpKeyExtractor)
+            .per_millisecond(3_000)
+            .burst_size(rl.auth_burst)
+            .finish()
+            .expect("Invalid auth governor config"),
+    );
+
+    // API rate limiting: normal (120 req/min per IP, burst 30)
+    // Uses SmartIpKeyExtractor to respect X-Forwarded-For behind reverse proxy.
+    // governor quota: 1 request per 500ms = ~120/min sustained
+    let api_governor = Arc::new(
+        GovernorConfigBuilder::default()
+            .key_extractor(SmartIpKeyExtractor)
+            .per_millisecond(500)
+            .burst_size(rl.api_burst)
+            .finish()
+            .expect("Invalid API governor config"),
+    );
+
+    // Enrollment routes with strict per-IP rate limiting
+    let enrollment_router =
+        routes::enrollment::router().layer(GovernorLayer::new(enrollment_governor));
+
+    // Public auth routes with moderate per-IP rate limiting
+    let auth_public_router =
+        routes::auth::public_router().layer(GovernorLayer::new(Arc::clone(&auth_governor)));
+
+    // SSO routes with moderate per-IP rate limiting
+    let sso_public_router =
+        routes::sso::public_router().layer(GovernorLayer::new(Arc::clone(&auth_governor)));
+    let sso_azure_router =
+        routes::sso::azure_compat_router().layer(GovernorLayer::new(auth_governor));
+
+    // All protected API routes — require valid JWT, with normal per-IP rate limiting
     let protected_api = Router::new()
         // Auth: MFA setup/verify
         // Auth: MFA setup/verify/disable (nested under /auth so paths are /api/v1/auth/mfa/*)
@@ -267,7 +304,8 @@ pub fn build_router(state: AppState) -> Router {
         .nest("/settings", routes::settings::router())
         // Admin enrollment routes (JWT protected, Admin role enforced)
         .nest("/admin", routes::enrollment::admin_router())
-        // Apply auth middleware to all the above
+        // Apply rate limiting then auth middleware
+        .layer(GovernorLayer::new(api_governor))
         .route_layer(middleware::from_fn(move |req, next| {
             let auth_config = auth_config.clone();
             require_auth(auth_config, req, next)
@@ -275,15 +313,15 @@ pub fn build_router(state: AppState) -> Router {
 
     Router::new()
         .route("/status/health", get(health_handler))
-        // Public auth routes (no JWT needed)
-        .nest("/api/v1/auth", routes::auth::public_router())
+        // Public auth routes (rate-limited, no JWT)
+        .nest("/api/v1/auth", auth_public_router)
         // Public enrollment endpoints (rate-limited, no JWT)
-        .nest("/api/v1", routes::enrollment::router())
-        // Public SSO routes (no JWT needed)
-        .nest("/api/v1/auth/sso", routes::sso::public_router())
-        // Public Azure SSO routes (no JWT needed)
-        .nest("/api/v1/auth/azure", routes::sso::azure_compat_router())
-        // Protected API routes (JWT required)
+        .nest("/api/v1", enrollment_router)
+        // Public SSO routes (rate-limited, no JWT)
+        .nest("/api/v1/auth/sso", sso_public_router)
+        // Public Azure SSO routes (rate-limited, no JWT)
+        .nest("/api/v1/auth/azure", sso_azure_router)
+        // Protected API routes (JWT required, rate-limited)
         .nest("/api/v1", protected_api)
         // WebSocket browser endpoint — ticket-authenticated, outside JWT middleware
         .merge(routes::ws::ws_router())
