@@ -7,7 +7,7 @@ Usage:
 Environment variables:
     GITEA_TOKEN  - API token (required, falls back to GITHUB_TOKEN)
     GITEA_URL    - Gitea base URL (default: http://192.168.2.189:3000)
-    GITEA_REPO   - Repository path (default: echo/linux_patch_manager)
+    GITEA_REPO   - Repository path (default: git-echo/linux_patch_manager)
 """
 import argparse
 import json
@@ -89,7 +89,7 @@ def main():
         sys.exit(1)
 
     base_url = os.environ.get("GITEA_URL", "http://192.168.2.189:3000")
-    repo = os.environ.get("GITEA_REPO", "echo/linux_patch_manager")
+    repo = os.environ.get("GITEA_REPO", "git-echo/linux_patch_manager")
 
     title = f"Release {args.version}"
     body = (
