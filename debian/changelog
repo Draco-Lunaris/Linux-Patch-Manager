@@ -1,3 +1,13 @@
+linux-patch-manager (0.1.9-1) noble; urgency=medium
+
+  * Fix: Replace broken DashMap rate limiting with tower-governor middleware
+  * Fix: Enrollment rate limiting was global (0.0.0.0 fallback) instead of per-IP
+  * Fix: Use SmartIpKeyExtractor for proper X-Forwarded-For support behind HAProxy
+  * Add: Configurable rate limit tiers via [rate_limit] in config.toml
+  * Add: Standard X-RateLimit-* and Retry-After headers on 429 responses
+
+ -- Echo <echo@moon-dragon.us>  Wed, 21 May 2026 02:38:00 +0000
+
 linux-patch-manager (0.1.7-1) noble; urgency=medium
 
   * Host Self-Enrollment: Added REST API and UI for automated agent enrollment
