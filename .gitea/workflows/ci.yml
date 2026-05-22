@@ -27,7 +27,7 @@ jobs:
         run: |
           TOKEN="${{ secrets.GITEATOKEN }}"
           curl -sf -H "Authorization: token ${TOKEN}" \
-            "https://gitea-lxc.moon-dragon.us/echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" \
+            "https://gitea-lxc.moon-dragon.us/git-echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" \
             -o repo.tar.gz
           tar xzf repo.tar.gz --strip-components=1
           rm repo.tar.gz
@@ -61,7 +61,7 @@ jobs:
         run: |
           TOKEN="${{ secrets.GITEATOKEN }}"
           curl -sf -H "Authorization: token ${TOKEN}" \
-            "https://gitea-lxc.moon-dragon.us/echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" \
+            "https://gitea-lxc.moon-dragon.us/git-echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" \
             -o repo.tar.gz
           tar xzf repo.tar.gz --strip-components=1
           rm repo.tar.gz
@@ -94,7 +94,7 @@ jobs:
         run: |
           TOKEN="${{ secrets.GITEATOKEN }}"
           curl -sf -H "Authorization: token ${TOKEN}" \
-            "https://gitea-lxc.moon-dragon.us/echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" \
+            "https://gitea-lxc.moon-dragon.us/git-echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" \
             -o repo.tar.gz
           tar xzf repo.tar.gz --strip-components=1
           rm repo.tar.gz
@@ -126,7 +126,7 @@ jobs:
         run: |
           TOKEN="${{ secrets.GITEATOKEN }}"
           curl -sf -H "Authorization: token ${TOKEN}" \
-            "https://gitea-lxc.moon-dragon.us/echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" \
+            "https://gitea-lxc.moon-dragon.us/git-echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" \
             -o repo.tar.gz
           tar xzf repo.tar.gz --strip-components=1
           rm repo.tar.gz
@@ -171,7 +171,7 @@ jobs:
         run: |
           TOKEN="${{ secrets.GITEATOKEN }}"
           curl -sf -H "Authorization: token ${TOKEN}" \
-            "https://gitea-lxc.moon-dragon.us/echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" \
+            "https://gitea-lxc.moon-dragon.us/git-echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" \
             -o repo.tar.gz
           tar xzf repo.tar.gz --strip-components=1
           rm repo.tar.gz
@@ -207,7 +207,7 @@ jobs:
         run: |
           TOKEN="${{ secrets.GITEATOKEN }}"
           curl -sf -H "Authorization: token ${TOKEN}" \
-            "https://gitea-lxc.moon-dragon.us/echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" \
+            "https://gitea-lxc.moon-dragon.us/git-echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" \
             -o repo.tar.gz
           tar xzf repo.tar.gz --strip-components=1
           rm repo.tar.gz
@@ -261,7 +261,7 @@ jobs:
         env:
           GITEA_TOKEN: ${{ secrets.GITEATOKEN }}
           GITEA_URL: https://gitea-lxc.moon-dragon.us
-          GITEA_REPO: echo/linux_patch_manager
+          GITEA_REPO: git-echo/linux_patch_manager
         run: |
           VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*=.*"\(.*\)"/\1/')
           DEB=$(ls linux-patch-manager_*.deb)
