@@ -1,6 +1,7 @@
 //! Maintenance window management routes.
 //!
 //! GET    /api/v1/hosts/{id}/maintenance-windows           — list windows for host
+//! GET    /api/v1/maintenance-windows                     — list ALL windows (bulk)
 //! POST   /api/v1/hosts/{id}/maintenance-windows           — create window for host
 //! PUT    /api/v1/hosts/{id}/maintenance-windows/{win_id}  — update window
 //! DELETE /api/v1/hosts/{id}/maintenance-windows/{win_id}  — delete window
@@ -30,6 +31,41 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_windows).post(create_window))
         .route("/{win_id}", put(update_window).delete(delete_window))
+}
+
+/// Top-level router for `/api/v1/maintenance-windows` — bulk list-all endpoint.
+pub fn all_windows_router() -> Router<AppState> {
+    Router::new().route("/", get(list_all_windows))
+}
+
+// ── GET /api/v1/maintenance-windows ──────────────────────────────────────────
+
+/// Bulk endpoint: return every maintenance window across all hosts.
+/// Eliminates N+1 queries from the frontend (one request instead of one per host).
+async fn list_all_windows(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let windows: Vec<MaintenanceWindow> = sqlx::query_as(
+        r#"
+        SELECT id, host_id, label, recurrence, start_at, duration_minutes,
+               recurrence_day, enabled, auto_apply, created_at, updated_at
+        FROM   maintenance_windows
+        ORDER  BY host_id, created_at ASC
+        "#,
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, "list_all_windows: query failed");
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            "Database error",
+        )
+    })?;
+
+    Ok(Json(json!({ "windows": windows })))
 }
 
 // ── Error helper ──────────────────────────────────────────────────────────────
