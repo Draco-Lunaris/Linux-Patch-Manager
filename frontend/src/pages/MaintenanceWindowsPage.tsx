@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   Alert,
   Box,
@@ -444,35 +444,70 @@ export default function MaintenanceWindowsPage() {
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteWindow, setDeleteWindow] = useState<MaintenanceWindow | null>(null)
 
-  // ── Fetch all hosts + their windows ──────────────────────────────────────
-  const fetchData = useCallback(async () => {
+  // ── AbortController ref for cancelling stale fetches ──────────────────────
+  const abortRef = useRef<AbortController | null>(null)
+
+  // ── Fetch hosts + all maintenance windows in 2 parallel requests ─────────
+  // Uses bulk /maintenance-windows endpoint instead of N+1 per-host calls.
+  // State updates are batched atomically so React never renders hosts without
+  // their windows (the root cause of the "randomly missing data" bug).
+  const fetchData = useCallback(async (signal?: AbortSignal) => {
     setLoading(true)
     setError(null)
     try {
-      const hostsRes = await hostsApi.list({ limit: 500 })
-      const fetchedHosts: Host[] = hostsRes.data?.hosts ?? hostsRes.data ?? []
-      setHosts(fetchedHosts)
+      // Fetch hosts and ALL windows in parallel — 2 requests, not N+1.
+      const [hostsRes, windowsRes] = await Promise.all([
+        hostsApi.list({ limit: 500 }),
+        maintenanceWindowsApi.listAll(),
+      ])
 
+      // If the request was aborted (e.g. component unmounted or new fetch
+      // started), discard the results silently.
+      if (signal?.aborted) return
+
+      const fetchedHosts: Host[] = hostsRes.data?.hosts ?? hostsRes.data ?? []
+      const allWindows: MaintenanceWindow[] = windowsRes.data?.windows ?? []
+
+      // Group windows by host_id for O(N) lookup.
       const windowMap: Record<string, MaintenanceWindow[]> = {}
-      await Promise.all(
-        fetchedHosts.map(async (h) => {
-          try {
-            const res = await maintenanceWindowsApi.list(h.id)
-            windowMap[h.id] = res.data?.windows ?? []
-          } catch {
-            windowMap[h.id] = []
-          }
-        })
-      )
+      for (const w of allWindows) {
+        if (!windowMap[w.host_id]) windowMap[w.host_id] = []
+        windowMap[w.host_id].push(w)
+      }
+
+      // Batch both state updates together — React 18+ auto-batches these
+      // into a single render, eliminating the race condition where hosts
+      // rendered with stale/empty windows.
+      setHosts(fetchedHosts)
       setWindowsByHost(windowMap)
-    } catch {
+    } catch (err: unknown) {
+      if (signal?.aborted) return // stale request — ignore silently
+      // Only log real errors, not cancellations.
+      if (err instanceof DOMException && err.name === 'AbortError') return
       setError('Failed to load hosts or maintenance windows.')
     } finally {
-      setLoading(false)
+      if (!signal?.aborted) {
+        setLoading(false)
+      }
     }
   }, [])
 
-  useEffect(() => { fetchData() }, [fetchData])
+  useEffect(() => {
+    // Cancel any in-flight fetch from a previous render.
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+    fetchData(controller.signal)
+    return () => { controller.abort() }
+  }, [fetchData])
+
+  // ── Refresh helper: cancels any in-flight fetch, starts a new one ────────
+  const refreshData = useCallback(() => {
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+    fetchData(controller.signal)
+  }, [fetchData])
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   const showSnackbar = (message: string, severity: 'success' | 'error') =>
@@ -498,7 +533,7 @@ export default function MaintenanceWindowsPage() {
     })
     setCreateOpen(false)
     showSnackbar('Maintenance window created', 'success')
-    await fetchData()
+    refreshData()
   }
 
   // ── Edit window ───────────────────────────────────────────────────────────
@@ -529,7 +564,7 @@ export default function MaintenanceWindowsPage() {
     })
     setEditOpen(false)
     showSnackbar('Maintenance window updated', 'success')
-    await fetchData()
+    refreshData()
   }
 
   // ── Delete window ─────────────────────────────────────────────────────────
@@ -544,7 +579,7 @@ export default function MaintenanceWindowsPage() {
       await maintenanceWindowsApi.remove(deleteWindow.host_id, deleteWindow.id)
       setDeleteOpen(false)
       showSnackbar('Maintenance window deleted', 'success')
-      await fetchData()
+      refreshData()
     } catch {
       showSnackbar('Failed to delete maintenance window', 'error')
     }
@@ -561,7 +596,7 @@ export default function MaintenanceWindowsPage() {
         </Typography>
         <Button
           startIcon={<RefreshIcon />}
-          onClick={fetchData}
+          onClick={refreshData}
           disabled={loading}
         >
           Refresh

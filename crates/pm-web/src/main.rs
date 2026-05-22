@@ -288,6 +288,11 @@ pub fn build_router(state: AppState) -> Router {
             "/hosts/{host_id}/maintenance-windows",
             routes::maintenance_windows::router(),
         )
+        // Maintenance windows — bulk list-all endpoint
+        .nest(
+            "/maintenance-windows",
+            routes::maintenance_windows::all_windows_router(),
+        )
         // CA root certificate download
         .nest("/ca", routes::ca::ca_router())
         // Certificate list / renew / revoke

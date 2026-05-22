@@ -5,6 +5,7 @@ import type {
   CreateHostRequest,
   CreateJobRequest,
   CreateMaintenanceWindowRequest,
+  MaintenanceWindow,
   UpdateMaintenanceWindowRequest,
   Certificate,
   IssuedCert,
@@ -176,6 +177,10 @@ export const patchesApi = {
 
 // ── Maintenance Windows API ───────────────────────────────────────────────────
 export const maintenanceWindowsApi = {
+  /** Bulk: fetch ALL maintenance windows across every host in one request. */
+  listAll: () =>
+    apiClient.get<{ windows: MaintenanceWindow[] }>('/maintenance-windows'),
+  /** Per-host: fetch windows for a single host. */
   list: (hostId: string) =>
     apiClient.get(`/hosts/${hostId}/maintenance-windows`),
   create: (hostId: string, body: CreateMaintenanceWindowRequest) =>
