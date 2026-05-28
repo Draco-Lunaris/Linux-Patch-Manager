@@ -1,0 +1,57 @@
+[Unit]
+Description=Linux Patch Manager — Background Worker
+Documentation=https://gitea.moon-dragon.us/echo/linux_patch_manager
+After=network-online.target postgresql.service patch-manager-web.service
+Wants=network-online.target
+Requires=postgresql.service
+# Worker waits for the web process to apply migrations before starting tasks
+Wants=patch-manager-web.service
+PartOf=patch-manager.target
+
+[Service]
+Type=simple
+User=patch-manager
+Group=patch-manager
+WorkingDirectory=/opt/patch-manager
+
+# Configuration
+Environment="PATCH_MANAGER_CONFIG=/etc/patch-manager/config.toml"
+
+ExecStart=/usr/local/bin/pm-worker
+
+# Restart policy — aggressive restart for production availability
+Restart=always
+RestartSec=10s
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+# Timeouts — worker may take longer to drain active jobs
+TimeoutStartSec=120s
+TimeoutStopSec=120s
+
+# Watchdog disabled — pm-worker does not currently implement sd_notify
+# WatchdogSec=180s
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/patch-manager /etc/patch-manager/ca /etc/patch-manager/certs /etc/patch-manager/tls /etc/patch-manager/jwt
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+
+# File descriptor limits
+LimitNOFILE=65536
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=patch-manager-worker
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,36 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+    purge)
+        # Remove service user (only if purge)
+        if id patch-manager &>/dev/null; then
+            userdel patch-manager 2>/dev/null || true
+        fi
+
+        # Remove runtime data
+        rm -rf /var/log/patch-manager
+        rm -rf /opt/patch-manager
+        rm -rf /var/backups/patch-manager
+
+        # Remove configuration and keys (purge only)
+        rm -rf /etc/patch-manager
+
+        # Remove backup cron
+        crontab -l 2>/dev/null | grep -vF "backup.sh" | crontab - 2>/dev/null || true
+
+        # Reload systemd
+        systemctl daemon-reload
+        ;;
+
+    remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+        # On remove (not purge), keep config and keys
+        systemctl daemon-reload 2>/dev/null || true
+        ;;
+
+    *)
+        echo "postrm called with unknown argument \`$1'" >&2
+        ;;
+esac
+
+exit 0

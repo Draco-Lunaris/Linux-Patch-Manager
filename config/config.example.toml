@@ -1,0 +1,126 @@
+# Linux Patch Manager — Example Configuration
+# Copy to /etc/patch-manager/config.toml and edit for your environment.
+#
+# Environment variable overrides follow the pattern:
+#   PATCH_MANAGER__SECTION__KEY=value
+# e.g. PATCH_MANAGER__DATABASE__URL=postgres://...
+
+# ============================================================
+# Web Server
+# ============================================================
+[server]
+# Bind address for the HTTPS listener
+host = "0.0.0.0"
+
+# HTTPS port (443 for production; 8443 for non-root dev)
+port = 443
+
+# Path to compiled React SPA static files
+static_dir = "/usr/share/patch-manager/frontend"
+
+# ============================================================
+# Database
+# ============================================================
+[database]
+# PostgreSQL connection URL
+url = "postgres://patch_manager:CHANGEME@localhost/patch_manager"
+
+# Connection pool sizing
+max_connections = 20
+min_connections = 2
+
+# Seconds to wait for a connection from the pool
+acquire_timeout_secs = 30
+
+# ============================================================
+# Background Worker
+# ============================================================
+[worker]
+# Agent health check interval (seconds). Default: 300 = 5 minutes
+health_poll_interval_secs = 300
+
+# Agent patch data poll interval (seconds). Default: 1800 = 30 minutes
+patch_poll_interval_secs = 1800
+
+# Health check poll interval (seconds). Default: 300 = 5 minutes
+# Controls how often configured service/HTTP health checks are evaluated.
+health_check_poll_interval_secs = 300
+
+# Maximum concurrent mTLS agent calls (Tokio Semaphore)
+max_concurrent_agent_calls = 64
+
+# Worker heartbeat write interval (seconds)
+
+# WS relay HTTP polling fallback interval (seconds). When WebSocket connection to
+# an agent fails, the relay falls back to polling the agent's HTTP API at this
+# interval. Default: 10
+ws_relay_poll_interval_secs = 10
+
+# ============================================================
+# Logging
+# ============================================================
+[logging]
+# Log level: trace, debug, info, warn, error
+# Override with RUST_LOG environment variable
+level = "info"
+
+# Output format: "json" (production) or "pretty" (development)
+format = "json"
+
+# ============================================================
+# Security
+# ============================================================
+[security]
+# IP whitelist: list of CIDRs or individual IPs allowed to connect.
+# IMPORTANT: An empty list allows ALL IPs. Restrict this in production.
+# Example: ["10.0.0.0/8", "192.168.1.50"]
+ip_whitelist = []
+
+# Ed25519 JWT signing key (private key, PEM format)
+# Generate: openssl genpkey -algorithm ed25519 -out /etc/patch-manager/jwt/signing.pem
+jwt_signing_key_path = "/etc/patch-manager/jwt/signing.pem"
+
+# Ed25519 JWT verification key (public key, PEM format)
+# Generate: openssl pkey -in /etc/patch-manager/jwt/signing.pem -pubout -out /etc/patch-manager/jwt/verify.pem
+jwt_verify_key_path = "/etc/patch-manager/jwt/verify.pem"
+
+# JWT access token TTL in seconds (default: 900 = 15 minutes)
+jwt_access_ttl_secs = 900
+
+# mTLS client certificate for agent communication
+agent_client_cert_path = "/etc/patch-manager/certs/client.crt"
+agent_client_key_path  = "/etc/patch-manager/certs/client.key"
+
+# Internal CA certificate and private key (must be unencrypted PEM)
+# WARNING: Do NOT use password-protected/encrypted keys; the service will fail.
+# Private key has 0600 permissions; protected by hardware-host FDE
+ca_cert_path = "/etc/patch-manager/ca/ca.crt"
+ca_key_path  = "/etc/patch-manager/ca/ca.key"
+
+# Web UI TLS certificate (default: self-signed from internal CA)
+# Set web_tls_strategy = 'operator_supplied' in system_config and
+# point these paths to your certificate/key to use your own cert.
+web_tls_cert_path = "/etc/patch-manager/tls/web.crt"
+web_tls_key_path  = "/etc/patch-manager/tls/web.key"
+
+# Frontend URL to redirect the browser to after Azure SSO callback.
+# The backend sends tokens as query parameters to this URL.
+# Default: "http://localhost:5173/auth/sso/callback" (Vite dev server)
+sso_callback_url = "http://localhost:5173/auth/sso/callback"
+
+# ============================================================
+# Rate Limiting
+# ============================================================
+[rate_limit]
+# Enrollment endpoint: requests per minute per IP (default: 5)
+enrollment_rpm = 5
+# Enrollment burst allowance (default: 3)
+enrollment_burst = 3
+# Public auth endpoints: requests per minute per IP (default: 20)
+auth_rpm = 20
+# Auth burst allowance (default: 10)
+auth_burst = 10
+# Authenticated API: requests per minute per IP (default: 120)
+api_rpm = 120
+# API burst allowance (default: 30)
+api_burst = 30

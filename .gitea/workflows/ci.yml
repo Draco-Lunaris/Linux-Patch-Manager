@@ -1,0 +1,271 @@
+name: CI Pipeline
+
+"on":
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+    branches: [master]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ─── Quality Gates (run on every push/PR/tag) ───
+
+  rust-format:
+    name: Rust Format Check
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install checkout dependencies
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends curl ca-certificates
+
+      - name: Checkout repository
+        run: |
+          TOKEN="${{ secrets.GITEATOKEN }}"
+          curl -sf -H "Authorization: token ${TOKEN}" \
+            "https://gitea-lxc.moon-dragon.us/git-echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" \
+            -o repo.tar.gz
+          tar xzf repo.tar.gz --strip-components=1
+          rm repo.tar.gz
+
+      - name: Ensure Rust toolchain
+        run: |
+          if ! command -v cargo &>/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            . "$HOME/.cargo/env"
+          fi
+          . "$HOME/.cargo/env"
+          rustup component add rustfmt
+          echo "Rust: $(cargo --version)"
+          echo "Rustfmt: $(rustfmt --version)"
+
+      - name: Check formatting
+        run: |
+          . "$HOME/.cargo/env"
+          cargo fmt --check --all 2>&1
+
+  clippy:
+    name: Clippy Lints
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends curl ca-certificates pkg-config libssl-dev libfontconfig1-dev
+
+      - name: Checkout repository
+        run: |
+          TOKEN="${{ secrets.GITEATOKEN }}"
+          curl -sf -H "Authorization: token ${TOKEN}" \
+            "https://gitea-lxc.moon-dragon.us/git-echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" \
+            -o repo.tar.gz
+          tar xzf repo.tar.gz --strip-components=1
+          rm repo.tar.gz
+
+      - name: Ensure Rust toolchain
+        run: |
+          if ! command -v cargo &>/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            . "$HOME/.cargo/env"
+          fi
+          . "$HOME/.cargo/env"
+          rustup component add clippy
+          echo "Rust: $(cargo --version)"
+
+      - name: Run Clippy
+        run: |
+          . "$HOME/.cargo/env"
+          cargo clippy --all-targets --all-features 2>&1
+
+  rust-test:
+    name: Rust Unit Tests
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends curl ca-certificates pkg-config libssl-dev libfontconfig1-dev
+
+      - name: Checkout repository
+        run: |
+          TOKEN="${{ secrets.GITEATOKEN }}"
+          curl -sf -H "Authorization: token ${TOKEN}" \
+            "https://gitea-lxc.moon-dragon.us/git-echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" \
+            -o repo.tar.gz
+          tar xzf repo.tar.gz --strip-components=1
+          rm repo.tar.gz
+
+      - name: Ensure Rust toolchain
+        run: |
+          if ! command -v cargo &>/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            . "$HOME/.cargo/env"
+          fi
+          . "$HOME/.cargo/env"
+          echo "Rust: $(cargo --version)"
+
+      - name: Run tests
+        run: |
+          . "$HOME/.cargo/env"
+          cargo test --workspace --all-features 2>&1
+
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install checkout dependencies
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends curl ca-certificates
+
+      - name: Checkout repository
+        run: |
+          TOKEN="${{ secrets.GITEATOKEN }}"
+          curl -sf -H "Authorization: token ${TOKEN}" \
+            "https://gitea-lxc.moon-dragon.us/git-echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" \
+            -o repo.tar.gz
+          tar xzf repo.tar.gz --strip-components=1
+          rm repo.tar.gz
+
+      - name: Ensure Rust toolchain
+        run: |
+          if ! command -v cargo &>/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            . "$HOME/.cargo/env"
+          fi
+          . "$HOME/.cargo/env"
+          echo "Rust: $(cargo --version)"
+
+      - name: Install cargo-audit
+        run: |
+          . "$HOME/.cargo/env"
+          cargo install cargo-audit 2>&1
+
+      - name: Run security audit
+        run: |
+          . "$HOME/.cargo/env"
+          cargo audit 2>&1
+
+  frontend-lint:
+    name: Frontend Lint & Type Check
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install checkout dependencies
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends curl ca-certificates
+
+      - name: Install Node.js from Ubuntu repos
+        run: |
+          # Use only Ubuntu repository packages
+          apt-get update -qq
+          apt-get install -y --no-install-recommends nodejs npm
+          node --version
+          npm --version
+
+      - name: Checkout repository
+        run: |
+          TOKEN="${{ secrets.GITEATOKEN }}"
+          curl -sf -H "Authorization: token ${TOKEN}" \
+            "https://gitea-lxc.moon-dragon.us/git-echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" \
+            -o repo.tar.gz
+          tar xzf repo.tar.gz --strip-components=1
+          rm repo.tar.gz
+
+      - name: Install Node.js dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Run ESLint
+        working-directory: frontend
+        run: npx eslint src/ --ext .ts,.tsx --max-warnings 0 2>&1
+
+      - name: TypeScript type check
+        working-directory: frontend
+        run: npx tsc --noEmit 2>&1
+
+  # ─── Build & Release (only on tag pushes, gated by quality checks) ───
+
+  build-and-release:
+    name: Build .deb & Release
+    runs-on: ubuntu-24.04
+    needs: [rust-format, clippy, rust-test, security-audit, frontend-lint]
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends \
+            curl ca-certificates pkg-config libssl-dev libfontconfig1-dev \
+            git nodejs npm dpkg-dev python3
+
+      - name: Checkout repository
+        run: |
+          TOKEN="${{ secrets.GITEATOKEN }}"
+          curl -sf -H "Authorization: token ${TOKEN}" \
+            "https://gitea-lxc.moon-dragon.us/git-echo/linux_patch_manager/archive/${GITHUB_SHA}.tar.gz" \
+            -o repo.tar.gz
+          tar xzf repo.tar.gz --strip-components=1
+          rm repo.tar.gz
+
+      - name: Ensure Rust toolchain
+        run: |
+          if ! command -v cargo &>/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            . "$HOME/.cargo/env"
+          fi
+          . "$HOME/.cargo/env"
+          echo "Rust: $(cargo --version)"
+
+      - name: Build Rust backend (release)
+        run: |
+          . "$HOME/.cargo/env"
+          cargo build --release 2>&1
+
+      - name: Run Rust tests
+        run: |
+          . "$HOME/.cargo/env"
+          cargo test --workspace --all-features 2>&1
+
+      - name: Strip binaries
+        run: |
+          strip target/release/pm-web target/release/pm-worker
+
+      - name: Build frontend
+        run: |
+          cd frontend && npm ci && npm run build
+
+      - name: Determine version
+        run: |
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*=.*"\(.*\)"/\1/')
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+          echo "Building version: ${VERSION}"
+
+      - name: Assemble .deb package
+        run: |
+          . "$HOME/.cargo/env"
+          chmod +x scripts/build-package.sh
+          scripts/build-package.sh
+
+      - name: Verify package
+        run: |
+          ls -la *.deb
+          dpkg-deb -I linux-patch-manager_*.deb
+
+      - name: Create Gitea Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GITEA_TOKEN: ${{ secrets.GITEATOKEN }}
+          GITEA_URL: https://gitea-lxc.moon-dragon.us
+          GITEA_REPO: git-echo/linux_patch_manager
+        run: |
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*=.*"\(.*\)"/\1/')
+          DEB=$(ls linux-patch-manager_*.deb)
+          python3 scripts/create-release.py \
+            --tag "${GITHUB_REF_NAME}" \
+            --deb "${DEB}" \
+            --version "${VERSION}"

@@ -1,0 +1,11 @@
+# Linux Patch Manager - Clippy Lint Configuration
+# Run: cargo clippy -- -D warnings (CI) or cargo clippy (local)
+
+# Deny all warnings in CI - warnings become errors
+cognitive-complexity-threshold = 30
+
+# Type complexity limits
+type-complexity-threshold = 300
+
+# Single character binding names threshold
+single-char-binding-names-threshold = 11

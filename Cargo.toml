@@ -1,0 +1,89 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/pm-web",
+    "crates/pm-worker",
+    "crates/pm-core",
+    "crates/pm-agent-client",
+    "crates/pm-auth",
+    "crates/pm-ca",
+    "crates/pm-reports",
+]
+
+[workspace.package]
+version = "0.1.9"
+edition = "2021"
+authors = ["Echo <echo@moon-dragon.us>"]
+license = "MIT"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Web framework
+axum = { version = "0.8", features = ["ws", "macros"] }
+axum-server = { version = "0.7", features = ["tls-rustls"] }
+axum-extra = { version = "0.10", features = ["typed-header"] }
+tower = { version = "0.5" }
+tower-http = { version = "0.6", features = ["fs", "trace", "cors", "request-id"] }
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "macros", "migrate", "uuid", "chrono", "json"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1" }
+toml = { version = "0.8" }
+
+# Error handling
+thiserror = { version = "2" }
+anyhow = { version = "1" }
+
+# Logging / Tracing
+tracing = { version = "0.1" }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# UUID / ULID
+uuid = { version = "1", features = ["v4", "serde"] }
+ulid = { version = "1", features = ["serde"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# HTTP client
+reqwest = { version = "0.12", features = ["rustls-tls", "json"] }
+
+rustls = { version = "0.23", features = ["ring"] }
+tokio-rustls = { version = "0.26" }
+rustls-pemfile = { version = "2" }
+
+# Certificate Authority
+rcgen = { version = "0.13", features = ["pem", "x509-parser"] }
+pem = { version = "3" }
+time = { version = "0.3", features = ["std"] }
+
+# Config
+config = { version = "0.15" }
+
+# Misc
+bytes = { version = "1" }
+futures = { version = "0.3" }
+
+# Authentication & Security
+argon2 = { version = "0.5", features = ["std"] }
+jsonwebtoken = { version = "9" }
+rand = { version = "0.8", features = ["std"] }
+totp-rs = { version = "5", features = ["gen_secret", "otpauth"] }
+base64 = { version = "0.22" }
+hex = { version = "0.4" }
+sha2 = { version = "0.10" }
+aes-gcm = { version = "0.10" }
+ipnet = { version = "2" }
+url = { version = "2" }
+
+# Rate limiting
+tower_governor = { version = "0.8", features = ["tracing"] }
+governor = "0.6"
+
+# Email
+lettre = { version = "0.11.22", features = ["tokio1-rustls-transport"] }

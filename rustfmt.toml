@@ -1,0 +1,14 @@
+# Linux Patch Manager - Rust Formatting Configuration
+# Run: cargo fmt --check (CI) or cargo fmt (fix)
+# Only stable options - nightly-only options removed
+
+edition = "2021"
+max_width = 100
+hard_tabs = false
+tab_spaces = 4
+newline_style = "Unix"
+use_small_heuristics = "Default"
+reorder_imports = true
+reorder_modules = true
+remove_nested_parens = true
+match_block_trailing_comma = true

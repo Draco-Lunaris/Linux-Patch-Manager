@@ -1,0 +1,555 @@
+//! Shared database model types used across pm-web and pm-worker.
+//!
+//! These match the database schema defined in migrations/.
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
+use uuid::Uuid;
+
+// ============================================================
+// Enumerations (matching PostgreSQL ENUM types)
+// ============================================================
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[serde(rename_all = "lowercase")]
+#[sqlx(type_name = "host_health_status", rename_all = "lowercase")]
+pub enum HostHealthStatus {
+    Pending,
+    Healthy,
+    Degraded,
+    Unreachable,
+}
+
+impl std::fmt::Display for HostHealthStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Pending => write!(f, "pending"),
+            Self::Healthy => write!(f, "healthy"),
+            Self::Degraded => write!(f, "degraded"),
+            Self::Unreachable => write!(f, "unreachable"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[serde(rename_all = "lowercase")]
+#[sqlx(type_name = "user_role", rename_all = "lowercase")]
+pub enum UserRole {
+    Admin,
+    Operator,
+    Reporter,
+}
+
+impl std::fmt::Display for UserRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Admin => write!(f, "admin"),
+            Self::Operator => write!(f, "operator"),
+            Self::Reporter => write!(f, "reporter"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[serde(rename_all = "snake_case")]
+#[sqlx(type_name = "auth_provider", rename_all = "snake_case")]
+pub enum AuthProvider {
+    Local,
+    #[sqlx(rename = "azure_sso")]
+    AzureSso,
+    Keycloak,
+    Oidc,
+}
+
+impl std::fmt::Display for AuthProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Local => write!(f, "local"),
+            Self::AzureSso => write!(f, "azure_sso"),
+            Self::Keycloak => write!(f, "keycloak"),
+            Self::Oidc => write!(f, "oidc"),
+        }
+    }
+}
+
+// ============================================================
+// Host
+// ============================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct Host {
+    pub id: Uuid,
+    pub fqdn: String,
+    pub ip_address: String, // stored as INET, returned as text
+    pub display_name: String,
+    pub os_family: Option<String>,
+    pub os_name: Option<String>,
+    pub arch: Option<String>,
+    pub agent_version: Option<String>,
+    pub health_status: HostHealthStatus,
+    pub last_health_at: Option<DateTime<Utc>>,
+    pub last_patch_at: Option<DateTime<Utc>>,
+    pub agent_port: i32,
+    pub notes: String,
+    pub registered_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Payload for registering a new host.
+#[derive(Debug, Deserialize)]
+pub struct CreateHostRequest {
+    /// FQDN or IP address of the managed host
+    pub fqdn: String,
+    pub display_name: Option<String>,
+    pub agent_port: Option<i32>,
+    pub notes: Option<String>,
+    pub group_ids: Option<Vec<Uuid>>,
+}
+
+/// Payload for updating an existing host.
+#[derive(Debug, Deserialize)]
+pub struct UpdateHostRequest {
+    pub fqdn: Option<String>,
+    pub ip_address: Option<String>,
+    pub display_name: Option<String>,
+}
+
+/// Host list item (lighter projection for list views)
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct HostSummary {
+    pub id: Uuid,
+    pub fqdn: String,
+    pub ip_address: String,
+    pub display_name: String,
+    pub os_family: Option<String>,
+    pub os_name: Option<String>,
+    pub health_status: HostHealthStatus,
+    pub agent_version: Option<String>,
+    pub patches_missing: i32,
+    pub health_check_status: Option<String>,
+    pub registered_at: DateTime<Utc>,
+}
+
+// ============================================================
+// Host Enrollment
+// ============================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct EnrollmentRequest {
+    pub id: Uuid,
+    pub machine_id: String,
+    pub fqdn: String,
+    pub ip_address: String,
+    pub os_details: serde_json::Value,
+    pub polling_token: String,
+    /// Short hostname provided during enrollment (optional).
+    pub hostname: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+}
+
+/// Payload for initial host enrollment request.
+#[derive(Debug, Deserialize, Serialize)]
+pub struct CreateEnrollmentRequest {
+    pub machine_id: String,
+    pub fqdn: String,
+    pub ip_address: String,
+    pub os_details: serde_json::Value,
+    /// Short hostname (from /etc/hostname, optional).
+    pub hostname: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "lowercase")]
+pub enum EnrollmentStatusResponse {
+    Pending,
+    Approved {
+        ca_crt: String,
+        server_crt: String,
+        server_key: String,
+    },
+    Denied,
+    NotFound,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PkiBundle {
+    pub ca_crt: String,
+    pub server_crt: String,
+    pub server_key: String,
+}
+
+// ============================================================
+// Health Checks
+// ============================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct HealthCheck {
+    pub id: Uuid,
+    pub host_id: Uuid,
+    pub name: String,
+    pub check_type: String, // "service" or "http"
+    pub enabled: bool,
+    // Service check fields
+    pub service_name: Option<String>,
+    // HTTP check fields
+    pub url: Option<String>,
+    pub expected_body: Option<String>,
+    pub ignore_cert_errors: bool,
+    pub basic_auth_user: Option<String>,
+    pub target_host_id: Option<Uuid>,
+    // basic_auth_pass_encrypted and nonce NOT exposed in API responses
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HealthCheckWithResult {
+    #[serde(flatten)]
+    pub check: HealthCheck,
+    pub last_result: Option<HealthCheckResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct HealthCheckResult {
+    pub id: Uuid,
+    pub check_id: Uuid,
+    pub healthy: bool,
+    pub detail: Option<String>,
+    pub latency_ms: Option<i32>,
+    pub checked_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateHealthCheckRequest {
+    pub name: String,
+    pub check_type: String, // "service" or "http"
+    pub service_name: Option<String>,
+    pub url: Option<String>,
+    pub expected_body: Option<String>,
+    #[serde(default = "default_true")]
+    pub ignore_cert_errors: bool,
+    pub basic_auth_user: Option<String>,
+    pub basic_auth_pass: Option<String>, // plaintext in request, encrypted before storage
+    pub target_host_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateHealthCheckRequest {
+    pub name: Option<String>,
+    pub enabled: Option<bool>,
+    pub service_name: Option<String>,
+    pub url: Option<String>,
+    pub expected_body: Option<String>,
+    pub ignore_cert_errors: Option<bool>,
+    pub basic_auth_user: Option<String>,
+    pub basic_auth_pass: Option<String>, // if provided, re-encrypt
+    pub target_host_id: Option<Uuid>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+// ============================================================
+// Group
+// ============================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct Group {
+    pub id: Uuid,
+    pub name: String,
+    pub description: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateGroupRequest {
+    pub name: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateGroupRequest {
+    pub name: Option<String>,
+    pub description: Option<String>,
+}
+
+// ============================================================
+// User
+// ============================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct User {
+    pub id: Uuid,
+    pub username: String,
+    pub display_name: String,
+    pub email: String,
+    pub role: UserRole,
+    pub auth_provider: AuthProvider,
+    pub mfa_enabled: bool,
+    pub is_active: bool,
+    pub force_password_reset: bool,
+    pub last_login_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// User create payload (admin-only)
+#[derive(Debug, Deserialize)]
+pub struct CreateUserRequest {
+    pub username: String,
+    pub display_name: Option<String>,
+    pub email: String,
+    pub role: String,
+    pub password: String,
+}
+
+/// User update payload
+#[derive(Debug, Deserialize)]
+pub struct UpdateUserRequest {
+    pub display_name: Option<String>,
+    pub email: Option<String>,
+    pub role: Option<String>,
+    pub is_active: Option<bool>,
+    pub force_password_reset: Option<bool>,
+}
+
+/// Self-service password change payload
+#[derive(Debug, Deserialize)]
+pub struct ChangePasswordRequest {
+    pub current_password: String,
+    pub new_password: String,
+}
+
+/// Admin password reset payload
+#[derive(Debug, Deserialize)]
+pub struct AdminResetPasswordRequest {
+    pub new_password: String,
+    #[serde(default)]
+    pub force_password_reset: bool,
+}
+
+// ============================================================
+// Discovery
+// ============================================================
+
+/// Request body for CIDR auto-discovery scan.
+#[derive(Debug, Deserialize)]
+pub struct DiscoveryCidrRequest {
+    /// CIDR range to scan (e.g. "10.0.0.0/24")
+    pub cidr: String,
+    /// Agent port to probe (default 12443)
+    pub agent_port: Option<i32>,
+}
+
+/// A single discovered host result.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct DiscoveryResult {
+    pub id: Uuid,
+    pub scan_id: Uuid,
+    pub ip_address: String,
+    pub fqdn: Option<String>,
+    pub agent_version: Option<String>,
+    pub os_name: Option<String>,
+    pub agent_port: i32,
+    pub discovered_at: DateTime<Utc>,
+    pub registered: bool,
+}
+
+/// Payload for registering a host from a discovery result.
+#[derive(Debug, Deserialize)]
+pub struct RegisterDiscoveredRequest {
+    pub discovery_id: Uuid,
+    pub display_name: Option<String>,
+    pub group_ids: Option<Vec<Uuid>>,
+}
+
+// ============================================================
+// Patch Jobs
+// ============================================================
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[serde(rename_all = "lowercase")]
+#[sqlx(type_name = "job_status", rename_all = "lowercase")]
+pub enum JobStatus {
+    Queued,
+    Pending,
+    Running,
+    Succeeded,
+    Failed,
+    Cancelled,
+}
+
+impl std::fmt::Display for JobStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Queued => write!(f, "queued"),
+            Self::Pending => write!(f, "pending"),
+            Self::Running => write!(f, "running"),
+            Self::Succeeded => write!(f, "succeeded"),
+            Self::Failed => write!(f, "failed"),
+            Self::Cancelled => write!(f, "cancelled"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[serde(rename_all = "snake_case")]
+#[sqlx(type_name = "job_kind", rename_all = "snake_case")]
+pub enum JobKind {
+    #[sqlx(rename = "patch_apply")]
+    PatchApply,
+    #[sqlx(rename = "patch_remove")]
+    PatchRemove,
+    Reboot,
+    Rollback,
+}
+
+/// Full `patch_jobs` row.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct PatchJob {
+    pub id: Uuid,
+    pub kind: JobKind,
+    pub status: JobStatus,
+    pub created_by_user_id: Option<Uuid>,
+    pub parent_job_id: Option<Uuid>,
+    pub maintenance_window_id: Option<Uuid>,
+    pub immediate: bool,
+    pub patch_selection: serde_json::Value,
+    pub notes: String,
+    pub created_at: DateTime<Utc>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+}
+
+/// Full `patch_job_hosts` row (includes columns added in migration 003).
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct PatchJobHost {
+    pub id: Uuid,
+    pub job_id: Uuid,
+    pub host_id: Uuid,
+    pub status: JobStatus,
+    pub agent_job_id: Option<String>,
+    pub retry_count: i32,
+    pub output: String,
+    pub error_message: Option<String>,
+    pub retry_next_at: Option<DateTime<Utc>>,
+    pub last_error: Option<String>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+}
+
+/// Request payload for creating a patch job via `POST /api/v1/jobs`.
+#[derive(Debug, Deserialize)]
+pub struct CreateJobRequest {
+    /// Host IDs to patch.
+    pub host_ids: Vec<Uuid>,
+    /// Package names to apply (empty = all available patches).
+    pub packages: Vec<String>,
+    /// If true: apply immediately. If false: queue for next maintenance window.
+    pub immediate: bool,
+    /// Optional maintenance window to bind to.
+    pub maintenance_window_id: Option<Uuid>,
+    /// Allow reboot if required by patches.
+    pub allow_reboot: Option<bool>,
+    /// Optional operator notes.
+    pub notes: Option<String>,
+}
+
+/// Summary row for job list view (aggregates per-host counts).
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct PatchJobSummary {
+    pub id: Uuid,
+    pub kind: JobKind,
+    pub status: JobStatus,
+    pub immediate: bool,
+    pub host_count: i64,
+    pub succeeded_count: i64,
+    pub failed_count: i64,
+    pub notes: String,
+    pub created_at: DateTime<Utc>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+}
+
+// ============================================================
+// Maintenance Windows
+// ============================================================
+
+/// Recurrence type for a maintenance window.
+/// Mirrors the `window_recurrence` PostgreSQL ENUM.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[serde(rename_all = "lowercase")]
+#[sqlx(type_name = "window_recurrence", rename_all = "lowercase")]
+pub enum WindowRecurrence {
+    /// Single one-time window (at `start_at` for `duration_minutes` minutes).
+    Once,
+    /// Repeats every day at the time portion of `start_at`.
+    Daily,
+    /// Repeats on the day-of-week in `recurrence_day` (0 = Sunday).
+    Weekly,
+    /// Repeats on the day-of-month in `recurrence_day` (1-31).
+    Monthly,
+}
+
+impl std::fmt::Display for WindowRecurrence {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Once => write!(f, "once"),
+            Self::Daily => write!(f, "daily"),
+            Self::Weekly => write!(f, "weekly"),
+            Self::Monthly => write!(f, "monthly"),
+        }
+    }
+}
+
+/// Full row from `maintenance_windows`.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct MaintenanceWindow {
+    pub id: Uuid,
+    pub host_id: Uuid,
+    pub label: String,
+    pub recurrence: WindowRecurrence,
+    /// Absolute start time (one-time) or time-of-day reference (recurring).
+    pub start_at: DateTime<Utc>,
+    /// Duration of the window in minutes.
+    pub duration_minutes: i32,
+    /// Day-of-week (0=Sun, weekly) or day-of-month (1-31, monthly); NULL for once/daily.
+    pub recurrence_day: Option<i32>,
+    pub enabled: bool,
+    pub auto_apply: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Payload for `POST /api/v1/hosts/{id}/maintenance-windows`.
+#[derive(Debug, Deserialize)]
+pub struct CreateMaintenanceWindowRequest {
+    pub label: String,
+    pub recurrence: WindowRecurrence,
+    /// RFC 3339 / ISO 8601 timestamp (UTC recommended).
+    pub start_at: DateTime<Utc>,
+    /// How many minutes the window is open (default 60).
+    pub duration_minutes: Option<i32>,
+    /// Required for `weekly` (0-6) and `monthly` (1-31).
+    pub recurrence_day: Option<i32>,
+    /// Whether the window is active (default true).
+    pub enabled: Option<bool>,
+    /// Whether to auto-create a patch_apply job when this window opens and patches are pending (default true).
+    pub auto_apply: Option<bool>,
+}
+
+/// Payload for `PUT /api/v1/hosts/{id}/maintenance-windows/{window_id}`.
+#[derive(Debug, Deserialize)]
+pub struct UpdateMaintenanceWindowRequest {
+    pub label: Option<String>,
+    pub recurrence: Option<WindowRecurrence>,
+    pub start_at: Option<DateTime<Utc>>,
+    pub duration_minutes: Option<i32>,
+    pub recurrence_day: Option<i32>,
+    pub enabled: Option<bool>,
+    pub auto_apply: Option<bool>,
+}

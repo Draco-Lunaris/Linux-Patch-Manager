@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# =============================================================================
+# Linux Patch Manager — Pre-Push Hook
+# =============================================================================
+# Safety net: verifies cargo fmt, ESLint, and TypeScript pass before pushing.
+# Install: ./scripts/git-hooks/install.sh
+# =============================================================================
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+FAILED=0
+
+# ── Rust format check ────────────────────────────────────────────────────────
+if [[ -f "${REPO_ROOT}/Cargo.toml" ]]; then
+    echo "[pre-push] Checking Rust formatting ..."
+    if ! cargo fmt --all --manifest-path "${REPO_ROOT}/Cargo.toml" --check 2>/dev/null; then
+        echo "[pre-push] ❌ Rust formatting check FAILED. Run: cargo fmt --all"
+        FAILED=1
+    fi
+fi
+
+# ── Frontend ESLint ──────────────────────────────────────────────────────────
+if [[ -f "${REPO_ROOT}/frontend/package.json" ]]; then
+    echo "[pre-push] Running ESLint ..."
+    if ! (cd "${REPO_ROOT}/frontend" && npx eslint src/ --ext .ts,.tsx --max-warnings 0 2>/dev/null); then
+        echo "[pre-push] ❌ ESLint check FAILED."
+        FAILED=1
+    fi
+fi
+
+# ── Frontend type check ─────────────────────────────────────────────────────
+if [[ -f "${REPO_ROOT}/frontend/package.json" ]]; then
+    echo "[pre-push] Checking TypeScript types ..."
+    if ! (cd "${REPO_ROOT}/frontend" && npx tsc --noEmit 2>/dev/null); then
+        echo "[pre-push] ❌ TypeScript type check FAILED."
+        FAILED=1
+    fi
+fi
+
+if [[ ${FAILED} -ne 0 ]]; then
+    echo "[pre-push] Push rejected — fix errors above before pushing."
+    exit 1
+fi
+
+echo "[pre-push] All checks passed ✓"

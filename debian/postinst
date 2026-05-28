@@ -1,0 +1,102 @@
+#!/bin/bash
+set -e
+
+# =============================================================================
+# Linux Patch Manager — Post-install script
+# =============================================================================
+
+case "$1" in
+    configure)
+        # Create service user if not exists
+        if ! id patch-manager &>/dev/null; then
+            useradd --system --no-create-home --shell /usr/sbin/nologin \
+                --comment "Linux Patch Manager service account" patch-manager
+        fi
+
+        # Create required directories
+        mkdir -p /etc/patch-manager/ca /etc/patch-manager/certs \
+                 /etc/patch-manager/jwt /etc/patch-manager/tls \
+                 /var/log/patch-manager /opt/patch-manager \
+                 /var/backups/patch-manager
+
+        chown -R patch-manager:patch-manager \
+            /etc/patch-manager /var/log/patch-manager \
+            /opt/patch-manager /usr/share/patch-manager/frontend
+
+        chmod 750 /etc/patch-manager/ca /etc/patch-manager/jwt
+        chmod 700 /var/backups/patch-manager
+
+        # Generate JWT signing key if not present
+        if [[ ! -f /etc/patch-manager/jwt/signing.pem ]]; then
+            openssl genpkey -algorithm ed25519 -out /etc/patch-manager/jwt/signing.pem 2>/dev/null
+            openssl pkey -in /etc/patch-manager/jwt/signing.pem -pubout -out /etc/patch-manager/jwt/verify.pem 2>/dev/null
+            chown patch-manager:patch-manager /etc/patch-manager/jwt/signing.pem /etc/patch-manager/jwt/verify.pem
+            chmod 600 /etc/patch-manager/jwt/signing.pem
+            chmod 644 /etc/patch-manager/jwt/verify.pem
+        fi
+
+        # Write default config if not present
+        if [[ ! -f /etc/patch-manager/config.toml ]]; then
+            cp /usr/share/patch-manager/config.example.toml /etc/patch-manager/config.toml
+            chown patch-manager:patch-manager /etc/patch-manager/config.toml
+            chmod 640 /etc/patch-manager/config.toml
+        fi
+
+        # Install backup cron if not present
+        if ! crontab -l 2>/dev/null | grep -qF "backup.sh"; then
+            (crontab -l 2>/dev/null; echo "0 2 * * * /usr/local/bin/backup.sh >> /var/log/patch-manager/backup.log 2>&1") | crontab -
+        fi
+
+        # Reload systemd
+        systemctl daemon-reload
+
+        # Restart services if this is an upgrade (not a fresh install)
+        if systemctl is-active --quiet patch-manager-web 2>/dev/null; then
+            systemctl restart patch-manager-web || true
+        fi
+        if systemctl is-active --quiet patch-manager-worker 2>/dev/null; then
+            systemctl restart patch-manager-worker || true
+        fi
+
+        # Run pending database migrations
+        MIGRATION_DIR="/usr/share/patch-manager/migrations"
+        if [[ -d "$MIGRATION_DIR" ]]; then
+            echo "Applying database migrations..."
+            for sql_file in $(ls "$MIGRATION_DIR"/*.sql 2>/dev/null | sort); do
+                echo "  Applying: $(basename "$sql_file")"
+            done
+            echo "Note: Migrations must be applied manually: sudo -u patch_manager psql -d patch_manager -f <migration_file>"
+        fi
+
+        echo ""
+        echo "Linux Patch Manager installed successfully!"
+        echo "==========================================="
+        echo ""
+        echo "Next steps:"
+        echo "  1. Install and configure PostgreSQL:"
+        echo "       apt install postgresql-16"
+        echo "  2. Create the database:"
+        echo "       sudo -u postgres createdb -O patch_manager patch_manager"
+        echo "  3. Edit /etc/patch-manager/config.toml with your database URL"
+        echo "  4. Enable and start services:"
+        echo "       systemctl enable --now patch-manager.target"
+        echo "  5. Access the web UI at https://localhost"
+        echo "     Default admin credentials are set via the seed migration."
+        echo ""
+        echo "IMPORTANT: Change the default admin password immediately after first login!"
+        echo ""
+        echo "If this is an upgrade, services have been restarted automatically."
+        echo "Apply any new database migrations:"
+        echo "  sudo -u patch_manager psql -d patch_manager -f /usr/share/patch-manager/migrations/<NNN_migration>.sql"
+        echo ""
+        ;;
+
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+
+    *)
+        echo "postinst called with unknown argument \`$1'" >&2
+        ;;
+esac
+
+exit 0

@@ -1,0 +1,29 @@
+[package]
+name = "pm-auth"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+pm-core = { path = "../pm-core" }
+tokio = { workspace = true }
+axum = { workspace = true }
+axum-extra = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+argon2 = { workspace = true }
+jsonwebtoken = { workspace = true }
+rand = { workspace = true }
+totp-rs = { workspace = true }
+base64 = { workspace = true }
+hex = { workspace = true }
+ipnet = { workspace = true }
+parking_lot = "0.12"
+sha2 = { workspace = true }

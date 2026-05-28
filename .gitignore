@@ -1,0 +1,29 @@
+# Agent Zero project data
+.a0proj/
+
+# Python environments & cache
+venv/**
+**/__pycache__/**
+
+# Node.js dependencies
+**/node_modules/**
+**/.npm/**
+
+# IDE
+.vscode/
+.idea/
+
+# Backup files
+*.bak
+*.bak.*
+
+# Rust build artifacts
+/target
+
+# Frontend dependencies
+frontend/node_modules
+frontend/dist
+
+# Package build artifacts
+*.deb
+package-build/

@@ -1,0 +1,46 @@
+[package]
+name = "pm-web"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "pm-web"
+path = "src/main.rs"
+
+[dependencies]
+pm-ca = { path = "../pm-ca" }
+pm-core = { path = "../pm-core" }
+pm-auth = { path = "../pm-auth" }
+pm-reports = { path = "../pm-reports" }
+tokio = { workspace = true }
+axum = { workspace = true }
+axum-server = { workspace = true }
+rustls = { workspace = true }
+axum-extra = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
+ulid = { workspace = true }
+chrono = { workspace = true }
+ipnet = { workspace = true }
+dashmap = { version = "6" }
+tower_governor = { workspace = true }
+governor = { workspace = true }
+reqwest = { workspace = true }
+lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder"] }
+rand = { workspace = true }
+hex = "0.4"
+base64 = { workspace = true }
+sha2 = { workspace = true }
+jsonwebtoken = { workspace = true }
+url = { workspace = true }
+urlencoding = "2"
