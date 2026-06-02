@@ -140,6 +140,73 @@ pub struct SecurityConfig {
     /// Frontend URL to redirect to after SSO callback (default: http://localhost:5173/auth/sso/callback)
     #[serde(default = "default_sso_callback_url")]
     pub sso_callback_url: String,
+    /// Allowlist of browser `Origin` values permitted to open the
+    /// `/api/v1/ws/jobs` WebSocket upgrade. Entries are exact
+    /// `scheme://host[:port]` strings. If left empty in the TOML file, the
+    /// server derives the default from `sso_callback_url` at load time
+    /// (see [`derive_allowed_origins`]).
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
+}
+
+/// Derive a default `Origin` allowlist from a single SSO callback URL.
+///
+/// Parses `scheme://host[:port][/path]` and returns a single-element vector
+/// containing `scheme://host[:port]` (with default ports normalized away —
+/// e.g. `https://x:443` becomes `https://x`). Returns an empty vector if the
+/// URL is unparseable; callers should log a warning in that case because the
+/// WebSocket endpoint will reject all browser upgrades (fail-closed).
+///
+/// Exposed publicly so tests and the handler can share the same parser.
+pub fn derive_allowed_origins(sso_callback_url: &str) -> Vec<String> {
+    let s = sso_callback_url.trim().trim_end_matches('/');
+    let (scheme, rest) = match s.split_once("://") {
+        Some(parts) if !parts.0.is_empty() => parts,
+        _ => return vec![],
+    };
+    let scheme_lower = scheme.to_ascii_lowercase();
+    if scheme_lower != "http" && scheme_lower != "https" {
+        return vec![];
+    }
+    // Authority is everything up to the first `/`, `?`, or `#`.
+    let authority_end = rest
+        .find(['/', '?', '#'])
+        .unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    if authority.is_empty() {
+        return vec![];
+    }
+    // Split host:port. We treat the LAST `:` as the port separator. IPv6
+    // literal hosts (e.g. `[::1]`) contain a `:` inside the brackets; we
+    // explicitly do not support IPv6 in sso_callback_url and return empty
+    // for those to be safe.
+    let (host, port_str) = match authority.rsplit_once(':') {
+        Some((h, _)) if h.contains(':') => return vec![],
+        Some((h, p)) => (h, Some(p)),
+        None => (authority, None),
+    };
+    let host = host.trim();
+    if host.is_empty() || host.contains(char::is_whitespace) || host.contains(':') {
+        return vec![];
+    }
+    let default_port: Option<u16> = match scheme_lower.as_str() {
+        "https" => Some(443),
+        "http" => Some(80),
+        _ => None,
+    };
+    let port_num = match port_str {
+        Some(p) => match p.parse::<u16>() {
+            Ok(n) => Some(n),
+            Err(_) => return vec![],
+        },
+        None => None,
+    };
+    let origin = match (port_num, default_port) {
+        (Some(p), Some(d)) if p == d => format!("{}://{}", scheme_lower, host),
+        (Some(p), _) => format!("{}://{}:{}", scheme_lower, host, p),
+        (None, _) => format!("{}://{}", scheme_lower, host),
+    };
+    vec![origin]
 }
 
 impl AppConfig {
@@ -147,6 +214,11 @@ impl AppConfig {
     ///
     /// Environment variables follow the pattern: `PATCH_MANAGER__SECTION__KEY`
     /// e.g. `PATCH_MANAGER__DATABASE__URL=postgres://...`
+    ///
+    /// After deserialization, if `security.allowed_origins` is empty, it is
+    /// derived from `security.sso_callback_url`. A `tracing::warn!` is emitted
+    /// when the resulting allowlist is empty (the WS endpoint will reject all
+    /// browser upgrades in that case).
     pub fn load(config_path: &str) -> Result<Self, ConfigError> {
         let cfg = Config::builder()
             .add_source(File::with_name(config_path).required(false))
@@ -157,7 +229,20 @@ impl AppConfig {
             )
             .build()?;
 
-        cfg.try_deserialize()
+        let mut config: Self = cfg.try_deserialize()?;
+        if config.security.allowed_origins.is_empty() {
+            config.security.allowed_origins =
+                derive_allowed_origins(&config.security.sso_callback_url);
+        }
+        if config.security.allowed_origins.is_empty() {
+            tracing::warn!(
+                sso_callback_url = %config.security.sso_callback_url,
+                "security.allowed_origins is empty and could not be derived \
+                 from sso_callback_url; the WebSocket endpoint will reject all \
+                 browser upgrades"
+            );
+        }
+        Ok(config)
     }
 }
 
@@ -207,8 +292,69 @@ impl Default for AppConfig {
                 web_tls_cert_path: "/etc/patch-manager/tls/web.crt".to_string(),
                 web_tls_key_path: "/etc/patch-manager/tls/web.key".to_string(),
                 sso_callback_url: default_sso_callback_url(),
+                allowed_origins: derive_allowed_origins(&default_sso_callback_url()),
             },
             rate_limit: RateLimitConfig::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn derive_strips_default_https_port() {
+        assert_eq!(
+            derive_allowed_origins("https://app.example.com:443/auth/sso/callback"),
+            vec!["https://app.example.com".to_string()]
+        );
+    }
+
+    #[test]
+    fn derive_keeps_non_default_port() {
+        assert_eq!(
+            derive_allowed_origins("https://app.example.com:8443/auth/sso/callback"),
+            vec!["https://app.example.com:8443".to_string()]
+        );
+    }
+
+    #[test]
+    fn derive_strips_default_http_port() {
+        assert_eq!(
+            derive_allowed_origins("http://localhost:80/x"),
+            vec!["http://localhost".to_string()]
+        );
+    }
+
+    #[test]
+    fn derive_handles_trailing_slash() {
+        assert_eq!(
+            derive_allowed_origins("https://app.example.com/"),
+            vec!["https://app.example.com".to_string()]
+        );
+    }
+
+    #[test]
+    fn derive_handles_no_path() {
+        assert_eq!(
+            derive_allowed_origins("https://app.example.com"),
+            vec!["https://app.example.com".to_string()]
+        );
+    }
+
+    #[test]
+    fn derive_returns_empty_for_garbage() {
+        assert!(derive_allowed_origins("not a url").is_empty());
+        assert!(derive_allowed_origins("").is_empty());
+        assert!(derive_allowed_origins("ftp://x").is_empty());
+    }
+
+    #[test]
+    fn derive_lowercases_scheme() {
+        assert_eq!(
+            derive_allowed_origins("HTTPS://App.Example.com"),
+            vec!["https://App.Example.com".to_string()]
+        );
     }
 }

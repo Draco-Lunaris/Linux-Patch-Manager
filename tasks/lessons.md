@@ -147,3 +147,14 @@ The Docker container intercepted some jobs and ran them in its Alpine environmen
 **Rule:** At session start, run bootstrap checks silently. If ~/.ssh/id_ed25519 missing, retrieve from Vaultwarden via vw_client.py (not from file storage).
 **Rule:** vw_client.py is primary (sub-second). bw CLI is fallback only (9-12s per operation).
 **Status:** Active
+
+## 2026-06-01: Handlers Should Take a Minimal State Struct, Not the Full AppState
+**Pattern:** The `ws_handler` in `crates/pm-web/src/routes/ws.rs` is wired to `State<AppState>`, and `AppState` contains `sqlx::PgPool` (requires a real DB) and `pm_ca::CertAuthority` (private fields, requires on-disk key material + DB on `init()`). This made end-to-end integration tests in `tests/ws_origin.rs` infeasible without a Postgres + filesystem fixture.
+**Why it matters:** Test seams should be at the function/handler boundary, not require the full production state. The fix landed as 33 unit tests on the module-private helpers (`parse_origin_header`, `is_origin_allowed`, `check_origin`) — 100% coverage of the security-critical logic, zero coverage of the handler wiring. That tradeoff was acceptable here because the wiring is `HeaderMap` extraction + a function call (cargo check + clippy catches wiring bugs), but the principle stands: it's better to fix the test seam than to test around it.
+**Rule:** When designing a new handler, define a minimal state struct (e.g., `WsState { ws_tickets, config }`) and have `AppState` either contain it or convert to it. Handlers should only take what they need. This is a refactor on the table for follow-up work; the WS Origin fix did NOT do it (out of scope per the spec).
+**Status:** Active
+
+## 2026-06-01: Always Order CSWSH Defenses So They Don't Burn Legitimate Credentials
+**Pattern:** The WS Origin allowlist check runs BEFORE the ticket validation. A cross-origin probe with a stolen ticket returns `403 forbidden_origin` without consuming the ticket. The opposite order (ticket first, then Origin) would let an attacker with a leaked ticket mount a low-cost DoS by repeatedly burning the legitimate user's 60-second tickets with `403` responses.
+**Rule:** When adding defense-in-depth gates to an authenticated endpoint, order them so that the cheaper / less-credentialed gate runs first. A rejected request at gate N must not consume credentials checked at gate N+1.
+**Status:** Active

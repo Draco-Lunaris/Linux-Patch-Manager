@@ -35,6 +35,17 @@ verifying that all mandated security controls are implemented and operational.
 | Live whitelist management | ✅ Verified | Settings page UI + `PUT /api/v1/settings` endpoint updates whitelist; changes take effect immediately via `RwLock` |
 | Whitelist change audit | ✅ Verified | Every whitelist modification triggers an `audit_log` entry with old/new values |
 
+### 1.4 WebSocket Origin Allowlist (CSWSH Defense-in-Depth)
+| Control | Status | Evidence |
+|---------|--------|----------|
+| `Origin` header allowlist on browser WS upgrade | ✅ Verified | `crates/pm-web/src/routes/ws.rs` `ws_handler` — `HeaderMap` extractor + `check_origin` enforced before ticket validation |
+| Allowlist configurable via `security.allowed_origins` | ✅ Verified | `crates/pm-core/src/config.rs` `SecurityConfig::allowed_origins`; documented in `config/config.example.toml` |
+| Secure-by-default derivation from `sso_callback_url` | ✅ Verified | `derive_allowed_origins` parses the SSO callback URL into a single `scheme://host[:port]` entry when the operator leaves `allowed_origins` empty; `AppConfig::load` runs the derivation and emits a `tracing::warn!` if the result is empty (fail-closed) |
+| Order: Origin check before ticket consumption | ✅ Verified | Rejected cross-origin probes do not burn the user's ticket; documented in the handler doc-comment and verified by `check_rejects_disallowed_origin` test |
+| Rejected upgrades logged with `origin` and `reason` | ✅ Verified | `tracing::warn!` in `ws_handler`; ticket value is never logged |
+
+**Note:** The browser WebSocket endpoint (`GET /api/v1/ws/jobs`) is the only browser-reachable WS server in the codebase. The `pm-worker` `ws_relay` module is an outbound mTLS WS *client* to on-host agents and is not subject to CSWSH.
+
 ---
 
 ## 2. Authentication & Authorization

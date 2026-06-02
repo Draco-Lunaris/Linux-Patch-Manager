@@ -108,6 +108,21 @@ web_tls_key_path  = "/etc/patch-manager/tls/web.key"
 # Default: "http://localhost:5173/auth/sso/callback" (Vite dev server)
 sso_callback_url = "http://localhost:5173/auth/sso/callback"
 
+# Allowlist of browser `Origin` values permitted to open the
+# `/api/v1/ws/jobs` WebSocket upgrade. Each entry is an exact
+# `scheme://host[:port]` string (no wildcards, no paths). When this list is
+# empty, the server derives a single-entry default from `sso_callback_url`
+# at startup (the host of the SSO callback). If the derivation also fails,
+# a warning is logged and the WS endpoint rejects all browser upgrades
+# (fail-closed).
+#
+# Add additional origins here if your SPA and API are served from different
+# hosts (e.g. SPA on https://app.example.com talking to API on
+# https://api.example.com). For typical single-host deployments the derived
+# default is correct and this line should be left commented out.
+#
+# allowed_origins = ["https://patch-manager.example.com"]
+
 # ============================================================
 # Rate Limiting
 # ============================================================
