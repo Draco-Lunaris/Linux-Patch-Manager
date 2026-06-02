@@ -27,3 +27,6 @@ hex = { workspace = true }
 ipnet = { workspace = true }
 parking_lot = "0.12"
 sha2 = { workspace = true }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
