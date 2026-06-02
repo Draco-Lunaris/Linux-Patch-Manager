@@ -15,6 +15,21 @@
 **Rule:** Check the obvious source (gitea repo, Vaultwarden store) before spinning wheels on complex alternatives.
 **Status:** Active
 
+## 2026-06-02: SSH_ASKPASS=/dev/null Blocks Git Commit Signing
+**Pattern:** The container environment sets `SSH_ASKPASS=/dev/null` and `SSH_ASKPASS_REQUIRE=force`, which overrides ssh-agent and prevents git from finding signing keys during commit signing.
+**Mistake:** Attempted git commit multiple times without checking why it hung. The signing key was in ssh-agent but SSH_ASKPASS was redirecting the passphrase prompt to /dev/null (not executable), causing the commit to fail with "incorrect passphrase".
+**Fix:** Unset `SSH_ASKPASS` and `SSH_ASKPASS_REQUIRE` before running git commit, then use `ssh-add` with the passphrase from Vaultwarden to add the signing key to ssh-agent.
+**Rule:** Before git commit signing, check `echo $SSH_ASKPASS` and `echo $SSH_ASKPASS_REQUIRE`. If SSH_ASKPASS is set to /dev/null or another non-executable, unset both variables before committing.
+**Rule:** Always retrieve signing key passphrases from Vaultwarden using `vw_client.py get`, not from local files or memory.
+**Status:** Active
+
+## 2026-06-02: Always Run credential-bootstrap at Session Start
+**Pattern:** Profile rules mandate running `bash /a0/usr/skills/credential-bootstrap/scripts/bootstrap.sh` at the start of every conversation before any SSH or authenticated operations. I violated this rule by starting work without bootstrapping.
+**Mistake:** Began implementation work without running credential-bootstrap, then wasted multiple attempts trying to commit with a signing key that wasn't in ssh-agent.
+**Rule:** ALWAYS run credential-bootstrap at session start, before any authenticated operations. This includes git commit signing.
+**Rule:** If a credential operation fails, STOP and run credential-bootstrap before retrying. Do not attempt workarounds.
+**Status:** Active
+
 ## 2026-05-08: Vaultwarden Is the Source of Truth for All Credentials
 **Pattern:** SSH keys in ~/.ssh/ are ephemeral — lost on every container recreation. Local copies are unreliable.
 **Rule:** ALWAYS pull credentials (SSH keys, API tokens, passwords) from Vaultwarden when needed. Do NOT rely on local copies in ~/.ssh/ or /a0/usr/storage/ as they may be stale or missing after container recreation.

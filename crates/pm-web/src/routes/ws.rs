@@ -101,9 +101,7 @@ fn parse_origin_header(value: &str) -> Option<Origin> {
         return None;
     }
     // Authority is everything up to the first `/`, `?`, or `#`.
-    let authority_end = rest
-        .find(['/', '?', '#'])
-        .unwrap_or(rest.len());
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let authority = &rest[..authority_end];
     if authority.is_empty() {
         return None;
@@ -145,12 +143,12 @@ fn is_origin_allowed(origin: &Origin, allowlist: &[String]) -> bool {
         return false;
     }
     let incoming = origin.canonical();
-    allowlist.iter().any(|entry| {
-        match parse_origin_header(entry) {
+    allowlist
+        .iter()
+        .any(|entry| match parse_origin_header(entry) {
             Some(parsed) => parsed.canonical() == incoming,
             None => false,
-        }
-    })
+        })
 }
 
 /// Read the `Origin` header from a request and check it against the
@@ -172,7 +170,7 @@ fn check_origin(
                 ),
                 "missing",
             ));
-        }
+        },
     };
     let raw_str = match raw.to_str() {
         Ok(s) => s,
@@ -185,7 +183,7 @@ fn check_origin(
                 ),
                 "non-ascii",
             ));
-        }
+        },
     };
     let origin = match parse_origin_header(raw_str) {
         Some(o) => o,
@@ -198,7 +196,7 @@ fn check_origin(
                 ),
                 "malformed",
             ));
-        }
+        },
     };
     if !is_origin_allowed(&origin, allowlist) {
         return Err((
@@ -425,7 +423,9 @@ mod tests {
     #[test]
     fn parse_lowercases_scheme() {
         assert_eq!(
-            parse_origin_header("HTTPS://App.Example.com").unwrap().scheme,
+            parse_origin_header("HTTPS://App.Example.com")
+                .unwrap()
+                .scheme,
             "https"
         );
     }
@@ -546,7 +546,10 @@ mod tests {
     #[test]
     fn allowed_default_port_normalization_allowlist() {
         let o = parse_origin_header("https://app.example.com").unwrap();
-        assert!(is_origin_allowed(&o, &["https://app.example.com:443".into()]));
+        assert!(is_origin_allowed(
+            &o,
+            &["https://app.example.com:443".into()]
+        ));
     }
 
     #[test]
@@ -619,7 +622,10 @@ mod tests {
     #[test]
     fn check_rejects_disallowed_origin() {
         let mut h = HeaderMap::new();
-        h.insert(axum::http::header::ORIGIN, "https://evil.example".parse().unwrap());
+        h.insert(
+            axum::http::header::ORIGIN,
+            "https://evil.example".parse().unwrap(),
+        );
         let err = check_origin(&h, &["https://app.example.com".into()]).unwrap_err();
         assert_eq!(err.0 .0, StatusCode::FORBIDDEN);
         assert_eq!(err.1, "not-allowlisted");
@@ -628,7 +634,10 @@ mod tests {
     #[test]
     fn check_rejects_empty_allowlist() {
         let mut h = HeaderMap::new();
-        h.insert(axum::http::header::ORIGIN, "https://app.example.com".parse().unwrap());
+        h.insert(
+            axum::http::header::ORIGIN,
+            "https://app.example.com".parse().unwrap(),
+        );
         let err = check_origin(&h, &[]).unwrap_err();
         assert_eq!(err.0 .0, StatusCode::FORBIDDEN);
         assert_eq!(err.1, "not-allowlisted");
@@ -637,7 +646,10 @@ mod tests {
     #[test]
     fn check_allows_valid_origin() {
         let mut h = HeaderMap::new();
-        h.insert(axum::http::header::ORIGIN, "https://app.example.com".parse().unwrap());
+        h.insert(
+            axum::http::header::ORIGIN,
+            "https://app.example.com".parse().unwrap(),
+        );
         assert!(check_origin(&h, &["https://app.example.com".into()]).is_ok());
     }
 
@@ -654,7 +666,10 @@ mod tests {
     #[test]
     fn check_allows_case_insensitive_host() {
         let mut h = HeaderMap::new();
-        h.insert(axum::http::header::ORIGIN, "https://App.Example.com".parse().unwrap());
+        h.insert(
+            axum::http::header::ORIGIN,
+            "https://App.Example.com".parse().unwrap(),
+        );
         assert!(check_origin(&h, &["https://app.example.com".into()]).is_ok());
     }
 }
