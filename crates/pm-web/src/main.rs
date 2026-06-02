@@ -10,7 +10,7 @@ use pm_auth::{
     rbac::{require_auth, AuthConfig},
 };
 use pm_core::{
-    config::AppConfig, db, logging, models::PkiBundle, request_id::request_id_middleware,
+    config::AppConfig, db, logging, models::ApprovedEntry, request_id::request_id_middleware,
 };
 use routes::sso::{OidcCache, SsoSession};
 use routes::ws::WsTicket;
@@ -41,7 +41,10 @@ pub struct AppState {
     /// Internal certificate authority for mTLS client cert issuance.
     pub ca: Arc<pm_ca::CertAuthority>,
     /// Short-lived cache for approved enrollment PKI bundles.
-    pub approved_enrollments: Arc<DashMap<String, PkiBundle>>,
+    ///
+    /// Entries are single-use (removed on retrieval) and expire after
+    /// [`ENROLLMENT_BUNDLE_TTL_SECS`](pm_core::models::ENROLLMENT_BUNDLE_TTL_SECS).
+    pub approved_enrollments: Arc<DashMap<String, ApprovedEntry>>,
 }
 
 #[tokio::main]
@@ -101,7 +104,7 @@ async fn main() -> anyhow::Result<()> {
     let ws_tickets: Arc<DashMap<String, WsTicket>> = Arc::new(DashMap::new());
     let sso_sessions: Arc<DashMap<String, SsoSession>> = Arc::new(DashMap::new());
     let oidc_cache: Arc<Mutex<OidcCache>> = Arc::new(Mutex::new(OidcCache::default()));
-    let approved_enrollments: Arc<DashMap<String, PkiBundle>> = Arc::new(DashMap::new());
+    let approved_enrollments: Arc<DashMap<String, ApprovedEntry>> = Arc::new(DashMap::new());
 
     // Background task: purge expired WS tickets every 30 seconds.
     {
@@ -140,14 +143,21 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // Background task: purge approved enrollment PKI bundles every 10 minutes.
+    // Background task: purge expired approved enrollment PKI bundles.
+    // Entries are also removed on first retrieval (single-use), so this
+    // task only cleans up bundles that were never picked up by the agent.
     {
         let approved = approved_enrollments.clone();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(600));
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
             loop {
                 interval.tick().await;
-                approved.clear();
+                let before = approved.len();
+                approved.retain(|_, entry| !entry.is_expired());
+                let removed = before.saturating_sub(approved.len());
+                if removed > 0 {
+                    tracing::debug!(removed, "Purged expired enrollment PKI bundles");
+                }
             }
         });
     }
