@@ -180,6 +180,44 @@ pub struct PkiBundle {
     pub server_key: String,
 }
 
+/// Time-to-live for approved enrollment PKI bundles (10 minutes).
+///
+/// After approval, the agent has this duration to retrieve its PKI bundle
+/// via the polling endpoint. Once retrieved (single-use) or expired,
+/// the bundle is permanently removed from the in-memory cache.
+///
+/// This TTL balances security (limiting private key exposure in memory)
+/// against reliability (giving agents enough time to poll after approval).
+pub const ENROLLMENT_BUNDLE_TTL_SECS: u32 = 600; // 10 minutes
+
+/// An approved enrollment PKI bundle awaiting single-use retrieval.
+///
+/// Stored in the in-memory cache between admin approval and agent pickup.
+/// The entry is removed atomically on first retrieval and expires after
+/// the configured TTL, whichever comes first.
+#[derive(Debug, Clone)]
+pub struct ApprovedEntry {
+    pub pki: PkiBundle,
+    pub approved_at: chrono::DateTime<Utc>,
+    pub ttl: chrono::Duration,
+}
+
+impl ApprovedEntry {
+    /// Create a new entry with the current timestamp and default TTL.
+    pub fn new(pki: PkiBundle) -> Self {
+        Self {
+            pki,
+            approved_at: Utc::now(),
+            ttl: chrono::Duration::seconds(ENROLLMENT_BUNDLE_TTL_SECS as i64),
+        }
+    }
+
+    /// Returns true if this entry has exceeded its TTL.
+    pub fn is_expired(&self) -> bool {
+        Utc::now() > self.approved_at + self.ttl
+    }
+}
+
 // ============================================================
 // Health Checks
 // ============================================================
