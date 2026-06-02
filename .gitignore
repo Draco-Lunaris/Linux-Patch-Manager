@@ -27,3 +27,6 @@ frontend/dist
 # Package build artifacts
 *.deb
 package-build/
+
+# TLS certificates - generated on first run
+crates/pm-agent-client/certs/
