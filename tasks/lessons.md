@@ -15,6 +15,15 @@
 **Rule:** Check the obvious source (gitea repo, Vaultwarden store) before spinning wheels on complex alternatives.
 **Status:** Active
 
+## 2026-06-02: Always Verify the Authoritative Repo Before Starting Work
+**Pattern:** I cloned from Gitea and did all work there, when GitHub is the master source for Linux Patch Manager. This created divergent histories and blocked PR creation.
+**Mistake:** Did not check which repo was authoritative before starting work. The git-workflow skill only documented Gitea operations. I assumed Gitea was the source of truth because it was the configured remote.
+**Impact:** All commits were made on a Gitea-based branch. When I tried to create a PR on GitHub, the branches had no common ancestor. The project was put in an unstable state.
+**Rule:** BEFORE starting any work on a project, ALWAYS check which repo is the authoritative source. If the issue is on GitHub, clone from GitHub. If the issue is on Gitea, clone from Gitea. NEVER assume based on configured remotes.
+**Rule:** When a project has multiple remotes, ALWAYS ask Kelly which one is authoritative before starting work.
+**Rule:** Update the git-workflow skill to document the authoritative repo for each project.
+**Status:** Active
+
 ## 2026-06-02: SSH_ASKPASS=/dev/null Blocks Git Commit Signing
 **Pattern:** The container environment sets `SSH_ASKPASS=/dev/null` and `SSH_ASKPASS_REQUIRE=force`, which overrides ssh-agent and prevents git from finding signing keys during commit signing.
 **Mistake:** Attempted git commit multiple times without checking why it hung. The signing key was in ssh-agent but SSH_ASKPASS was redirecting the passphrase prompt to /dev/null (not executable), causing the commit to fail with "incorrect passphrase".
