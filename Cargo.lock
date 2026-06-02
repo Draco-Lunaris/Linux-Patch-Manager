@@ -2559,6 +2559,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "totp-rs",
+ "tower",
  "tracing",
  "uuid",
 ]

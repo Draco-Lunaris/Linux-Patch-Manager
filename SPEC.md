@@ -88,7 +88,7 @@
 - Refresh tokens: opaque, server-side stored, 1-hour inactivity timeout, rotated on use, revocable
 - mTLS for all agent communication (TLS 1.3 only)
 - HTTPS for web UI (TLS 1.3 only)
-- **IP whitelist enforcement on all connection points**
+- **IP whitelist enforcement on all connection points** (with `security.trusted_proxies` to optionally honor `X-Forwarded-For` from a configured proxy; empty default = strict mode that uses the socket peer IP and ignores `X-Forwarded-For`; non-empty allowlist + unresolvable peer IP = fail-closed `403 forbidden_ip`) [Issue #3 / `tasks/ip-allowlist-spec.md`]
 - Role-based access control:
   - **Admin**: Full access to manage all aspects of Linux Patch Manager
   - **Operator**: Can add/remove clients, manage schedules and patches only for devices in their group memberships

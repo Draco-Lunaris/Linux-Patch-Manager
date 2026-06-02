@@ -83,6 +83,7 @@ async fn main() -> anyhow::Result<()> {
     let auth_config = Arc::new(AuthConfig::new(
         verify_key_pem,
         &config.security.ip_whitelist,
+        &config.security.trusted_proxies,
     ));
 
     let pool = db::init_pool(&config.database).await?;

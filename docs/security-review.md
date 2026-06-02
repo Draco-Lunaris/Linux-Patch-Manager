@@ -31,9 +31,14 @@ verifying that all mandated security controls are implemented and operational.
 ### 1.3 IP Whitelist Enforcement
 | Control | Status | Evidence |
 |---------|--------|----------|
-| IP whitelist on all connection points | ✅ Verified | Middleware extracts `X-Forwarded-For` / `X-Real-IP`; checks against `AuthConfig.ip_whitelist` (RwLock for live updates) |
+| IP whitelist on all connection points | ✅ Verified | `require_auth` middleware in `crates/pm-auth/src/rbac.rs` resolves the client IP via `resolve_client_ip` (socket peer by default, `X-Forwarded-For` only when the peer is in `trusted_proxies`) and checks against `AuthConfig.ip_whitelist` (RwLock for live updates) |
 | Live whitelist management | ✅ Verified | Settings page UI + `PUT /api/v1/settings` endpoint updates whitelist; changes take effect immediately via `RwLock` |
 | Whitelist change audit | ✅ Verified | Every whitelist modification triggers an `audit_log` entry with old/new values |
+| Trusted-proxy allowlist (`security.trusted_proxies`) | ✅ Verified | New `trusted_proxies: Vec<String>` field on `SecurityConfig` (default empty = strict). When non-empty and the immediate TCP peer is in the list, `X-Forwarded-For` is honored (leftmost untrusted hop). Documented in `config/config.example.toml`. `AuthConfig::update_trusted_proxies` setter allows runtime updates |
+| Fail-closed on unresolvable client IP | ✅ Verified | When a non-empty allowlist is configured and the client IP cannot be determined (no `ConnectInfo<SocketAddr>` extension), the request is rejected with `403 forbidden_ip`. `tracing::warn!` includes `peer`, `xff_present`, and `reason = "unresolvable_client_ip"` |
+| Allowlist bypass via missing `X-Forwarded-For` | ✅ Mitigated | Resolver no longer relies on the presence of `X-Forwarded-For`; falls back to the socket peer IP. Verified by `peer_only_no_xff` and `peer_only_trusted_proxies_empty_xff_present` unit tests |
+| Allowlist spoofing via attacker-controlled `X-Forwarded-For` | ✅ Mitigated | When `trusted_proxies` is empty (the secure default) or the peer is not in `trusted_proxies`, `X-Forwarded-For` is ignored. Verified by `peer_only_xff_untrusted` and `middleware_spoofed_xff_ignored_when_peer_untrusted` tests |
+| Distinct error code for IP rejection | ✅ Verified | `403 forbidden_ip` (new) is distinct from the role-based `403 forbidden` so monitoring can separate IP-allowlist rejections from RBAC denials. Documented in `tasks/ip-allowlist-spec.md` §4.5 |
 
 ### 1.4 WebSocket Origin Allowlist (CSWSH Defense-in-Depth)
 | Control | Status | Evidence |
