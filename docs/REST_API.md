@@ -14,6 +14,16 @@ Security: JWT Bearer Token (except Public Endpoints)
 | POST | `/auth/mfa/verify` | Verify MFA code |
 | DELETE | `/auth/mfa` | Disable MFA for user |
 
+## 1b. SSO (Single Sign-On)
+*No authentication required.* These endpoints implement the OIDC Authorization Code + PKCE flow. See `tasks/sso-token-handoff-spec.md` for the full design.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/auth/sso/login` | Initiate OIDC login: redirects browser to the configured IdP's authorization URL |
+| GET | `/auth/sso/callback` | OIDC redirect URI: handles the IdP response, issues a single-use 60s `handoff_code`, stores the JWT access/refresh tokens in memory, and 302-redirects to the SPA with `?handoff=<code>` in the URL (no tokens in the URL — see issue #4) |
+| GET | `/auth/sso/config` | Returns minimal SSO configuration for the login page (`enabled`, `display_name`, `auth_url`). No secrets exposed |
+| POST | `/auth/sso/handoff` | **(new in issue #4)** Exchange a single-use `handoff_code` for the JWT access/refresh tokens. The SPA calls this from `SsoCallbackPage` after the OIDC callback redirect. Returns `{ access_token, refresh_token, token_type, expires_in, user }`. The code is single-use, 60s TTL, and atomically removed on exchange (concurrent attempts: exactly one wins). `400 invalid_handoff` on unknown/expired/already-consumed codes |
+
 ## 2. Public Endpoints (Self-Enrollment)
 *No authentication required.*
 | Method | Endpoint | Description |

@@ -92,6 +92,9 @@ verifying that all mandated security controls are implemented and operational.
 | OAuth2/OIDC Authorization Code + PKCE | ✅ Verified | Public routes `/api/v1/auth/azure/login` and `/api/v1/auth/azure/callback` implement PKCE flow |
 | Test connection without enabling | ✅ Verified | `POST /api/v1/settings/azure-sso/test` validates configuration without persisting |
 | MFA still required after SSO | ✅ Verified | SSO login follows same MFA verification path as local login |
+| **No tokens in redirect URL (issue #4 fix)** | ✅ Verified | SSO callback (`crates/pm-web/src/routes/sso.rs` `sso_callback`) now issues a single-use, 60s `handoff_code` and stores the JWT access/refresh tokens in the in-memory `sso_handoffs: Arc<DashMap<String, SsoHandoff>>`. The redirect URL contains only `?handoff=<code>`. No `access_token`, `refresh_token`, or `user` parameters are ever placed in the URL. The SPA exchanges the code via `POST /api/v1/auth/sso/handoff`. See `tasks/sso-token-handoff-spec.md` for the full design. |
+| **Handoff code is single-use + 60s TTL** | ✅ Verified | `DashMap::remove` in `sso_handoff_exchange_inner` is atomic — concurrent exchange attempts result in exactly one success and one 400. Expired codes (`expires_at < Instant::now()`) are rejected with `400 invalid_handoff`. A background cleanup task removes expired entries every 60s. Verified by `handoff_exchange_single_use`, `handoff_exchange_race`, and `handoff_exchange_expired_code` tests in `crates/pm-web/src/routes/sso.rs`. |
+| **Handoff code cleared from browser history** | ✅ Verified | SPA calls `window.history.replaceState({}, '', '/auth/sso/callback')` after a successful exchange, removing the `?handoff=` param from the address bar. Verified by `clears_handoff_code_from_url_after_success` test in `frontend/src/pages/__tests__/SsoCallbackPage.test.tsx`. |
 
 ---
 
