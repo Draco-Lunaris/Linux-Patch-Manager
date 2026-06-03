@@ -12,7 +12,7 @@ use pm_auth::{
 use pm_core::{
     config::AppConfig, db, logging, models::ApprovedEntry, request_id::request_id_middleware,
 };
-use routes::sso::{OidcCache, SsoSession};
+use routes::sso::{OidcCache, SsoHandoff, SsoSession};
 use routes::ws::WsTicket;
 use serde_json::{json, Value};
 use std::{net::SocketAddr, sync::Arc, time::Duration};
@@ -36,6 +36,9 @@ pub struct AppState {
     pub ws_tickets: Arc<DashMap<String, WsTicket>>,
     /// In-memory store for SSO PKCE sessions (state → code_verifier).
     pub sso_sessions: Arc<DashMap<String, SsoSession>>,
+    /// In-memory store for SSO handoff codes (single-use, 60s TTL).
+    /// See `tasks/sso-token-handoff-spec.md` §4.1.
+    pub sso_handoffs: Arc<DashMap<String, SsoHandoff>>,
     /// Cached OIDC discovery document and JWKS for SSO id_token verification.
     pub oidc_cache: Arc<Mutex<OidcCache>>,
     /// Internal certificate authority for mTLS client cert issuance.
@@ -104,6 +107,7 @@ async fn main() -> anyhow::Result<()> {
 
     let ws_tickets: Arc<DashMap<String, WsTicket>> = Arc::new(DashMap::new());
     let sso_sessions: Arc<DashMap<String, SsoSession>> = Arc::new(DashMap::new());
+    let sso_handoffs: Arc<DashMap<String, SsoHandoff>> = Arc::new(DashMap::new());
     let oidc_cache: Arc<Mutex<OidcCache>> = Arc::new(Mutex::new(OidcCache::default()));
     let approved_enrollments: Arc<DashMap<String, ApprovedEntry>> = Arc::new(DashMap::new());
 
@@ -163,6 +167,27 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // Background task: purge expired SSO handoff codes every 60 seconds.
+    // See `tasks/sso-token-handoff-spec.md` §4.3. Handoffs are also
+    // atomically removed on exchange (single-use), so this task only
+    // cleans up codes that the SPA never POSTed back for.
+    {
+        let handoffs = sso_handoffs.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                let now = std::time::Instant::now();
+                let before = handoffs.len();
+                handoffs.retain(|_, v| v.expires_at > now);
+                let removed = before.saturating_sub(handoffs.len());
+                if removed > 0 {
+                    tracing::debug!(removed, "Purged expired SSO handoff codes");
+                }
+            }
+        });
+    }
+
     let state = AppState {
         db: pool,
         config: Arc::new(config.clone()),
@@ -170,6 +195,7 @@ async fn main() -> anyhow::Result<()> {
         auth_config,
         ws_tickets,
         sso_sessions,
+        sso_handoffs,
         ca: Arc::new(ca),
         approved_enrollments,
         oidc_cache,
