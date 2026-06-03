@@ -213,9 +213,27 @@ pub struct OidcConfig {
     pub display_name: String,
     pub discovery_url: String,
     pub client_id: String,
-    pub client_secret: String,
+    /// AES-256-GCM encrypted client_secret. `None` if not set or public client.
+    pub client_secret_encrypted: Option<Vec<u8>>,
+    /// AES-256-GCM nonce for client_secret. Must be paired with `client_secret_encrypted`.
+    pub client_secret_nonce: Option<Vec<u8>>,
     pub redirect_uri: String,
     pub scopes: String,
+}
+
+impl OidcConfig {
+    /// Decrypt the client_secret using the provided key.
+    /// Returns `Ok(String::new())` if the secret is not set (public client).
+    /// Returns `Err(CryptoError)` if decryption fails or nonce is missing.
+    pub fn decrypt_client_secret(
+        &self,
+        key: &[u8; 32],
+    ) -> Result<String, pm_core::crypto::CryptoError> {
+        match (&self.client_secret_encrypted, &self.client_secret_nonce) {
+            (Some(enc), Some(nonce)) => pm_core::crypto::decrypt(enc, nonce, key),
+            _ => Ok(String::new()),
+        }
+    }
 }
 
 /// Cached OIDC discovery document.
@@ -464,8 +482,28 @@ async fn sso_callback(
     ];
 
     // For confidential clients (Azure AD), include client_secret
-    if !config.client_secret.is_empty() {
-        params_vec.push(("client_secret", config.client_secret.clone()));
+    let key = match crate::secret_key::get() {
+        Ok(k) => k,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to load secret-encryption key");
+            return Err(error_redirect(
+                "internal_error",
+                "Failed to load encryption key",
+            ));
+        },
+    };
+    let client_secret = match config.decrypt_client_secret(key) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to decrypt OIDC client_secret");
+            return Err(error_redirect(
+                "internal_error",
+                "Failed to decrypt client_secret",
+            ));
+        },
+    };
+    if !client_secret.is_empty() {
+        params_vec.push(("client_secret", client_secret));
     }
 
     let token_resp = match client
@@ -799,7 +837,9 @@ async fn azure_callback_redirect(
 
 async fn load_oidc_config(pool: &sqlx::PgPool) -> Result<OidcConfig, (StatusCode, Json<Value>)> {
     let row: Option<OidcConfig> = sqlx::query_as(
-        "SELECT enabled, provider_type, display_name, discovery_url, client_id, client_secret, redirect_uri, scopes FROM oidc_config WHERE id = 1",
+        "SELECT enabled, provider_type, display_name, discovery_url, client_id, \
+         client_secret_encrypted, client_secret_nonce, redirect_uri, scopes \
+         FROM oidc_config WHERE id = 1",
     )
     .fetch_optional(pool)
     .await
@@ -817,7 +857,8 @@ async fn load_oidc_config(pool: &sqlx::PgPool) -> Result<OidcConfig, (StatusCode
         display_name: "Azure AD".to_string(),
         discovery_url: String::new(),
         client_id: String::new(),
-        client_secret: String::new(),
+        client_secret_encrypted: None,
+        client_secret_nonce: None,
         redirect_uri: String::new(),
         scopes: "openid profile email".to_string(),
     }))

@@ -534,7 +534,7 @@ async fn admin_disable_mfa(
         ));
     }
 
-    let rows = sqlx::query("UPDATE users SET totp_secret = NULL, mfa_enabled = FALSE, updated_at = NOW() WHERE id = $1")
+    let rows = sqlx::query("UPDATE users SET totp_secret_encrypted = NULL, totp_secret_nonce = NULL, mfa_enabled = FALSE, updated_at = NOW() WHERE id = $1")
         .bind(id)
         .execute(&state.db)
         .await

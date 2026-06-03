@@ -274,3 +274,25 @@ All authenticated pages share a persistent sidebar navigation layout:
 **Integrity:** Hash-chained rows (tamper-evident). Periodic and on-demand verification.
 
 **Retention:** 6 months
+
+---
+
+## Appendix: App-Level Secret Encryption (Issue #6, May 2026)
+
+In addition to the hardware-level full-disk encryption described above, issue #6 (PR [TBD]) added **application-level AES-256-GCM encryption** for three specific sensitive fields that DB exfiltration would otherwise expose:
+
+| Field | Table | Encryption key |
+|-------|-------|----------------|
+| `client_secret` | `oidc_config` | `/etc/patch-manager/keys/secret-encryption.key` |
+| `smtp_password` | `system_config` (key-value row) | same key |
+| `totp_secret` | `users` | same key |
+
+**Why app-level on top of hardware-level?** Hardware-level encryption protects against disk theft; app-level encryption protects against DB exfiltration (SQL injection, backup theft, insider threat) where the attacker already has the running process's privileges. The two are complementary.
+
+**Blast-radius isolation:** A separate per-install key is used for app secrets (`secret-encryption.key`), distinct from the health-check key (`health-check.key`). If the health-check key is ever compromised, app secrets remain protected.
+
+**API surface:** No change. The `MASKED` placeholder behavior in API responses is preserved on top of the new DB encryption — defense in depth.
+
+**Backup:** Both key files must be included in `/etc/patch-manager` backups. Without the key file, encrypted data is unrecoverable. See [docs/runbooks/key-management.md](docs/runbooks/key-management.md) for the full procedure.
+
+**Key rotation:** Not yet supported (follow-up issue). If a key is compromised, generate a new key and re-provision affected secrets.

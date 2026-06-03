@@ -360,8 +360,26 @@ async fn mfa_verify_handler(
         ));
     }
 
-    sqlx::query("UPDATE users SET totp_secret = $1, mfa_enabled = TRUE WHERE id = $2")
-        .bind(&req.secret_base32)
+    // Encrypt the TOTP secret before persisting (issue #6 fix)
+    let key = crate::secret_key::get().map_err(|e| {
+        tracing::error!(error = %e, "Failed to load secret-encryption key");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(
+                json!({ "error": { "code": "internal_error", "message": "Encryption key error" } }),
+            ),
+        )
+    })?;
+    let (ciphertext, nonce) = pm_core::crypto::encrypt(&req.secret_base32, key).map_err(|e| {
+        tracing::error!(error = %e, "Failed to encrypt TOTP secret");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": "Encryption error" } })),
+        )
+    })?;
+    sqlx::query("UPDATE users SET totp_secret_encrypted = $1, totp_secret_nonce = $2, mfa_enabled = TRUE WHERE id = $3")
+        .bind(&ciphertext)
+        .bind(&nonce)
         .bind(auth_user.user_id)
         .execute(&state.db)
         .await
