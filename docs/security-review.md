@@ -125,7 +125,8 @@ verifying that all mandated security controls are implemented and operational.
 | Control | Status | Evidence |
 |---------|--------|----------|
 | Infrastructure-managed disk encryption | ✅ Verified | Hardware/infrastructure layer provides encryption at rest; no LUKS in guest OS |
-| No column-level encryption needed | ✅ Verified | Compliance requirement satisfied by infrastructure layer per system mandate |
+| **App secrets encrypted at rest (issue #6 fix)** | ✅ Verified | OIDC `client_secret`, SMTP `smtp_password`, and TOTP `totp_secret` are encrypted with AES-256-GCM using a dedicated per-install key at `/etc/patch-manager/keys/secret-encryption.key` (auto-generated on first start, 0600 permissions). Separate from the health-check key for blast-radius isolation. Encryption/decryption via `pm-core::crypto::encrypt`/`decrypt`. Schema migration `020_encrypt_secrets_at_rest.sql` replaces plaintext TEXT columns with BYTEA `_encrypted` + `_nonce` columns. All 6 read/write sites updated: `sso.rs`, `settings.rs` (OIDC + SMTP), `session.rs` (TOTP read), `auth.rs` (TOTP write), `users.rs` (TOTP NULL), `pm-worker/email.rs` (SMTP read). The `MASKED` placeholder behavior in API responses is preserved. |
+| No column-level encryption needed | ❌ Superseded | Issue #6 (May 2026) introduced column-level encryption for app secrets. Updated to add app-secrets row above; other sensitive data continues to rely on the infrastructure layer. |
 
 ### 4.2 Secret Management
 | Control | Status | Evidence |

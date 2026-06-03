@@ -1,5 +1,7 @@
 //! pm-web — Linux Patch Manager web server.
 
+mod secret_key;
+
 mod routes;
 
 use axum::{extract::State, http::StatusCode, middleware, response::Json, routing::get, Router};

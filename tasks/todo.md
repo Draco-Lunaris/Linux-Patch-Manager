@@ -259,3 +259,65 @@ _(filled in at completion)_
 - 6d: Push to `github/fix/5-operator-can-modify-auth-config` via `github-echo` SSH alias.
 - 6e: Open PR against `master` and comment on issue #5.
 - 6f: Capture lessons in `tasks/lessons.md` (project-specific) and `git-workflow/references/lessons-learned.md` (skill-level).
+
+---
+
+# Issue #6 — Secret Encryption at Rest
+
+**Spec:** [tasks/secret-encryption-spec.md](secret-encryption-spec.md) v0.1.0
+**Branch:** `fix/6-plaintext-secrets`
+**Identity:** `Draco-Lunaris-Echo`
+**Follow-up:** [Issue #15](https://github.com/Draco-Lunaris/Linux-Patch-Manager/issues/15) (integration tests)
+
+## Phase 1: Crypto helper extension + 3 new unit tests
+- [ ] 1a: Add `pub const SECRET_ENCRYPTION_KEY_PATH` to `crates/pm-core/src/crypto.rs`
+- [ ] 1b: Re-export from `crates/pm-core/src/lib.rs`
+- [ ] 1c: Add 3 unit tests in `crypto.rs` (round_trip, file_creation_0600_perms, file_creation_idempotent)
+- [ ] 1d: `cargo test -p pm-core` and `cargo clippy --all-targets -- -D warnings`
+
+## Phase 2: Secret key loader + migration SQL + migration helper
+- [ ] 2a: Add `crates/pm-web/src/secret_key.rs` with `OnceCell<[u8; 32]>` pattern
+- [ ] 2b: Add `crates/pm-worker/src/secret_key.rs` (same pattern)
+- [ ] 2c: Create `migrations/020_encrypt_secrets_at_rest.sql` (schema changes for 3 tables)
+- [ ] 2d: Create `crates/migrate-secrets/src/main.rs` — one-shot Rust binary that reads old plaintext, encrypts, writes to new columns
+- [ ] 2e: Verify migration helper round-trips (encrypt → decrypt = original plaintext)
+- [ ] 2f: `cargo test` and `cargo clippy` clean
+
+## Phase 3: Code changes — 6 read/write sites
+- [ ] 3a: `sso.rs` `load_oidc_config` — query `_encrypted` + `_nonce`, add `decrypt_client_secret()` method to OidcConfig
+- [ ] 3b: `settings.rs` OIDC read (line 280) + write (line 360) — same pattern as 3a
+- [ ] 3c: `settings.rs` SMTP read (line 793) + write (line 453) — use `system_config` key-value with new keys
+- [ ] 3d: `session.rs` TOTP read (line 197) — decrypt with secret_key::get()
+- [ ] 3e: `auth.rs` TOTP write (line 363) — encrypt req.secret_base32 before bind
+- [ ] 3f: `users.rs` TOTP NULL write (line 537) — bind to new _encrypted + _nonce columns
+- [ ] 3g: `pm-worker/src/email.rs` SMTP read (line 58) — decrypt
+- [ ] 3h: Update User struct (line 80) — replace `totp_secret: Option<String>` with `totp_secret_encrypted: Option<Vec<u8>>` + `totp_secret_nonce: Option<Vec<u8>>`
+- [ ] 3i: `cargo test -p pm-web --bins --tests` (43 existing pass)
+- [ ] 3j: `cargo test -p pm-auth --bins --tests`
+- [ ] 3k: `cargo test -p pm-worker --bins --tests`
+- [ ] 3l: `cargo clippy --all-targets -- -D warnings` clean
+- [ ] 3m: `npm run build` clean
+
+## Phase 4: Documentation
+- [ ] 4a: Update `docs/security-review.md` §4.1 with new evidence row
+- [ ] 4b: Create/update `docs/runbooks/key-management.md` with both key files documented
+- [ ] 4c: Update `docs/REST_API.md` (no API changes — note that MASKED behavior is preserved)
+- [ ] 4d: Update `SPEC.md` if it mentions secret storage (check during review)
+
+## Phase 5: Self-review against spec §5 acceptance criteria
+- [ ] All 12 acceptance criteria checked
+- [ ] Manual verification: psql queries show BYTEA not TEXT
+- [ ] Manual verification: API responses still return MASKED
+
+## Phase 6: Commit, push, open PR
+- [ ] 6a: Pre-push validation (cargo fmt, clippy, test, secret scan, identity, remote URL)
+- [ ] 6b: Commit on `fix/6-plaintext-secrets` with conventional format
+- [ ] 6c: Push to `github/fix/6-plaintext-secrets` via `github-echo` SSH alias
+- [ ] 6d: Open PR against master, comment on issue #6
+- [ ] 6e: Append lessons-learned to `git-workflow/references/lessons-learned.md` AND `tasks/lessons.md`
+
+## Phase 7: Cleanup (after Kelly approves merge)
+- [ ] 7a: Reset local master to `github/master`
+- [ ] 7b: Delete local + remote branch
+- [ ] 7c: Prune remote tracking ref
+- [ ] 7d: Report completion

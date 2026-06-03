@@ -273,11 +273,23 @@ async fn update_config_key(
     Ok(())
 }
 
+/// Tuple type for SELECT from oidc_config table (used by fetch_oidc_config).
+type OidcConfigRow = (
+    bool,
+    String,
+    String,
+    String,
+    String,
+    Option<Vec<u8>>,
+    Option<Vec<u8>>,
+    String,
+    String,
+);
 async fn fetch_oidc_config(
     pool: &sqlx::PgPool,
 ) -> Result<OidcConfigResponse, (StatusCode, Json<Value>)> {
-    let row: Option<(bool, String, String, String, String, String, String, String)> = sqlx::query_as(
-        "SELECT enabled, provider_type, display_name, discovery_url, client_id, client_secret, redirect_uri, scopes FROM oidc_config WHERE id = 1",
+    let row: Option<OidcConfigRow> = sqlx::query_as(
+        "SELECT enabled, provider_type, display_name, discovery_url, client_id, client_secret_encrypted, client_secret_nonce, redirect_uri, scopes FROM oidc_config WHERE id = 1",
     )
     .fetch_optional(pool)
     .await
@@ -296,7 +308,8 @@ async fn fetch_oidc_config(
             display_name,
             discovery_url,
             client_id,
-            client_secret,
+            client_secret_encrypted,
+            _client_secret_nonce,
             redirect_uri,
             scopes,
         )) => OidcConfigResponse {
@@ -305,7 +318,7 @@ async fn fetch_oidc_config(
             display_name,
             discovery_url,
             client_id,
-            client_secret: if client_secret.is_empty() {
+            client_secret: if client_secret_encrypted.is_none() {
                 String::new()
             } else {
                 MASKED.to_string()
@@ -365,6 +378,22 @@ async fn update_settings(
             .is_some_and(|s| s != MASKED && !s.is_empty());
 
         let result = if update_secret {
+            // Encrypt the client_secret before persisting
+            let key = crate::secret_key::get().map_err(|e| {
+                tracing::error!(error = %e, "Failed to load secret-encryption key");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": { "code": "internal_error", "message": "Encryption key error" } })),
+                )
+            })?;
+            let plaintext = oidc.client_secret.as_deref().unwrap_or("");
+            let (ciphertext, nonce) = pm_core::crypto::encrypt(plaintext, key).map_err(|e| {
+                tracing::error!(error = %e, "Failed to encrypt OIDC client_secret");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": { "code": "internal_error", "message": "Encryption error" } })),
+                )
+            })?;
             sqlx::query(
                 "UPDATE oidc_config SET \
                  enabled = COALESCE($1, enabled), \
@@ -372,9 +401,10 @@ async fn update_settings(
                  display_name = COALESCE($3, display_name), \
                  discovery_url = COALESCE($4, discovery_url), \
                  client_id = COALESCE($5, client_id), \
-                 client_secret = $6, \
-                 redirect_uri = COALESCE($7, redirect_uri), \
-                 scopes = COALESCE($8, scopes), \
+                 client_secret_encrypted = $6, \
+                 client_secret_nonce = $7, \
+                 redirect_uri = COALESCE($8, redirect_uri), \
+                 scopes = COALESCE($9, scopes), \
                  updated_at = NOW() \
                  WHERE id = 1",
             )
@@ -383,7 +413,8 @@ async fn update_settings(
             .bind(&oidc.display_name)
             .bind(&oidc.discovery_url)
             .bind(&oidc.client_id)
-            .bind(oidc.client_secret.as_deref().unwrap_or(""))
+            .bind(&ciphertext)
+            .bind(&nonce)
             .bind(&oidc.redirect_uri)
             .bind(&oidc.scopes)
             .execute(&state.db)
@@ -450,7 +481,59 @@ async fn update_settings(
         }
         if let Some(ref v) = smtp.password {
             if v != MASKED {
-                update_config_key(&state.db, "smtp_password", v).await?;
+                // Encrypt the SMTP password before persisting
+                let key = crate::secret_key::get().map_err(|e| {
+                    tracing::error!(error = %e, "Failed to load secret-encryption key");
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "error": { "code": "internal_error", "message": "Encryption key error" } })),
+                    )
+                })?;
+                let (ciphertext, nonce) = pm_core::crypto::encrypt(v, key).map_err(|e| {
+                    tracing::error!(error = %e, "Failed to encrypt SMTP password");
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "error": { "code": "internal_error", "message": "Encryption error" } })),
+                    )
+                })?;
+                // Delete old plaintext row, write two new rows (encrypted + nonce)
+                sqlx::query("DELETE FROM system_config WHERE key = 'smtp_password'")
+                    .execute(&state.db)
+                    .await
+                    .map_err(|e| {
+                        tracing::error!(error = %e, "Failed to delete old smtp_password row");
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+                        )
+                    })?;
+                // Store as hex in TEXT columns (system_config uses TEXT)
+                let enc_hex: String = ciphertext.iter().map(|b| format!("{:02x}", b)).collect();
+                let nonce_hex: String = nonce.iter().map(|b| format!("{:02x}", b)).collect();
+                sqlx::query("INSERT INTO system_config (key, value) VALUES ($1, $2)")
+                    .bind("smtp_password_encrypted")
+                    .bind(&enc_hex)
+                    .execute(&state.db)
+                    .await
+                    .map_err(|e| {
+                        tracing::error!(error = %e, "Failed to write smtp_password_encrypted");
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+                        )
+                    })?;
+                sqlx::query("INSERT INTO system_config (key, value) VALUES ($1, $2)")
+                    .bind("smtp_password_nonce")
+                    .bind(&nonce_hex)
+                    .execute(&state.db)
+                    .await
+                    .map_err(|e| {
+                        tracing::error!(error = %e, "Failed to write smtp_password_nonce");
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+                        )
+                    })?;
             }
         }
         if let Some(ref v) = smtp.from {
@@ -790,7 +873,32 @@ async fn test_smtp(
         .and_then(|v| v.parse().ok())
         .unwrap_or(587);
     let username = cfg.get("smtp_username").cloned().unwrap_or_default();
-    let password = cfg.get("smtp_password").cloned().unwrap_or_default();
+    // Decrypt the SMTP password (issue #6 fix — stored as two rows in system_config:
+    // `smtp_password_encrypted` (hex) and `smtp_password_nonce` (hex))
+    let password = match (
+        cfg.get("smtp_password_encrypted"),
+        cfg.get("smtp_password_nonce"),
+    ) {
+        (Some(enc_hex), Some(nonce_hex)) => {
+            let key = match crate::secret_key::get() {
+                Ok(k) => k,
+                Err(e) => {
+                    tracing::error!(error = %e, "Failed to load secret-encryption key");
+                    return Err((
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(
+                            json!({ "error": { "code": "internal_error", "message": "Encryption key error" } }),
+                        ),
+                    ));
+                },
+            };
+            // Decode hex to bytes (hex_decode returns empty Vec on invalid input)
+            let enc_bytes = hex_decode(enc_hex);
+            let nonce_bytes = hex_decode(nonce_hex);
+            pm_core::crypto::decrypt(&enc_bytes, &nonce_bytes, key).unwrap_or_default()
+        },
+        _ => String::new(),
+    };
     let from_addr = cfg.get("smtp_from").cloned().unwrap_or_default();
     let tls_mode = cfg
         .get("smtp_tls_mode")
@@ -1032,18 +1140,31 @@ async fn audit_integrity(
     })))
 }
 
+/// Decode a hex string to bytes. Returns an empty Vec on invalid input.
+/// Used by the SMTP password decryption logic (issue #6 fix).
+fn hex_decode(s: &str) -> Vec<u8> {
+    if !s.len().is_multiple_of(2) {
+        return Vec::new();
+    }
+    (0..s.len())
+        .step_by(2)
+        .filter_map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
+    #![allow(unused_imports)]
     use super::*;
     use axum::http::StatusCode;
     use pm_auth::jwt::AccessClaims;
     use pm_auth::rbac::{AuthUser, UserRole};
-    use serde_json::json;
     use uuid::Uuid;
 
     /// Build a minimal `AuthUser` for role-gate testing.
     /// The `admin_required` gate only inspects `auth.role`, so all other
     /// fields can be placeholder values.
+    #[allow(dead_code)]
     fn test_auth_user(role: UserRole) -> AuthUser {
         let claims = AccessClaims {
             sub: Uuid::new_v4().to_string(),

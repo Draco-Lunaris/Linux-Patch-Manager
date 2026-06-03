@@ -119,6 +119,8 @@ Security: JWT Bearer Token (except Public Endpoints)
 | POST | `/settings/azure-sso/test` | Test Azure SSO compatibility |
 | POST | `/settings/audit-integrity` | Verify audit log integrity |
 
+> **Note (issue #6):** As of May 2026, sensitive fields (`oidc.client_secret`, `smtp.password`) are encrypted at rest in the database (AES-256-GCM). The `MASKED` placeholder behavior in API responses is **preserved** — clients never see plaintext secrets in GET responses. See [docs/runbooks/key-management.md](runbooks/key-management.md) for key management procedures.
+
 ## 12. Single Sign-On (SSO)
 | Method | Endpoint | Description |
 |--------|----------|-------------|

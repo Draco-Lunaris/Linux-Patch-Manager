@@ -12,6 +12,7 @@ mod job_executor;
 mod maintenance_scheduler;
 mod patch_poller;
 mod refresh_listener;
+mod secret_key;
 mod ws_relay;
 
 use chrono::Utc;
