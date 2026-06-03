@@ -209,3 +209,53 @@ _(filled in at completion)_
 - [x] 5c: Render pending hosts in the table with highlight styling
 - [x] 5d: Add Approve/Deny action buttons to pending host rows
 - [x] 5e: Implement "merge/overwrite" interactive modal for `fqdn`/`ip_address` collisions on approval
+
+## Issue #5: Admin-Only Manager-Wide Configuration (Authz Gate)
+
+**Spec:** [tasks/authz-gate-spec.md](authz-gate-spec.md) (v0.1.0)
+**Branch:** `fix/5-operator-can-modify-auth-config`
+**Status:** Draft spec — awaiting Kelly sign-off
+
+### Phase 1: admin_required helper + 3 unit tests
+- 1a: Add `admin_required` helper in `crates/pm-web/src/routes/settings.rs` (after `write_access_required` ~line 173). Returns 403 with code `forbidden_role` if not Admin.
+- 1b: Add 3 unit tests in cfg(test) module: `admin_required_admin_passes`, `admin_required_operator_denied`, `admin_required_reporter_denied`.
+- 1c: Run `cargo test -p pm-web --bins --tests` and confirm green.
+
+### Phase 2: Gate changes + audit log calls
+- 2a: Replace `write_access_required` with `admin_required` in `update_settings` (line 336).
+- 2b: Replace `write_access_required` with `admin_required` in `update_ip_whitelist` (line 902).
+- 2c: Replace `write_access_required` with `admin_required` in `discover_oidc` (line 561).
+- 2d: Replace `write_access_required` with `admin_required` in `test_oidc` (line 619).
+- 2e: Create `migrations/019_auth_config_audit_actions.sql` with 5 new enum values.
+- 2f: Add 5 new variants to the `AuditAction` enum in `crates/pm-core/src/audit.rs` (or wherever defined).
+- 2g: Add `write_audit_event` calls in each of the 4 handlers, after successful mutations.
+- 2h: Run `cargo fmt --check --all`, `cargo clippy --all-targets -- -D warnings`, `cargo test -p pm-web --bins --tests` and confirm clean.
+
+### Phase 3: Integration tests (8 new)
+- 3a: `update_settings_operator_denied` — POST as Operator with OIDC fields → 403 `forbidden_role`.
+- 3b: `update_settings_admin_allowed` — POST as Admin with OIDC fields → 200 + audit row written.
+- 3c: `update_settings_smtp_operator_denied` — POST as Operator with SMTP fields → 403 `forbidden_role`.
+- 3d: `update_settings_smtp_admin_allowed` — POST as Admin with SMTP fields → 200 + audit row written.
+- 3e: `update_ip_whitelist_operator_denied` — POST as Operator → 403 `forbidden_role`.
+- 3f: `update_ip_whitelist_admin_allowed` — POST as Admin → 200 + audit row written + in-memory `AuthConfig.ip_whitelist` updated.
+- 3g: `discover_oidc_operator_denied` / `discover_oidc_admin_allowed` — 2 tests.
+- 3h: `test_oidc_operator_denied` / `test_oidc_admin_allowed` — 2 tests.
+- 3i: Run `cargo test -p pm-web --bins --tests` and confirm all green.
+
+### Phase 4: SPA error message + 1 test
+- 4a: Update `frontend/src/pages/SettingsPage.tsx` to detect `error.code === 'forbidden_role'` and show friendly message: "Only Admins can modify authentication configuration. Contact an Admin to make this change."
+- 4b: Create `frontend/src/pages/__tests__/SettingsPage.test.tsx` with 1 test: `settings_page_forbidden_role_shows_friendly_message`.
+- 4c: Run `npm test` in `frontend/` and confirm green.
+
+### Phase 5: Documentation
+- 5a: Update `docs/security-review.md` §2.3 (Authorization / RBAC) with 2 new rows.
+- 5b: Annotate the 4 affected endpoints in `docs/REST_API.md` with "🔒 Admin only".
+- 5c: Add a project-specific lesson in `tasks/lessons.md` about the role model (Admin = Manager-wide, Operator = per-host, Reporter = read-only).
+
+### Phase 6: Review & commit
+- 6a: Self-review against the 9 acceptance criteria in the spec.
+- 6b: Manual pre-push checks (cargo fmt, cargo clippy, eslint, cargo test, npm test) — run all 6 from the recent lessons-learned entry.
+- 6c: Commit on `fix/5-operator-can-modify-auth-config` with conventional format.
+- 6d: Push to `github/fix/5-operator-can-modify-auth-config` via `github-echo` SSH alias.
+- 6e: Open PR against `master` and comment on issue #5.
+- 6f: Capture lessons in `tasks/lessons.md` (project-specific) and `git-workflow/references/lessons-learned.md` (skill-level).
