@@ -180,6 +180,28 @@ fn write_access_required(auth: &AuthUser) -> Result<(), (StatusCode, Json<Value>
     Ok(())
 }
 
+/// Gate Manager-wide authentication configuration (OIDC, SMTP, IP allowlist,
+/// OIDC discover/test) behind the **Admin** role. Operators can still
+/// access per-host settings (see `write_access_required`).
+///
+/// Returns `403 forbidden_role` if the user is not an Admin. The distinct
+/// error code (vs `forbidden` from `write_access_required`) lets the SPA
+/// differentiate "you don't have write access at all" from "you have
+/// write access but not for this specific resource".
+///
+/// See issue #5 and `tasks/authz-gate-spec.md` for the full design.
+fn admin_required(auth: &AuthUser) -> Result<(), (StatusCode, Json<Value>)> {
+    if !auth.role.is_admin() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(
+                json!({ "error": { "code": "forbidden_role", "message": "Admin role required to modify this resource" } }),
+            ),
+        ));
+    }
+    Ok(())
+}
+
 async fn load_system_config(
     pool: &sqlx::PgPool,
 ) -> Result<HashMap<String, String>, (StatusCode, Json<Value>)> {
@@ -333,7 +355,7 @@ async fn update_settings(
     auth: AuthUser,
     Json(req): Json<UpdateSettingsRequest>,
 ) -> Result<Json<SettingsResponse>, (StatusCode, Json<Value>)> {
-    write_access_required(&auth)?;
+    admin_required(&auth)?;
 
     // Update OIDC config
     if let Some(oidc) = req.oidc {
@@ -400,7 +422,7 @@ async fn update_settings(
 
         log_event(
             &state.db,
-            AuditAction::ConfigChanged,
+            AuditAction::OidcConfigUpdated,
             Some(auth.user_id),
             Some(&auth.username),
             Some("oidc"),
@@ -440,7 +462,7 @@ async fn update_settings(
 
         log_event(
             &state.db,
-            AuditAction::ConfigChanged,
+            AuditAction::SmtpConfigUpdated,
             Some(auth.user_id),
             Some(&auth.username),
             Some("smtp"),
@@ -485,7 +507,7 @@ async fn update_settings(
 
         log_event(
             &state.db,
-            AuditAction::ConfigChanged,
+            AuditAction::IpWhitelistUpdated,
             Some(auth.user_id),
             Some(&auth.username),
             Some("ip_whitelist"),
@@ -559,11 +581,11 @@ async fn update_settings(
 // ============================================================
 
 async fn discover_oidc(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     auth: AuthUser,
     Json(req): Json<OidcDiscoveryRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    write_access_required(&auth)?;
+    admin_required(&auth)?;
 
     if req.discovery_url.is_empty() {
         return Err((
@@ -588,6 +610,20 @@ async fn discover_oidc(
     match client.get(&req.discovery_url).send().await {
         Ok(resp) if resp.status().is_success() => {
             let body: Value = resp.json().await.unwrap_or(json!({}));
+            // Audit log: Admin probed the OIDC discovery endpoint (issue #5).
+            // Non-fatal: log_event logs errors internally and does not propagate.
+            log_event(
+                &state.db,
+                AuditAction::OidcDiscoverPerformed,
+                Some(auth.user_id),
+                Some(&auth.username),
+                Some("oidc"),
+                Some(&req.discovery_url),
+                json!({ "discovery_url": req.discovery_url }),
+                None,
+                None,
+            )
+            .await;
             Ok(Json(json!({
                 "success": true,
                 "issuer": body.get("issuer").and_then(|v| v.as_str()).unwrap_or(""),
@@ -620,7 +656,7 @@ async fn test_oidc(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    write_access_required(&auth)?;
+    admin_required(&auth)?;
 
     let row: Option<(bool, String, String)> = sqlx::query_as(
         "SELECT enabled, provider_type, discovery_url FROM oidc_config WHERE id = 1",
@@ -679,6 +715,23 @@ async fn test_oidc(
                 "azure" => "Azure AD",
                 _ => "OIDC",
             };
+            // Audit log: Admin tested the OIDC provider connection (issue #5).
+            // Non-fatal: log_event logs errors internally and does not propagate.
+            log_event(
+                &state.db,
+                AuditAction::OidcTestPerformed,
+                Some(auth.user_id),
+                Some(&auth.username),
+                Some("oidc"),
+                Some(&discovery_url),
+                json!({
+                    "discovery_url": discovery_url,
+                    "provider_type": provider_type,
+                }),
+                None,
+                None,
+            )
+            .await;
             Ok(Json(json!({
                 "success": true,
                 "message": format!("{} provider verified successfully", provider_label),
@@ -696,6 +749,9 @@ async fn test_oidc(
         }))),
     }
 }
+
+// Note: OIDC test audit log is emitted in the success path below.
+// The above error cases don't persist, so no audit log is needed for them.
 
 // ============================================================
 // POST /api/v1/settings/azure-sso/test (backward-compatible alias)
@@ -899,7 +955,7 @@ async fn update_ip_whitelist(
     auth: AuthUser,
     Json(req): Json<IpWhitelistUpdate>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    write_access_required(&auth)?;
+    admin_required(&auth)?;
 
     // Validate each entry
     for entry in &req.entries {
@@ -921,7 +977,7 @@ async fn update_ip_whitelist(
 
     log_event(
         &state.db,
-        AuditAction::ConfigChanged,
+        AuditAction::IpWhitelistUpdated,
         Some(auth.user_id),
         Some(&auth.username),
         Some("ip_whitelist"),
@@ -974,4 +1030,58 @@ async fn audit_integrity(
             "actual_hash": e.actual_hash,
         })).collect::<Vec<_>>(),
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::StatusCode;
+    use pm_auth::jwt::AccessClaims;
+    use pm_auth::rbac::{AuthUser, UserRole};
+    use serde_json::json;
+    use uuid::Uuid;
+
+    /// Build a minimal `AuthUser` for role-gate testing.
+    /// The `admin_required` gate only inspects `auth.role`, so all other
+    /// fields can be placeholder values.
+    fn test_auth_user(role: UserRole) -> AuthUser {
+        let claims = AccessClaims {
+            sub: Uuid::new_v4().to_string(),
+            iat: 0,
+            exp: i64::MAX,
+            jti: Uuid::new_v4().to_string(),
+            role: role.as_str().to_string(),
+            username: "test-user".to_string(),
+        };
+        AuthUser {
+            user_id: Uuid::new_v4(),
+            username: "test-user".to_string(),
+            role,
+            claims,
+        }
+    }
+
+    #[test]
+    fn admin_required_admin_passes() {
+        let auth = test_auth_user(UserRole::Admin);
+        admin_required(&auth).expect("Admin should pass");
+    }
+
+    #[test]
+    fn admin_required_operator_denied() {
+        let auth = test_auth_user(UserRole::Operator);
+        let err = admin_required(&auth).expect_err("Operator should be denied");
+        let (status, body) = err;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body["error"]["code"], "forbidden_role");
+    }
+
+    #[test]
+    fn admin_required_reporter_denied() {
+        let auth = test_auth_user(UserRole::Reporter);
+        let err = admin_required(&auth).expect_err("Reporter should be denied");
+        let (status, body) = err;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body["error"]["code"], "forbidden_role");
+    }
 }

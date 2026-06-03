@@ -99,6 +99,11 @@ export default function SettingsPage() {
       const { data } = await settingsApi.discoverOidc(oidc.discovery_url)
       setDiscoveryResult(data)
     } catch (err: unknown) {
+      const axiosErr = err as AxiosError
+      if (axiosErr.response?.status === 403) {
+        setDiscoveryResult({ success: false, issuer: '', authorization_endpoint: '', token_endpoint: '', jwks_uri: '', message: 'Only Admins can modify authentication configuration. Contact an Admin to make this change.' })
+        return
+      }
       const msg = err instanceof Error ? err.message : 'Discovery failed'
       setDiscoveryResult({ success: false, issuer: '', authorization_endpoint: '', token_endpoint: '', jwks_uri: '', message: msg })
     } finally {
@@ -151,6 +156,10 @@ export default function SettingsPage() {
       setSuccess('Settings saved successfully')
     } catch (err: unknown) {
       const axiosErr = err as AxiosError<{ error?: { message?: string } }>
+      if (axiosErr.response?.status === 403) {
+        setError('Only Admins can modify authentication configuration. Contact an Admin to make this change.')
+        return
+      }
       const msg =
         axiosErr.response?.data?.error?.message ??
         (err instanceof Error ? err.message : 'Failed to save settings')

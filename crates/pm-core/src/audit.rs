@@ -51,6 +51,12 @@ pub enum AuditAction {
     HealthCheckUpdated,
     HealthCheckDeleted,
     CertificateReissued,
+    // Issue #5: Manager-wide auth-config mutations (Admin-only)
+    OidcConfigUpdated,
+    SmtpConfigUpdated,
+    IpWhitelistUpdated,
+    OidcTestPerformed,
+    OidcDiscoverPerformed,
 }
 
 impl AuditAction {
@@ -88,6 +94,12 @@ impl AuditAction {
             Self::HealthCheckUpdated => "health_check_updated",
             Self::HealthCheckDeleted => "health_check_deleted",
             Self::CertificateReissued => "certificate_reissued",
+            // Issue #5: Manager-wide auth-config mutations (Admin-only)
+            Self::OidcConfigUpdated => "oidc_config_updated",
+            Self::SmtpConfigUpdated => "smtp_config_updated",
+            Self::IpWhitelistUpdated => "ip_whitelist_updated",
+            Self::OidcTestPerformed => "oidc_test_performed",
+            Self::OidcDiscoverPerformed => "oidc_discover_performed",
         }
     }
 }
