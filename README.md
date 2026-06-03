@@ -234,7 +234,9 @@ sudo -u postgres psql patch_manager < /usr/share/patch-manager/migrations/001_in
 
 ## License
 
-Private — All rights reserved.
+This project is licensed under the [Apache License 2.0](LICENSE).
+
+Copyright 2025-2026 Draco Lunaris
 
 ---
 
