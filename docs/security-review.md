@@ -85,6 +85,7 @@ verifying that all mandated security controls are implemented and operational.
 | Admin: full rights | ✅ Verified | Admin role bypasses group scoping; access to all resources |
 | Operator: group-scoped | ✅ Verified | Operators can only manage hosts in their assigned groups; middleware enforces on every request |
 | RBAC middleware | ✅ Verified | Axum middleware extracts role from JWT; enforces before route handler execution |
+| **Manager-wide auth config is Admin-only (issue #5 fix)** | ✅ Verified | `admin_required` gate in `crates/pm-web/src/routes/settings.rs` restricts `update_settings` (OIDC/SMTP), `discover_oidc`, `test_oidc`, and `update_ip_whitelist` to Admin role. Operators receive `403 forbidden_role`. All mutations write audit events (`OidcConfigUpdated`, `SmtpConfigUpdated`, `IpWhitelistUpdated`, `OidcTestPerformed`, `OidcDiscoverPerformed`) via `log_event` in `crates/pm-core/src/audit.rs`. SPA shows friendly error: "Only Admins can modify authentication configuration. Contact an Admin to make this change." Verified by 3 `admin_required` unit tests (Admin passes, Operator denied, Reporter denied) and manual code review of 4 gate changes. Full integration tests deferred to [issue #15](https://github.com/Draco-Lunaris/Linux-Patch-Manager/issues/15). |
 
 ### 2.5 Azure SSO
 | Control | Status | Evidence |

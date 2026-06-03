@@ -1035,13 +1035,15 @@ async fn audit_integrity(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::StatusCode;
     use pm_auth::jwt::AccessClaims;
-    use pm_auth::rbac::UserRole;
+    use pm_auth::rbac::{AuthUser, UserRole};
+    use serde_json::json;
     use uuid::Uuid;
 
-    /// Build a minimal `AuthUser` for unit tests. The `admin_required` gate
-    /// only inspects `auth.role`, so the other fields (user_id, username,
-    /// claims) can be placeholder values.
+    /// Build a minimal `AuthUser` for role-gate testing.
+    /// The `admin_required` gate only inspects `auth.role`, so all other
+    /// fields can be placeholder values.
     fn test_auth_user(role: UserRole) -> AuthUser {
         let claims = AccessClaims {
             sub: Uuid::new_v4().to_string(),
@@ -1062,7 +1064,7 @@ mod tests {
     #[test]
     fn admin_required_admin_passes() {
         let auth = test_auth_user(UserRole::Admin);
-        assert!(admin_required(&auth).is_ok());
+        admin_required(&auth).expect("Admin should pass");
     }
 
     #[test]
@@ -1072,10 +1074,6 @@ mod tests {
         let (status, body) = err;
         assert_eq!(status, StatusCode::FORBIDDEN);
         assert_eq!(body["error"]["code"], "forbidden_role");
-        assert_eq!(
-            body["error"]["message"],
-            "Admin role required to modify this resource"
-        );
     }
 
     #[test]

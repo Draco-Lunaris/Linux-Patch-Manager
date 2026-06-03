@@ -112,10 +112,10 @@ Security: JWT Bearer Token (except Public Endpoints)
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/settings` | Get system settings |
-| PUT | `/settings` | Update system settings |
+| PUT | `/settings` | Update system settings **(Admin only — Operators receive `403 forbidden_role`)** |
 | POST | `/settings/smtp/test` | Test SMTP configuration |
-| POST | `/settings/sso/discover` | Discover OIDC provider config |
-| POST | `/settings/sso/test` | Test SSO connection |
+| POST | `/settings/sso/discover` | Discover OIDC provider config **(Admin only — Operators receive `403 forbidden_role`)** |
+| POST | `/settings/sso/test` | Test SSO connection **(Admin only — Operators receive `403 forbidden_role`)** |
 | POST | `/settings/azure-sso/test` | Test Azure SSO compatibility |
 | POST | `/settings/audit-integrity` | Verify audit log integrity |
 
