@@ -91,7 +91,7 @@ export default function SsoCallbackPage() {
         setProcessing(false)
       }
     })()
-  }, [setTokens, setUser, navigate])
+  }, [setTokens, setUser, navigate, searchParams])
 
   return (
     <Container maxWidth="xs" sx={{ mt: 12 }}>

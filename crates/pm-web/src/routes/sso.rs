@@ -130,7 +130,10 @@ async fn sso_handoff_exchange_inner(
     // only one wins.
     let removed = handoffs.remove(code);
     let Some((_code, handoff)) = removed else {
-        tracing::warn!(reason = "unknown_or_already_consumed", "SSO handoff exchange failed");
+        tracing::warn!(
+            reason = "unknown_or_already_consumed",
+            "SSO handoff exchange failed"
+        );
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({
@@ -1070,8 +1073,7 @@ mod tests {
     #[tokio::test]
     async fn handoff_exchange_unknown_code() {
         let handoffs = fresh_handoffs();
-        let (status, body) =
-            sso_handoff_exchange_inner(&handoffs, "never-issued-code").await;
+        let (status, body) = sso_handoff_exchange_inner(&handoffs, "never-issued-code").await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(body["error"]["code"], "invalid_handoff");
     }
