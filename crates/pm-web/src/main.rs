@@ -9,6 +9,7 @@ use axum_server::tls_rustls::RustlsConfig;
 use dashmap::DashMap;
 use pm_auth::{
     jwt,
+    password::hash_password,
     rbac::{require_auth, AuthConfig},
 };
 use pm_core::{
@@ -26,6 +27,89 @@ use tower_http::{
     services::{ServeDir, ServeFile},
     trace::TraceLayer,
 };
+
+/// Placeholder Argon2id hash prefix used in the seed admin migration (issue #8).
+/// Detecting this prefix means the admin password has not been bootstrapped yet.
+const ADMIN_PLACEHOLDER_HASH_PREFIX: &str = "$argon2id$v=19$m=65536,t=3,p=1$AAAAAAAAAAAAAAAA";
+
+/// Bootstrap the default admin account with a random password.
+///
+/// On first startup after a fresh install, the `users` table contains the seed
+/// admin row with a clearly-invalid placeholder hash (cannot validate any password).
+/// This function detects that placeholder, generates a cryptographically random
+/// 24-character password, hashes it with Argon2id, and UPDATEs the admin row.
+///
+/// The plaintext password is printed **once** to stderr (visible in `systemctl status`
+/// or `journalctl`) and is never stored on disk.
+///
+/// If the admin row already has a real hash, this function is a no-op.
+async fn bootstrap_admin_password(pool: &sqlx::PgPool) {
+    // Check if the admin account still has the placeholder hash.
+    let result: Option<String> = sqlx::query_scalar(
+        "SELECT password_hash FROM users WHERE username = 'admin' AND auth_provider = 'local'",
+    )
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None);
+
+    let current_hash = match result {
+        Some(h) => h,
+        None => return, // No admin row — nothing to bootstrap.
+    };
+
+    if !current_hash.starts_with(ADMIN_PLACEHOLDER_HASH_PREFIX) {
+        // Admin already has a real password — nothing to do.
+        return;
+    }
+
+    // Generate a 24-character random alphanumeric password.
+    use rand::Rng;
+    let password: String = rand::thread_rng()
+        .sample_iter(&rand::distributions::Alphanumeric)
+        .take(24)
+        .map(char::from)
+        .collect();
+
+    // Hash it with the application's Argon2id parameters.
+    let new_hash = match hash_password(&password) {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to hash bootstrap admin password");
+            return;
+        }
+    };
+
+    // Replace the placeholder hash with the real one.
+    let rows = sqlx::query(
+        "UPDATE users SET password_hash = $1 WHERE username = 'admin' AND auth_provider = 'local' AND password_hash LIKE '$argon2id$v=19$m=65536,t=3,p=1$AAAAAAAAAAAAAAAA%'",
+    )
+    .bind(&new_hash)
+    .execute(pool)
+    .await;
+
+    match rows {
+        Ok(result) if result.rows_affected() == 1 => {
+            eprintln!();
+            eprintln!("========================================");
+            eprintln!("  INITIAL ADMIN PASSWORD (shown once)");
+            eprintln!("  Username: admin");
+            eprintln!("  Password: {}", password);
+            eprintln!();
+            eprintln!("  You will be forced to change this on first login.");
+            eprintln!("  If lost, restart the service to generate a new one.");
+            eprintln!("========================================");
+            eprintln!();
+            tracing::info!("Bootstrap admin password generated and set");
+        }
+        Ok(_) => {
+            // Rows affected != 1 — concurrent bootstrap or already replaced.
+            tracing::info!("Admin password already bootstrapped (concurrent or prior)");
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to update admin password hash");
+        }
+    }
+}
 
 /// Shared application state threaded through Axum.
 #[derive(Clone)]
@@ -93,6 +177,9 @@ async fn main() -> anyhow::Result<()> {
 
     let pool = db::init_pool(&config.database).await?;
     db::run_migrations(&pool).await?;
+
+    // Bootstrap admin password if the seed admin still has the placeholder hash (issue #8).
+    bootstrap_admin_password(&pool).await;
 
     // Initialise the internal CA using the configured certificate paths.
     // The CA certificate and key must exist at the configured locations and be
