@@ -70,11 +70,15 @@ Security: JWT Bearer Token (except Public Endpoints)
 ## 7. Jobs & Patch Deployment
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/jobs` | List patch jobs |
+| GET | `/jobs` | List patch jobs (includes `host_names` per job) |
 | POST | `/jobs` | Create new patch job |
 | GET | `/jobs/{id}` | Get job status/details |
 | POST | `/jobs/{id}/cancel` | Cancel running job |
 | POST | `/jobs/{id}/rollback` | Rollback completed job |
+
+### GET /jobs Response Fields
+Each job summary object includes:
+- `host_names`: Array of display names for hosts targeted by this job. Falls back to `fqdn` when `display_name` is empty. Single-host jobs show one name; multi-host jobs show all names sorted alphabetically.
 
 ## 8. Maintenance Windows
 *Scoped to host.*
