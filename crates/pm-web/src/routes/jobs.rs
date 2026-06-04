@@ -237,7 +237,7 @@ async fn list_jobs(
     let limit = q.limit.unwrap_or(50).min(200);
     let offset = q.offset.unwrap_or(0);
 
-    let jobs: Vec<PatchJobSummary> = if auth.role.is_admin() {
+    let mut jobs: Vec<PatchJobSummary> = if auth.role.is_admin() {
         // Admins see every job.
         sqlx::query_as(
             r#"
@@ -332,7 +332,7 @@ async fn list_jobs(
     };
 
     // Merge host_names into summaries.
-    let host_names_map: HashMap<Uuid, Vec<String>> = host_names_rows
+    let mut host_names_map: HashMap<Uuid, Vec<String>> = host_names_rows
         .into_iter()
         .map(|r| (r.id, r.host_names))
         .collect();
