@@ -1,8 +1,8 @@
 //! pm-web — Linux Patch Manager web server.
 
-mod secret_key;
-
 mod routes;
+
+mod secret_key;
 
 use axum::{extract::State, http::StatusCode, middleware, response::Json, routing::get, Router};
 use axum_server::tls_rustls::RustlsConfig;
@@ -76,7 +76,7 @@ async fn bootstrap_admin_password(pool: &sqlx::PgPool) {
         Err(e) => {
             tracing::error!(error = %e, "Failed to hash bootstrap admin password");
             return;
-        }
+        },
     };
 
     // Replace the placeholder hash with the real one.
@@ -105,14 +105,14 @@ async fn bootstrap_admin_password(pool: &sqlx::PgPool) {
             eprintln!("========================================");
             eprintln!();
             tracing::info!("Bootstrap admin password generated and set");
-        }
+        },
         Ok(_) => {
             // Rows affected != 1 — concurrent bootstrap or already replaced.
             tracing::info!("Admin password already bootstrapped (concurrent or prior)");
-        }
+        },
         Err(e) => {
             tracing::error!(error = %e, "Failed to update admin password hash");
-        }
+        },
     }
 }
 
