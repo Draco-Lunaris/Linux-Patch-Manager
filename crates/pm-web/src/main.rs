@@ -15,6 +15,7 @@ use pm_auth::{
 use pm_core::{
     config::AppConfig, db, logging, models::ApprovedEntry, request_id::request_id_middleware,
 };
+use rand::Rng;
 use routes::sso::{OidcCache, SsoHandoff, SsoSession};
 use routes::ws::WsTicket;
 use serde_json::{json, Value};
@@ -63,7 +64,6 @@ async fn bootstrap_admin_password(pool: &sqlx::PgPool) {
     }
 
     // Generate a 24-character random alphanumeric password.
-    use rand::Rng;
     let password: String = rand::thread_rng()
         .sample_iter(&rand::distributions::Alphanumeric)
         .take(24)
@@ -80,8 +80,13 @@ async fn bootstrap_admin_password(pool: &sqlx::PgPool) {
     };
 
     // Replace the placeholder hash with the real one.
+    // The WHERE clause matches the placeholder prefix to ensure idempotency.
     let rows = sqlx::query(
-        "UPDATE users SET password_hash = $1 WHERE username = 'admin' AND auth_provider = 'local' AND password_hash LIKE '$argon2id$v=19$m=65536,t=3,p=1$AAAAAAAAAAAAAAAA%'",
+        r#"UPDATE users
+            SET password_hash = $1
+            WHERE username = 'admin'
+              AND auth_provider = 'local'
+              AND password_hash LIKE '$argon2id$v=19$m=65536,t=3,p=1$AAAAAAAAAAAAAAAA%'"#,
     )
     .bind(&new_hash)
     .execute(pool)
