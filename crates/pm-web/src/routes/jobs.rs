@@ -20,6 +20,7 @@ use pm_core::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::AppState;
@@ -50,6 +51,13 @@ struct JobListResponse {
     total: i64,
     limit: i64,
     offset: i64,
+}
+
+/// Helper struct for the host_names aggregation query.
+#[derive(Debug, sqlx::FromRow)]
+struct JobHostNames {
+    id: Uuid,
+    host_names: Vec<String>,
 }
 
 /// Per-host row included in `GET /api/v1/jobs/{id}` response.
@@ -297,6 +305,40 @@ async fn list_jobs(
         tracing::error!(error = %e, "list_jobs: query failed");
         err(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", "Database error")
     })?;
+
+    // Fetch host names for all jobs in this page.
+    let job_ids: Vec<Uuid> = jobs.iter().map(|j| j.id).collect();
+    let host_names_rows: Vec<JobHostNames> = if job_ids.is_empty() {
+        Vec::new()
+    } else {
+        sqlx::query_as(
+            r#"
+            SELECT pjh.job_id AS id,
+                   array_agg(COALESCE(NULLIF(h.display_name, ''), h.fqdn)
+                             ORDER BY h.fqdn) AS host_names
+            FROM patch_job_hosts pjh
+            JOIN hosts h ON h.id = pjh.host_id
+            WHERE pjh.job_id = ANY($1)
+            GROUP BY pjh.job_id
+            "#,
+        )
+        .bind(&job_ids)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "list_jobs: host_names query failed, using empty defaults");
+            Vec::new()
+        })
+    };
+
+    // Merge host_names into summaries.
+    let host_names_map: HashMap<Uuid, Vec<String>> = host_names_rows
+        .into_iter()
+        .map(|r| (r.id, r.host_names))
+        .collect();
+    for job in &mut jobs {
+        job.host_names = host_names_map.remove(&job.id).unwrap_or_default();
+    }
 
     // Total count for pagination metadata.
     let total: i64 = if auth.role.is_admin() {

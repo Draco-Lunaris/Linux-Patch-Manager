@@ -505,6 +505,10 @@ pub struct PatchJobSummary {
     pub status: JobStatus,
     pub immediate: bool,
     pub host_count: i64,
+    /// Display names of hosts targeted by this job (falls back to fqdn).
+    #[serde(default)]
+    #[sqlx(skip)]
+    pub host_names: Vec<String>,
     pub succeeded_count: i64,
     pub failed_count: i64,
     pub notes: String,
