@@ -307,11 +307,7 @@ async fn approve_enrollment(
     // Include the full CA chain (for root mode, same as ca_crt; for sub-CA,
     // includes intermediate + root) and the current CRL.
     let ca_chain = issued.ca_root_pem.clone(); // Root mode: chain is just the root cert
-    let crl_pem = state
-        .ca
-        .generate_crl(&state.db)
-        .await
-        .unwrap_or_default(); // Empty string on failure: agent falls back to WebPKI-only
+    let crl_pem = state.ca.generate_crl(&state.db).await.unwrap_or_default(); // Empty string on failure: agent falls back to WebPKI-only
     let pki = PkiBundle {
         ca_crt: issued.ca_root_pem,
         ca_chain,
