@@ -161,6 +161,33 @@ Fleet status response includes CRL counts:
 | `crl_invalid` | `integer` | Hosts with CRL status `invalid` (security event) |
 | `crl_not_reporting` | `integer` | Hosts not reporting CRL status (older agents) |
 
+### CRL Audit Events
+
+The health poller logs the following system-initiated audit events when a host's CRL status changes:
+
+| Audit Action | Trigger | Details Fields |
+|---|---|---|
+| `crl_status_changed` | Any CRL status transition | `host_id`, `old_crl_status`, `new_crl_status`, `crl_age_seconds` |
+| `crl_stale_detected` | CRL status becomes `expired` | `host_id`, `old_crl_status`, `new_crl_status`, `crl_age_seconds` |
+| `crl_invalid` | CRL status becomes `invalid` | `host_id`, `old_crl_status`, `new_crl_status`, `crl_age_seconds` |
+
+All CRL audit events use `target_type = "host"` and `target_id = <host_id>`. Actor fields (`actor_user_id`, `actor_username`) are `null` because these are system-initiated events.
+
+### CRL Health Aggregation Rules
+
+The health poller applies the following rules to determine a host's effective health status based on CRL state:
+
+| CRL Status | Condition | Effective Health Status |
+|---|---|---|
+| `invalid` | Always | `unreachable` (security event) |
+| `expired` | If natural status is `healthy` | `degraded` |
+| `missing` | Registered > 24h ago AND natural status is `healthy` | `degraded` |
+| `missing` | Registered ≤ 24h ago | Natural status (new agent enrollment) |
+| `valid` | Any | Natural status (no override) |
+| `null` | Any | Natural status (older agent, not reporting CRL) |
+
+When CRL status transitions from `invalid`/`expired`/`missing` back to `valid`, the next health poll cycle restores the host to its natural health status based on the agent's health response.
+
 ## 14. Real-Time Updates (WebSocket)
 | Method | Endpoint | Description |
 |--------|----------|-------------|

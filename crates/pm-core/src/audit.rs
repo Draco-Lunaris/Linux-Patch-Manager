@@ -57,6 +57,10 @@ pub enum AuditAction {
     IpWhitelistUpdated,
     OidcTestPerformed,
     OidcDiscoverPerformed,
+    // CRL health aggregation events (system-initiated)
+    CrlStatusChanged,
+    CrlStaleDetected,
+    CrlInvalid,
 }
 
 impl AuditAction {
@@ -100,6 +104,10 @@ impl AuditAction {
             Self::IpWhitelistUpdated => "ip_whitelist_updated",
             Self::OidcTestPerformed => "oidc_test_performed",
             Self::OidcDiscoverPerformed => "oidc_discover_performed",
+            // CRL health aggregation events
+            Self::CrlStatusChanged => "crl_status_changed",
+            Self::CrlStaleDetected => "crl_stale_detected",
+            Self::CrlInvalid => "crl_invalid",
         }
     }
 }
