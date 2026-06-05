@@ -358,7 +358,7 @@ fn apply_crl_health_rules(
             } else {
                 natural_status.clone()
             }
-        }
+        },
         "missing" => {
             let age = Utc::now() - registered_at;
             if age > Duration::hours(24) && *natural_status == HostHealthStatus::Healthy {
@@ -366,7 +366,7 @@ fn apply_crl_health_rules(
             } else {
                 natural_status.clone()
             }
-        }
+        },
         // "valid" or any other value — no override
         _ => natural_status.clone(),
     }
