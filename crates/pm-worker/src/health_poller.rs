@@ -116,8 +116,9 @@ pub async fn run_health_poller(pool: PgPool, config: Arc<AppConfig>) {
 
 /// Poll a single host, persist the result, and return the determined status.
 ///
-/// Also updates `agent_version` from the health response and
-/// `os_family`/`os_name`/`arch` from the `/system/info` endpoint when available.
+/// Also updates `agent_version` from the health response,
+/// `os_family`/`os_name`/`arch` from the `/system/info` endpoint when available,
+/// and CRL status fields from the health response when reported by the agent.
 async fn poll_host_health(
     pool: PgPool,
     host: HostRow,
@@ -125,79 +126,107 @@ async fn poll_host_health(
     client_key: &[u8],
     ca_cert: &[u8],
 ) -> HostHealthStatus {
-    // Determine status, payload, agent version, and optional system info.
-    let (status, payload, agent_version, sys_info) = match AgentClient::new(
-        &host.ip_address,
-        host.agent_port as u16,
-        client_cert,
-        client_key,
-        ca_cert,
-    ) {
-        Err(e) => {
-            tracing::warn!(
-                host_id = %host.id,
-                error = %e,
-                "Health poller: failed to build AgentClient"
-            );
-            (
-                HostHealthStatus::Unreachable,
-                serde_json::Value::Object(Default::default()),
-                None,
-                None,
-            )
-        },
-        Ok(client) => {
-            let (status, payload, version) = match client.health().await {
-                Ok(data) => {
-                    let payload = serde_json::to_value(&data).unwrap_or_default();
-                    (HostHealthStatus::Healthy, payload, Some(data.version))
-                },
-                Err(AgentClientError::Timeout) => {
-                    tracing::warn!(host_id = %host.id, "Health poller: agent timed out");
-                    (
-                        HostHealthStatus::Unreachable,
-                        serde_json::Value::Object(Default::default()),
-                        None,
-                    )
-                },
-                Err(AgentClientError::Connect(_)) => {
-                    tracing::warn!(host_id = %host.id, "Health poller: agent connection refused");
-                    (
-                        HostHealthStatus::Unreachable,
-                        serde_json::Value::Object(Default::default()),
-                        None,
-                    )
-                },
-                Err(e) => {
-                    tracing::warn!(host_id = %host.id, error = %e, "Health poller: agent error");
-                    (
-                        HostHealthStatus::Degraded,
-                        serde_json::Value::Object(Default::default()),
-                        None,
-                    )
-                },
-            };
-
-            // Try to fetch system info for OS/arch details (best-effort).
-            let sys_info = if status != HostHealthStatus::Unreachable {
-                match client.system_info().await {
-                    Ok(info) => Some(info),
-                    Err(e) => {
-                        tracing::debug!(
-                            host_id = %host.id,
-                            error = %e,
-                            "Health poller: failed to get system info (non-fatal)"
-                        );
-                        None
+    // Determine status, payload, agent version, optional system info, and CRL fields.
+    let (status, payload, agent_version, sys_info, crl_status, crl_age_seconds, crl_next_update) =
+        match AgentClient::new(
+            &host.ip_address,
+            host.agent_port as u16,
+            client_cert,
+            client_key,
+            ca_cert,
+        ) {
+            Err(e) => {
+                tracing::warn!(
+                    host_id = %host.id,
+                    error = %e,
+                    "Health poller: failed to build AgentClient"
+                );
+                (
+                    HostHealthStatus::Unreachable,
+                    serde_json::Value::Object(Default::default()),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+            },
+            Ok(client) => {
+                let (status, payload, version, crl_status, crl_age, crl_next) = match client
+                    .health()
+                    .await
+                {
+                    Ok(data) => {
+                        let payload = serde_json::to_value(&data).unwrap_or_default();
+                        let crl_status = data.crl_status.clone();
+                        let crl_age = data.crl_age_seconds;
+                        let crl_next = data.crl_next_update.clone();
+                        (
+                            HostHealthStatus::Healthy,
+                            payload,
+                            Some(data.version),
+                            crl_status,
+                            crl_age,
+                            crl_next,
+                        )
                     },
-                }
-            } else {
-                None
-            };
+                    Err(AgentClientError::Timeout) => {
+                        tracing::warn!(host_id = %host.id, "Health poller: agent timed out");
+                        (
+                            HostHealthStatus::Unreachable,
+                            serde_json::Value::Object(Default::default()),
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                    },
+                    Err(AgentClientError::Connect(_)) => {
+                        tracing::warn!(host_id = %host.id, "Health poller: agent connection refused");
+                        (
+                            HostHealthStatus::Unreachable,
+                            serde_json::Value::Object(Default::default()),
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                    },
+                    Err(e) => {
+                        tracing::warn!(host_id = %host.id, error = %e, "Health poller: agent error");
+                        (
+                            HostHealthStatus::Degraded,
+                            serde_json::Value::Object(Default::default()),
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                    },
+                };
 
-            (status, payload, version, sys_info)
-        },
-    };
+                // Try to fetch system info for OS/arch details (best-effort).
+                let sys_info = if status != HostHealthStatus::Unreachable {
+                    match client.system_info().await {
+                        Ok(info) => Some(info),
+                        Err(e) => {
+                            tracing::debug!(
+                                host_id = %host.id,
+                                error = %e,
+                                "Health poller: failed to get system info (non-fatal)"
+                            );
+                            None
+                        },
+                    }
+                } else {
+                    None
+                };
+
+                (
+                    status, payload, version, sys_info, crl_status, crl_age, crl_next,
+                )
+            },
+        };
 
     // Insert into host_health_data.
     if let Err(e) = sqlx::query(
@@ -220,7 +249,13 @@ async fn poll_host_health(
         .as_ref()
         .map(|i| format!("{} {}", i.os, i.os_version));
 
-    // Update hosts table with health status, agent version, and OS details.
+    // Parse CRL next_update from ISO-8601 string to DateTime if present.
+    let crl_next_update_dt: Option<chrono::DateTime<chrono::Utc>> = crl_next_update
+        .as_ref()
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.to_utc());
+
+    // Update hosts table with health status, agent version, OS details, and CRL fields.
     // COALESCE preserves existing values when new data is unavailable.
     if let Err(e) = sqlx::query(
         r#"
@@ -229,7 +264,10 @@ async fn poll_host_health(
             agent_version = COALESCE($3, agent_version),
             os_family = COALESCE($4, os_family),
             os_name = COALESCE($5, os_name),
-            arch = COALESCE($6, arch)
+            arch = COALESCE($6, arch),
+            crl_status = COALESCE($7, crl_status),
+            crl_age_seconds = COALESCE($8, crl_age_seconds),
+            crl_next_update = COALESCE($9, crl_next_update)
         WHERE id = $1
         "#,
     )
@@ -239,6 +277,9 @@ async fn poll_host_health(
     .bind(sys_info.as_ref().map(|i| i.os.as_str()))
     .bind(os_name_from_sysinfo)
     .bind(sys_info.as_ref().map(|i| i.architecture.as_str()))
+    .bind(&crl_status)
+    .bind(crl_age_seconds)
+    .bind(crl_next_update_dt)
     .execute(&pool)
     .await
     {

@@ -133,6 +133,7 @@ async fn list_hosts(
                    ELSE 'all_healthy'
                  END AS health_check_status,
                    h.registered_at
+                   h.crl_status
             FROM hosts h
             LEFT JOIN host_patch_data hpd ON hpd.host_id = h.id
             ORDER BY h.fqdn
@@ -166,6 +167,7 @@ async fn list_hosts(
                    ELSE 'all_healthy'
                  END AS health_check_status,
                    h.registered_at
+                   h.crl_status
             FROM hosts h
             LEFT JOIN host_patch_data hpd ON hpd.host_id = h.id
             WHERE
@@ -319,7 +321,8 @@ async fn get_host(
             SELECT id, fqdn, host(ip_address)::text AS ip_address, display_name,
                    os_family, os_name, arch, agent_version, health_status,
                    last_health_at, last_patch_at, agent_port, notes,
-                   registered_at, updated_at
+                   registered_at, updated_at,
+                   crl_status, crl_age_seconds, crl_next_update
             FROM hosts WHERE id = $1
         ) h
         "#,

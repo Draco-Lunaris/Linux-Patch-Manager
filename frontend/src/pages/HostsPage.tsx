@@ -5,7 +5,7 @@ import {
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   TablePagination, TextField, Toolbar, Tooltip, Typography,
 } from '@mui/material'
-import { Add as AddIcon, Refresh as RefreshIcon, Delete as DeleteIcon, CheckCircle as CheckCircleIcon, Cancel as CancelIcon, Remove as RemoveIcon, Pending as PendingIcon, GppMaybe as GppMaybeIcon, CheckCircleOutline as CheckCircleOutlineIcon, WarningAmber as WarningAmberIcon } from '@mui/icons-material'
+import { Add as AddIcon, Refresh as RefreshIcon, Delete as DeleteIcon, CheckCircle as CheckCircleIcon, Cancel as CancelIcon, Remove as RemoveIcon, Pending as PendingIcon, GppMaybe as GppMaybeIcon, CheckCircleOutline as CheckCircleOutlineIcon, WarningAmber as WarningAmberIcon, VerifiedUser as VerifiedUserIcon, Security as SecurityIcon } from '@mui/icons-material'
 import { useNavigate } from 'react-router-dom'
 import { apiClient, hostsApi, enrollmentApi } from '../api/client'
 import { useAuthStore } from '../store/authStore'
@@ -182,6 +182,7 @@ export default function HostsPage() {
                 <TableCell>OS</TableCell>
                 <TableCell>Health</TableCell>
                 <TableCell>Checks</TableCell>
+                <TableCell>CRL</TableCell>
                 <TableCell>Agent</TableCell>
                 {canWrite && <TableCell>Actions</TableCell>}
               </TableRow>
@@ -200,6 +201,7 @@ export default function HostsPage() {
                     <TableCell>{req.ip_address}</TableCell>
                     <TableCell>{(req.os_details['name'] as string) ?? 'Unknown'}</TableCell>
                     <TableCell><Chip size="small" label="pending" color="warning" /></TableCell>
+                    <TableCell></TableCell>
                     <TableCell></TableCell>
                     <TableCell>—</TableCell>
                     {canWrite && <TableCell onClick={e => e.stopPropagation()}>
@@ -238,6 +240,19 @@ export default function HostsPage() {
                         <Tooltip title="Some checks unhealthy"><CancelIcon color="error" fontSize="small" /></Tooltip>
                       ) : (
                         <Tooltip title="No checks configured"><RemoveIcon color="disabled" fontSize="small" /></Tooltip>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {h.crl_status === 'valid' ? (
+                        <Tooltip title="CRL valid"><VerifiedUserIcon color="success" fontSize="small" /></Tooltip>
+                      ) : h.crl_status === 'expired' ? (
+                        <Tooltip title="CRL expired"><WarningAmberIcon color="warning" fontSize="small" /></Tooltip>
+                      ) : h.crl_status === 'missing' ? (
+                        <Tooltip title="CRL missing"><WarningAmberIcon color="warning" fontSize="small" /></Tooltip>
+                      ) : h.crl_status === 'invalid' ? (
+                        <Tooltip title="CRL invalid — security event"><SecurityIcon color="error" fontSize="small" /></Tooltip>
+                      ) : (
+                        <Tooltip title="CRL status not available (agent version does not support CRL)"><RemoveIcon color="disabled" fontSize="small" /></Tooltip>
                       )}
                     </TableCell>
                     <TableCell>{h.agent_version ?? '—'}</TableCell>

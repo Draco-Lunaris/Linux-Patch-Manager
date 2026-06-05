@@ -94,6 +94,15 @@ pub struct Host {
     pub notes: String,
     pub registered_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// CRL status reported by the agent: valid, expired, missing, invalid, or NULL for older agents.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crl_status: Option<String>,
+    /// Seconds since the agent's CRL was last refreshed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crl_age_seconds: Option<i64>,
+    /// When the agent's CRL expires / next update is due.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crl_next_update: Option<DateTime<Utc>>,
 }
 
 /// Payload for registering a new host.
@@ -129,6 +138,9 @@ pub struct HostSummary {
     pub patches_missing: i32,
     pub health_check_status: Option<String>,
     pub registered_at: DateTime<Utc>,
+    /// CRL status reported by the agent: valid, expired, missing, invalid, or NULL for older agents.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crl_status: Option<String>,
 }
 
 // ============================================================
