@@ -27,6 +27,9 @@ export interface Host {
   patches_missing: number
   registered_at: string
   health_check_status?: 'all_healthy' | 'some_unhealthy' | 'none'
+  crl_status?: 'valid' | 'expired' | 'missing' | 'invalid'
+  crl_age_seconds?: number
+  crl_next_update?: string
 }
 
 export interface CreateHostRequest {
@@ -98,6 +101,11 @@ export interface FleetStatus {
   total_pending_patches: number
   hosts_requiring_reboot: number
   compliance_pct: number
+  crl_valid: number
+  crl_expired: number
+  crl_missing: number
+  crl_invalid: number
+  crl_not_reporting: number
 }
 
 export interface PatchInfo {

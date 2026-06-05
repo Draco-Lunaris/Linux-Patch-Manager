@@ -46,6 +46,9 @@ import {
   Schedule as ScheduleIcon,
   VpnKey as VpnKeyIcon,
   ContentCopy as CopyIcon,
+  VerifiedUser as VerifiedUserIcon,
+  Security as SecurityIcon,
+  WarningAmber as WarningAmberIcon,
 } from '@mui/icons-material'
 import { apiClient, hostsApi, maintenanceWindowsApi, healthChecksApi, certsApi } from '../api/client'
 import { useAuthStore } from '../store/authStore'
@@ -1033,6 +1036,53 @@ export default function HostDetailPage() {
             )}
           </>)}
         </Grid>
+      </Paper>
+
+      {/* ── CRL Status ─────────────────────────────────────────────────── */}
+      <Paper sx={{ p: 3, mb: 3 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+          <VerifiedUserIcon color="primary" />
+          <Typography variant="h6" fontWeight={600}>CRL Status</Typography>
+        </Box>
+        <Divider sx={{ mb: 2 }} />
+        {host?.crl_status === undefined || host?.crl_status === null ? (
+          <Alert severity="info">
+            CRL status not available (agent version does not support CRL)
+          </Alert>
+        ) : (
+          <Grid container spacing={2}>
+            <Grid size={{ xs: 12, sm: 4 }}>
+              <Typography variant="caption" color="text.secondary" display="block">Status</Typography>
+              {host.crl_status === 'valid' ? (
+                <Chip icon={<VerifiedUserIcon />} label="Valid" color="success" size="small" />
+              ) : host.crl_status === 'expired' ? (
+                <Chip icon={<WarningAmberIcon />} label="Expired" color="warning" size="small" />
+              ) : host.crl_status === 'missing' ? (
+                <Chip icon={<WarningAmberIcon />} label="Missing" color="warning" size="small" />
+              ) : host.crl_status === 'invalid' ? (
+                <Chip icon={<SecurityIcon />} label="Invalid" color="error" size="small" />
+              ) : (
+                <Typography variant="body2">{String(host.crl_status)}</Typography>
+              )}
+            </Grid>
+            <Grid size={{ xs: 12, sm: 4 }}>
+              <Typography variant="caption" color="text.secondary" display="block">CRL Age</Typography>
+              <Typography variant="body2">
+                {host.crl_age_seconds !== null
+                  ? (() => { const s = Number(host.crl_age_seconds); return s < 3600 ? `${Math.round(s / 60)} minutes ago` : s < 86400 ? `${Math.round(s / 3600)} hours ago` : `${Math.round(s / 86400)} days ago`; })()
+                  : '—'}
+              </Typography>
+            </Grid>
+            <Grid size={{ xs: 12, sm: 4 }}>
+              <Typography variant="caption" color="text.secondary" display="block">Next Update</Typography>
+              <Typography variant="body2">
+                {host.crl_next_update
+                  ? new Date(host.crl_next_update as string).toLocaleString()
+                  : '—'}
+              </Typography>
+            </Grid>
+          </Grid>
+        )}
       </Paper>
 
       {/* ── Maintenance Windows ──────────────────────────────────────────── */}

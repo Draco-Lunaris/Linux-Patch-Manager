@@ -57,6 +57,16 @@ pub struct HealthData {
     pub uptime_seconds: u64,
     /// Agent software version string.
     pub version: String,
+    /// CRL status reported by the agent: `"valid"`, `"expired"`, `"missing"`, `"invalid"`.
+    /// Absent for older agents that do not report CRL status.
+    #[serde(default)]
+    pub crl_status: Option<String>,
+    /// Seconds since the agent's CRL was last refreshed.
+    #[serde(default)]
+    pub crl_age_seconds: Option<i64>,
+    /// When the agent's CRL expires / next update is due (ISO-8601).
+    #[serde(default)]
+    pub crl_next_update: Option<String>,
 }
 
 // ============================================================

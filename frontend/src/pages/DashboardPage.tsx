@@ -22,6 +22,7 @@ import {
   RestartAlt,
   Refresh as RefreshIcon,
   Security as SecurityIcon,
+  VerifiedUser as VerifiedUserIcon,
 } from '@mui/icons-material'
 import { fleetApi, certsApi } from '../api/client'
 import type { FleetStatus } from '../types'
@@ -237,6 +238,57 @@ export default function DashboardPage() {
               </Card>
             </Grid>
           </Grid>
+
+          {/* ── Row 4: CRL Status ── */}
+          <Card variant="outlined" sx={{ mt: 3 }}>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                <VerifiedUserIcon color="primary" />
+                <Typography variant="subtitle1" fontWeight={600}>
+                  CRL Status
+                </Typography>
+              </Box>
+              <Grid container spacing={2}>
+                <Grid size={{ xs: 6, sm: 3 }}>
+                  <Box textAlign="center">
+                    <Typography variant="h5" fontWeight={700} sx={{ color: '#2e7d32' }}>
+                      {status.crl_valid}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">Valid</Typography>
+                  </Box>
+                </Grid>
+                <Grid size={{ xs: 6, sm: 3 }}>
+                  <Box textAlign="center">
+                    <Typography variant="h5" fontWeight={700} sx={{ color: '#ed6c02' }}>
+                      {status.crl_expired}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">Expired</Typography>
+                  </Box>
+                </Grid>
+                <Grid size={{ xs: 6, sm: 3 }}>
+                  <Box textAlign="center">
+                    <Typography variant="h5" fontWeight={700} sx={{ color: '#ed6c02' }}>
+                      {status.crl_missing}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">Missing</Typography>
+                  </Box>
+                </Grid>
+                <Grid size={{ xs: 6, sm: 3 }}>
+                  <Box textAlign="center">
+                    <Typography variant="h5" fontWeight={700} sx={{ color: '#d32f2f' }}>
+                      {status.crl_invalid}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">Invalid</Typography>
+                  </Box>
+                </Grid>
+              </Grid>
+              {status.crl_not_reporting > 0 && (
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                  {status.crl_not_reporting} host{status.crl_not_reporting !== 1 ? 's' : ''} not reporting CRL status
+                </Typography>
+              )}
+            </CardContent>
+          </Card>
         </Box>
       )}
     </Container>

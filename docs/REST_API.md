@@ -141,6 +141,26 @@ Each job summary object includes:
 | GET | `/reports/vulnerability` | Generate vulnerability exposure report |
 | GET | `/reports/audit` | Generate audit trail report |
 
+### CRL Status Fields
+
+Host list and detail responses include CRL (Certificate Revocation List) status fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `crl_status` | `string?` | CRL status: `valid`, `expired`, `missing`, `invalid`, or `null` (older agents) |
+| `crl_age_seconds` | `integer?` | Seconds since the agent's CRL was last refreshed |
+| `crl_next_update` | `datetime?` | When the agent's CRL expires (ISO-8601) |
+
+Fleet status response includes CRL counts:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `crl_valid` | `integer` | Hosts with CRL status `valid` |
+| `crl_expired` | `integer` | Hosts with CRL status `expired` |
+| `crl_missing` | `integer` | Hosts with CRL status `missing` |
+| `crl_invalid` | `integer` | Hosts with CRL status `invalid` (security event) |
+| `crl_not_reporting` | `integer` | Hosts not reporting CRL status (older agents) |
+
 ## 14. Real-Time Updates (WebSocket)
 | Method | Endpoint | Description |
 |--------|----------|-------------|

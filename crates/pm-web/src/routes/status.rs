@@ -24,6 +24,16 @@ pub struct FleetStatus {
     pub total_pending_patches: i64,
     pub hosts_requiring_reboot: i64,
     pub compliance_pct: f64,
+    /// Hosts with CRL status 'valid'.
+    pub crl_valid: i64,
+    /// Hosts with CRL status 'expired'.
+    pub crl_expired: i64,
+    /// Hosts with CRL status 'missing' (agent reports missing CRL).
+    pub crl_missing: i64,
+    /// Hosts with CRL status 'invalid' (security event — needs immediate attention).
+    pub crl_invalid: i64,
+    /// Hosts not reporting CRL status (older agents or no data yet).
+    pub crl_not_reporting: i64,
 }
 
 // ── GET /api/v1/status/fleet ──────────────────────────────────────────────────
@@ -132,6 +142,34 @@ pub async fn fleet_status(
     // Round to one decimal place.
     let compliance_pct = (compliance_pct * 10.0).round() / 10.0;
 
+    // ── 5. CRL status counts ────────────────────────────────────────────────
+    let (crl_valid, crl_expired, crl_missing, crl_invalid, crl_not_reporting): (
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+    ) = sqlx::query_as(
+        r#"
+            SELECT
+                COALESCE(SUM(CASE WHEN crl_status = 'valid' THEN 1 END), 0),
+                COALESCE(SUM(CASE WHEN crl_status = 'expired' THEN 1 END), 0),
+                COALESCE(SUM(CASE WHEN crl_status = 'missing' THEN 1 END), 0),
+                COALESCE(SUM(CASE WHEN crl_status = 'invalid' THEN 1 END), 0),
+                COALESCE(SUM(CASE WHEN crl_status IS NULL THEN 1 END), 0)
+            FROM hosts
+            "#,
+    )
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, "fleet_status: failed to query CRL status counts");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+        )
+    })?;
+
     Ok(Json(FleetStatus {
         total_hosts,
         healthy,
@@ -141,5 +179,10 @@ pub async fn fleet_status(
         total_pending_patches,
         hosts_requiring_reboot,
         compliance_pct,
+        crl_valid,
+        crl_expired,
+        crl_missing,
+        crl_invalid,
+        crl_not_reporting,
     }))
 }
