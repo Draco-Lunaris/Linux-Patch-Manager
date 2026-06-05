@@ -322,6 +322,8 @@ pub fn build_router(state: AppState) -> Router {
         .nest("/api/v1/auth", auth_public_router)
         // Public enrollment endpoints (rate-limited, no JWT)
         .nest("/api/v1", enrollment_router)
+        // Public PKI endpoints (CRL distribution, no JWT — CRLs are self-authenticating)
+        .nest("/api/v1", routes::pki::router())
         // Public SSO routes (rate-limited, no JWT)
         .nest("/api/v1/auth/sso", sso_public_router)
         // Public Azure SSO routes (rate-limited, no JWT)
