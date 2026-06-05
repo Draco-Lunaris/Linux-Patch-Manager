@@ -59,3 +59,204 @@ async fn get_crl(State(state): State<AppState>) -> impl IntoResponse {
         },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use axum::Router;
+    use dashmap::DashMap;
+    use pm_auth::rbac::AuthConfig;
+    use pm_core::config::AppConfig;
+    use sqlx::PgPool;
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+    use tower::ServiceExt;
+
+    /// Helper: create a test AppState with a real CA and database pool.
+    /// Returns None if TEST_DATABASE_URL is not set (tests are skipped).
+    async fn setup_app_state() -> Option<(PgPool, AppState)> {
+        let db_url = std::env::var("TEST_DATABASE_URL").ok()?;
+        let pool = PgPool::connect(&db_url).await.ok()?;
+
+        // Run migrations to ensure schema is up to date.
+        sqlx::migrate!("../../migrations").run(&pool).await.ok()?;
+
+        // Create a temp directory for the CA.
+        let tmp_dir = tempfile::tempdir().ok()?;
+        let ca_dir = tmp_dir.path().to_path_buf();
+
+        let ca = pm_ca::CertAuthority::init(&ca_dir, &pool).await.ok()?;
+
+        let config = Arc::new(AppConfig::default());
+
+        use crate::routes::sso::OidcCache;
+
+        let state = AppState {
+            db: pool.clone(),
+            config,
+            signing_key_pem: String::new(),
+            auth_config: Arc::new(AuthConfig::new(String::new(), &[], &[])),
+            ws_tickets: Arc::new(DashMap::new()),
+            sso_sessions: Arc::new(DashMap::new()),
+            sso_handoffs: Arc::new(DashMap::new()),
+            oidc_cache: Arc::new(Mutex::new(OidcCache::default())),
+            ca: Arc::new(ca),
+            approved_enrollments: Arc::new(DashMap::new()),
+        };
+
+        Some((pool, state))
+    }
+
+    /// Build an Axum app with just the PKI routes for testing.
+    fn test_app(state: AppState) -> Router {
+        Router::new().nest("/api/v1", router()).with_state(state)
+    }
+
+    #[tokio::test]
+    async fn crl_endpoint_returns_200_with_valid_pem() {
+        let Some((pool, state)) = setup_app_state().await else {
+            eprintln!("skipping: TEST_DATABASE_URL not set");
+            return;
+        };
+
+        let app = test_app(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/pki/crl.pem")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "CRL endpoint should return 200 OK"
+        );
+
+        let body = axum::body::to_bytes(response.into_body(), 10_000)
+            .await
+            .expect("body should be readable");
+
+        let body_str = String::from_utf8(body.to_vec()).expect("body should be UTF-8");
+
+        assert!(
+            body_str.contains("-----BEGIN X509 CRL-----"),
+            "Response should contain CRL PEM header"
+        );
+        assert!(
+            body_str.contains("-----END X509 CRL-----"),
+            "Response should contain CRL PEM footer"
+        );
+
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn crl_endpoint_returns_cache_control_header() {
+        let Some((pool, state)) = setup_app_state().await else {
+            eprintln!("skipping: TEST_DATABASE_URL not set");
+            return;
+        };
+
+        let app = test_app(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/pki/crl.pem")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let cache_control = response
+            .headers()
+            .get("cache-control")
+            .expect("Cache-Control header should be present");
+
+        assert_eq!(
+            cache_control.to_str().unwrap(),
+            "max-age=3600",
+            "Cache-Control should be max-age=3600"
+        );
+
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn crl_endpoint_works_without_authentication() {
+        let Some((pool, state)) = setup_app_state().await else {
+            eprintln!("skipping: TEST_DATABASE_URL not set");
+            return;
+        };
+
+        let app = test_app(state);
+
+        // Make request without any auth headers — CRL endpoint is public.
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/pki/crl.pem")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should succeed");
+
+        // Should return 200, not 401 Unauthorized.
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "CRL endpoint should be accessible without authentication"
+        );
+
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn crl_endpoint_returns_pem_content_type() {
+        let Some((pool, state)) = setup_app_state().await else {
+            eprintln!("skipping: TEST_DATABASE_URL not set");
+            return;
+        };
+
+        let app = test_app(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/pki/crl.pem")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .expect("Content-Type header should be present");
+
+        assert!(
+            content_type
+                .to_str()
+                .unwrap()
+                .contains("application/x-pem-file"),
+            "Content-Type should be application/x-pem-file, got: {:?}",
+            content_type
+        );
+
+        pool.close().await;
+    }
+}

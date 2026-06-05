@@ -456,3 +456,220 @@ async fn log_crl_audit_events(
         _ => {},
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests — CRL health aggregation rules
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests_crl_health {
+    use super::*;
+    use chrono::{Duration, Utc};
+
+    /// Helper: create a DateTime that is `hours` hours in the past.
+    fn hours_ago(h: i64) -> DateTime<Utc> {
+        Utc::now() - Duration::hours(h)
+    }
+
+    // ---- crl_status = "invalid" → Unreachable (always overrides) ----
+
+    #[test]
+    fn crl_invalid_overrides_healthy_to_unreachable() {
+        let result = apply_crl_health_rules(
+            &HostHealthStatus::Healthy,
+            &Some("invalid".to_string()),
+            hours_ago(0),
+        );
+        assert_eq!(result, HostHealthStatus::Unreachable);
+    }
+
+    #[test]
+    fn crl_invalid_overrides_degraded_to_unreachable() {
+        let result = apply_crl_health_rules(
+            &HostHealthStatus::Degraded,
+            &Some("invalid".to_string()),
+            hours_ago(0),
+        );
+        assert_eq!(result, HostHealthStatus::Unreachable);
+    }
+
+    #[test]
+    fn crl_invalid_overrides_unreachable_stays_unreachable() {
+        let result = apply_crl_health_rules(
+            &HostHealthStatus::Unreachable,
+            &Some("invalid".to_string()),
+            hours_ago(0),
+        );
+        assert_eq!(result, HostHealthStatus::Unreachable);
+    }
+
+    // ---- crl_status = "expired" → Degraded (only if currently Healthy) ----
+
+    #[test]
+    fn crl_expired_downgrades_healthy_to_degraded() {
+        let result = apply_crl_health_rules(
+            &HostHealthStatus::Healthy,
+            &Some("expired".to_string()),
+            hours_ago(0),
+        );
+        assert_eq!(result, HostHealthStatus::Degraded);
+    }
+
+    #[test]
+    fn crl_expired_does_not_override_degraded() {
+        let result = apply_crl_health_rules(
+            &HostHealthStatus::Degraded,
+            &Some("expired".to_string()),
+            hours_ago(0),
+        );
+        assert_eq!(result, HostHealthStatus::Degraded);
+    }
+
+    #[test]
+    fn crl_expired_does_not_downgrade_unreachable() {
+        let result = apply_crl_health_rules(
+            &HostHealthStatus::Unreachable,
+            &Some("expired".to_string()),
+            hours_ago(0),
+        );
+        assert_eq!(result, HostHealthStatus::Unreachable);
+    }
+
+    // ---- crl_status = "missing" AND registered > 24h → Degraded (if Healthy) ----
+
+    #[test]
+    fn crl_missing_old_registration_downgrades_healthy() {
+        let result = apply_crl_health_rules(
+            &HostHealthStatus::Healthy,
+            &Some("missing".to_string()),
+            hours_ago(25),
+        );
+        assert_eq!(result, HostHealthStatus::Degraded);
+    }
+
+    #[test]
+    fn crl_missing_recent_registration_no_override() {
+        let result = apply_crl_health_rules(
+            &HostHealthStatus::Healthy,
+            &Some("missing".to_string()),
+            hours_ago(12),
+        );
+        assert_eq!(result, HostHealthStatus::Healthy);
+    }
+
+    #[test]
+    fn crl_missing_does_not_override_degraded() {
+        let result = apply_crl_health_rules(
+            &HostHealthStatus::Degraded,
+            &Some("missing".to_string()),
+            hours_ago(25),
+        );
+        assert_eq!(result, HostHealthStatus::Degraded);
+    }
+
+    #[test]
+    fn crl_missing_does_not_override_unreachable() {
+        let result = apply_crl_health_rules(
+            &HostHealthStatus::Unreachable,
+            &Some("missing".to_string()),
+            hours_ago(25),
+        );
+        assert_eq!(result, HostHealthStatus::Unreachable);
+    }
+
+    // ---- crl_status = "valid" → no override ----
+
+    #[test]
+    fn crl_valid_does_not_override_healthy() {
+        let result = apply_crl_health_rules(
+            &HostHealthStatus::Healthy,
+            &Some("valid".to_string()),
+            hours_ago(0),
+        );
+        assert_eq!(result, HostHealthStatus::Healthy);
+    }
+
+    #[test]
+    fn crl_valid_preserves_degraded() {
+        let result = apply_crl_health_rules(
+            &HostHealthStatus::Degraded,
+            &Some("valid".to_string()),
+            hours_ago(0),
+        );
+        assert_eq!(result, HostHealthStatus::Degraded);
+    }
+
+    #[test]
+    fn crl_valid_preserves_unreachable() {
+        let result = apply_crl_health_rules(
+            &HostHealthStatus::Unreachable,
+            &Some("valid".to_string()),
+            hours_ago(0),
+        );
+        assert_eq!(result, HostHealthStatus::Unreachable);
+    }
+
+    // ---- NULL crl_status → no override (backward compat) ----
+
+    #[test]
+    fn null_crl_status_preserves_healthy() {
+        let result = apply_crl_health_rules(&HostHealthStatus::Healthy, &None, hours_ago(0));
+        assert_eq!(result, HostHealthStatus::Healthy);
+    }
+
+    #[test]
+    fn null_crl_status_preserves_degraded() {
+        let result = apply_crl_health_rules(&HostHealthStatus::Degraded, &None, hours_ago(0));
+        assert_eq!(result, HostHealthStatus::Degraded);
+    }
+
+    #[test]
+    fn null_crl_status_preserves_unreachable() {
+        let result = apply_crl_health_rules(&HostHealthStatus::Unreachable, &None, hours_ago(0));
+        assert_eq!(result, HostHealthStatus::Unreachable);
+    }
+
+    // ---- Edge cases ----
+
+    #[test]
+    fn crl_missing_just_under_24h_no_override() {
+        // 23h 59m old — should NOT trigger degraded (threshold is > 24h)
+        let result = apply_crl_health_rules(
+            &HostHealthStatus::Healthy,
+            &Some("missing".to_string()),
+            Utc::now() - Duration::hours(23) - Duration::minutes(59),
+        );
+        assert_eq!(result, HostHealthStatus::Healthy);
+    }
+
+    #[test]
+    fn crl_missing_just_over_24h_triggers_degraded() {
+        // 24h + 1 minute old — should trigger degraded
+        let result = apply_crl_health_rules(
+            &HostHealthStatus::Healthy,
+            &Some("missing".to_string()),
+            Utc::now() - Duration::hours(24) - Duration::minutes(1),
+        );
+        assert_eq!(result, HostHealthStatus::Degraded);
+    }
+
+    #[test]
+    fn crl_pending_status_preserved_with_valid_crl() {
+        let result = apply_crl_health_rules(
+            &HostHealthStatus::Pending,
+            &Some("valid".to_string()),
+            hours_ago(0),
+        );
+        assert_eq!(result, HostHealthStatus::Pending);
+    }
+
+    #[test]
+    fn crl_invalid_overrides_pending_to_unreachable() {
+        let result = apply_crl_health_rules(
+            &HostHealthStatus::Pending,
+            &Some("invalid".to_string()),
+            hours_ago(0),
+        );
+        assert_eq!(result, HostHealthStatus::Unreachable);
+    }
+}
