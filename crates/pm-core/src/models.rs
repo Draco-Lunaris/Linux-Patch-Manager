@@ -175,9 +175,33 @@ pub enum EnrollmentStatusResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PkiBundle {
+    /// PEM-encoded CA certificate (leaf-most cert in the chain).
+    /// For root mode, this is the self-signed root CA.
+    /// For sub-CA mode, this is the intermediate CA cert.
     pub ca_crt: String,
+    /// PEM-encoded full CA certificate chain (concatenated intermediates + root).
+    /// For root mode, this contains just the root CA cert (same as ca_crt).
+    /// For sub-CA mode, this contains the intermediate cert followed by the
+    /// external root cert, enabling the agent to verify the full chain up to
+    /// the trust anchor.
+    ///
+    /// This field was added for CRL support (issue #7): the agent needs the
+    /// full chain to verify CRL signatures that chain up to the root CA.
+    #[serde(default)]
+    pub ca_chain: String,
+    /// PEM-encoded agent server certificate.
     pub server_crt: String,
+    /// PEM-encoded agent server private key (PKCS#8).
     pub server_key: String,
+    /// PEM-encoded Certificate Revocation List (CRL) signed by the CA.
+    /// The agent uses this to reject revoked client certificates during mTLS
+    /// handshakes. If CRL generation fails during enrollment, this field will
+    /// be an empty string and the agent should fall back to WebPKI-only
+    /// verification (degraded mode).
+    ///
+    /// Added for CRL support (issue #7).
+    #[serde(default)]
+    pub crl_pem: String,
 }
 
 /// Time-to-live for approved enrollment PKI bundles (10 minutes).

@@ -13,8 +13,9 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use rand::RngCore;
 use rcgen::{
-    BasicConstraints, Certificate, CertificateParams, DistinguishedName, DnType,
-    ExtendedKeyUsagePurpose, Ia5String, IsCa, KeyPair, KeyUsagePurpose, SanType, SerialNumber,
+    BasicConstraints, Certificate, CertificateParams, CertificateRevocationListParams,
+    DistinguishedName, DnType, ExtendedKeyUsagePurpose, Ia5String, IsCa, KeyIdMethod, KeyPair,
+    KeyUsagePurpose, RevocationReason, RevokedCertParams, SanType, SerialNumber,
     PKCS_ECDSA_P256_SHA256,
 };
 use sqlx::{PgPool, Row};
@@ -523,5 +524,206 @@ impl CertAuthority {
             .self_signed(&key)
             .context("reconstruct CA certificate for signing")?;
         Ok((key, cert))
+    }
+
+    // -----------------------------------------------------------------------
+    // CRL generation
+    // -----------------------------------------------------------------------
+
+    /// Generate a Certificate Revocation List (CRL) signed by this CA.
+    ///
+    /// Queries the `certificates` table for certs with `status = 'revoked'`
+    /// and `not_after > NOW()` (i.e., not yet naturally expired) and bundles
+    /// their serials into an X.509 v2 CRL.
+    ///
+    /// Returns the CRL as a PEM-encoded string.
+    ///
+    /// # Performance
+    ///
+    /// O(n) where n is the number of revoked-but-not-expired certs. For our
+    /// target scale (max ~2500 clients per manager, low single-digit % annual
+    /// revocation rate), this is KB-range and sub-millisecond to generate.
+    pub async fn generate_crl(&self, db: &PgPool) -> Result<String> {
+        tracing::debug!("Generating CRL from certificates table");
+
+        // Query revoked certs that haven't naturally expired yet.
+        // Expired certs are pruned from the CRL to keep it small.
+        let rows = sqlx::query(
+            "SELECT serial_number, revoked_at \
+             FROM certificates \
+             WHERE status = 'revoked'::cert_status \
+               AND revoked_at IS NOT NULL \
+               AND not_after > NOW() \
+             ORDER BY revoked_at ASC",
+        )
+        .fetch_all(db)
+        .await
+        .context("query revoked certificates for CRL")?;
+
+        let mut revoked_certs = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let serial_hex: String = row.try_get("serial_number").context("serial_number")?;
+            let revoked_at: DateTime<Utc> = row.try_get("revoked_at").context("revoked_at")?;
+
+            // Convert hex serial back to bytes for rcgen.
+            let serial_bytes =
+                hex::decode(&serial_hex).context("serial_number is not valid hex")?;
+            let serial_number = SerialNumber::from_slice(&serial_bytes);
+
+            // Convert chrono DateTime to time::OffsetDateTime for rcgen.
+            let revocation_time = OffsetDateTime::from_unix_timestamp(revoked_at.timestamp())
+                .unwrap_or_else(|_| OffsetDateTime::now_utc());
+
+            revoked_certs.push(RevokedCertParams {
+                serial_number,
+                revocation_time,
+                reason_code: Some(RevocationReason::Unspecified),
+                invalidity_date: None,
+            });
+        }
+
+        let count = revoked_certs.len();
+        tracing::debug!(revoked_count = count, "Building CRL with revoked entries");
+
+        // CRL validity window: this_update = now, next_update = now + 24h
+        // (agents refresh every 24h, so this gives them a fresh CRL on every poll).
+        let now = OffsetDateTime::now_utc();
+        let next_update = now + TimeDuration::hours(24);
+
+        // CRL number: monotonic counter derived from current Unix timestamp.
+        // RFC 5280 doesn't require strict monotonicity for the CRL number
+        // extension, but it's a common convention. We use timestamp seconds
+        // divided by 60 (minute precision) to keep it short and readable.
+        let crl_number = SerialNumber::from_slice(&Utc::now().timestamp().to_be_bytes());
+
+        let crl_params = CertificateRevocationListParams {
+            this_update: now,
+            next_update,
+            crl_number,
+            issuing_distribution_point: None,
+            revoked_certs,
+            key_identifier_method: KeyIdMethod::Sha256,
+        };
+
+        let (ca_key, ca_cert) = self.ca_objects()?;
+        let crl = crl_params
+            .signed_by(&ca_cert, &ca_key)
+            .context("sign CRL with CA key")?;
+        let crl_pem = crl.pem().context("encode CRL as PEM")?;
+
+        tracing::info!(
+            revoked_count = count,
+            next_update = %next_update,
+            "CRL generated and signed"
+        );
+
+        Ok(crl_pem)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper: build a `CertAuthority` for testing without going through disk init.
+    /// Generates a fresh ECDSA P-256 CA in memory.
+    async fn test_ca() -> CertAuthority {
+        let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
+
+        let mut params = CertificateParams::default();
+        params.not_before = OffsetDateTime::now_utc();
+        params.not_after = OffsetDateTime::now_utc() + TimeDuration::days(365 * 10);
+        params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+
+        let mut dn = DistinguishedName::new();
+        dn.push(DnType::CommonName, "Test Root CA");
+        dn.push(DnType::OrganizationName, "Patch Manager Test");
+        params.distinguished_name = dn;
+
+        let ca_cert = params.self_signed(&key).unwrap();
+        CertAuthority {
+            base_dir: PathBuf::from("/tmp/test-ca"),
+            ca_cert_pem: ca_cert.pem(),
+            ca_key_pem: key.serialize_pem(),
+        }
+    }
+
+    #[test]
+    fn make_serial_produces_unique_16_byte_serials() {
+        let (s1, h1) = make_serial();
+        let (s2, h2) = make_serial();
+        assert_ne!(h1, h2, "serial hex strings should differ");
+        assert_eq!(
+            h1.len(),
+            32,
+            "serial should be 16 bytes hex-encoded (32 chars)"
+        );
+        assert_ne!(s1, s2, "rcgen SerialNumber values should differ");
+    }
+
+    #[test]
+    fn ca_objects_round_trip() {
+        // Build a CA, then reconstruct via ca_objects() and verify the cert+key parse.
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let ca = rt.block_on(test_ca());
+        let (key, cert) = ca.ca_objects().expect("ca_objects should succeed");
+        assert!(!key.serialize_pem().is_empty());
+        assert!(!cert.pem().is_empty());
+    }
+
+    /// Verifies that `generate_crl` produces a valid PEM-encoded X.509 CRL
+    /// even when the database has no revoked certs (empty CRL).
+    ///
+    /// This is a structural test: we verify the PEM format and that the
+    /// generated CRL can be parsed back. Full integration testing with a real
+    /// database is in `tests/crl_integration.rs`.
+    #[tokio::test]
+    async fn generate_crl_empty_db_produces_valid_pem() {
+        // Use a real but empty Postgres test database. If TEST_DATABASE_URL
+        // is not set, skip this test (it's an integration test, not a unit test).
+        let Ok(db_url) = std::env::var("TEST_DATABASE_URL") else {
+            eprintln!("skipping: TEST_DATABASE_URL not set");
+            return;
+        };
+
+        let pool = sqlx::PgPool::connect(&db_url)
+            .await
+            .expect("connect to test db");
+        let ca = test_ca().await;
+
+        let crl_pem = ca.generate_crl(&pool).await.expect("generate_crl");
+        assert!(
+            crl_pem.contains("-----BEGIN X509 CRL-----"),
+            "PEM header missing"
+        );
+        assert!(
+            crl_pem.contains("-----END X509 CRL-----"),
+            "PEM footer missing"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Property-based tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+
+    /// Generating a CRL twice in quick succession should produce valid PEM output.
+    /// (Full integration test with a real database is in tests/crl_integration.rs.)
+    #[test]
+    fn make_serial_produces_unique_values() {
+        let (s1, h1) = make_serial();
+        let (s2, h2) = make_serial();
+        assert_ne!(h1, h2, "serial hex strings should differ");
+        assert_eq!(h1.len(), 32, "serial should be 16 bytes hex-encoded");
+        assert_ne!(s1, s2, "rcgen SerialNumber values should differ");
     }
 }

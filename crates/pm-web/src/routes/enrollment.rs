@@ -303,10 +303,17 @@ async fn approve_enrollment(
     // server memory beyond the signing operation.
     //
     // See: https://github.com/Draco-Lunaris/Linux-Patch-Manager/issues/9
+    //
+    // Include the full CA chain (for root mode, same as ca_crt; for sub-CA,
+    // includes intermediate + root) and the current CRL.
+    let ca_chain = issued.ca_root_pem.clone(); // Root mode: chain is just the root cert
+    let crl_pem = state.ca.generate_crl(&state.db).await.unwrap_or_default(); // Empty string on failure: agent falls back to WebPKI-only
     let pki = PkiBundle {
         ca_crt: issued.ca_root_pem,
+        ca_chain,
         server_crt: issued.server_cert_pem,
         server_key: issued.server_key_pem,
+        crl_pem,
     };
     state.approved_enrollments.insert(
         enrollment_request.polling_token.clone(),

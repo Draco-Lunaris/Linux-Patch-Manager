@@ -23,3 +23,6 @@ rustls     = { workspace = true }
 rcgen      = { workspace = true }
 pem        = { workspace = true }
 time       = { workspace = true }
+
+[dev-dependencies]
+proptest   = { workspace = true }
