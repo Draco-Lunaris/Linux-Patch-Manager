@@ -1068,7 +1068,7 @@ export default function HostDetailPage() {
             <Grid size={{ xs: 12, sm: 4 }}>
               <Typography variant="caption" color="text.secondary" display="block">CRL Age</Typography>
               <Typography variant="body2">
-                {host.crl_age_seconds != null
+                {host.crl_age_seconds !== null
                   ? (() => { const s = Number(host.crl_age_seconds); return s < 3600 ? `${Math.round(s / 60)} minutes ago` : s < 86400 ? `${Math.round(s / 3600)} hours ago` : `${Math.round(s / 86400)} days ago`; })()
                   : '—'}
               </Typography>
