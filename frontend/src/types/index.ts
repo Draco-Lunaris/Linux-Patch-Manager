@@ -144,6 +144,7 @@ export interface PatchJobSummary {
   status: JobStatus
   immediate: boolean
   host_count: number
+  host_names: string[]
   succeeded_count: number
   failed_count: number
   notes: string

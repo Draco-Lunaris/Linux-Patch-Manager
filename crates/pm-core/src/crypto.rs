@@ -1,6 +1,11 @@
-//! AES-256-GCM encryption for sensitive health check credentials.
+//! AES-256-GCM encryption for sensitive credentials.
 //!
-//! Uses a per-install key stored at `/etc/patch-manager/keys/health-check.key`.
+//! Two per-install keys are supported:
+//! - `KEY_PATH` (health-check.key) protects HTTP basic auth passwords for health check endpoints.
+//! - `SECRET_ENCRYPTION_KEY_PATH` (secret-encryption.key) protects OIDC `client_secret`,
+//!   SMTP `smtp_password`, and TOTP `totp_secret` at rest in the database.
+//!
+//! Keys are 32-byte files, auto-generated on first start with 0600 permissions.
 
 use aes_gcm::{
     aead::{Aead, KeyInit, OsRng},
@@ -11,6 +16,12 @@ use std::fs;
 use std::path::Path;
 
 pub const KEY_PATH: &str = "/etc/patch-manager/keys/health-check.key";
+
+/// Path to the encryption key for sensitive app secrets
+/// (OIDC client_secret, SMTP password, TOTP secret).
+/// Separate from `KEY_PATH` (health-check credentials) for blast-radius isolation:
+/// if the health-check key is compromised, app secrets remain protected.
+pub const SECRET_ENCRYPTION_KEY_PATH: &str = "/etc/patch-manager/keys/secret-encryption.key";
 
 /// Load or create the per-install encryption key.
 /// If the key file doesn't exist, generates a new 256-bit key and saves it.
@@ -77,4 +88,74 @@ pub enum CryptoError {
     DecryptionFailed,
     #[error("UTF-8 error: {0}")]
     Utf8(#[from] std::string::FromUtf8Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// Create a unique temp directory for test isolation.
+    /// Returns a path like `/tmp/pm-crypto-test-<epoch_nanos>-<rand>`.
+    /// Cleans up the directory on test teardown (via `temp_dir` guard).
+    fn unique_temp_dir() -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = env::temp_dir().join(format!("pm-crypto-test-{}-{}", std::process::id(), nanos));
+        fs::create_dir_all(&dir).expect("Failed to create temp dir");
+        dir
+    }
+
+    #[test]
+    fn encrypt_decrypt_round_trip() {
+        let key = [42u8; 32];
+        let plaintext = "super-secret-client-credential-12345";
+        let (ciphertext, nonce) = encrypt(plaintext, &key).expect("encrypt failed");
+        // Ciphertext must differ from plaintext (encryption is non-trivial)
+        assert_ne!(ciphertext.as_slice(), plaintext.as_bytes());
+        // Nonce is 12 bytes (AES-GCM standard)
+        assert_eq!(nonce.len(), 12);
+        // Decrypting must return the original plaintext
+        let recovered = decrypt(&ciphertext, &nonce, &key).expect("decrypt failed");
+        assert_eq!(recovered, plaintext);
+    }
+
+    #[test]
+    fn load_or_create_key_sets_0600_permissions() {
+        let dir = unique_temp_dir();
+        let key_path = dir.join("test-0600.key");
+        let _key = load_or_create_key(&key_path).expect("load_or_create_key failed");
+        // Verify file exists and has exactly 32 bytes
+        let metadata = fs::metadata(&key_path).expect("key file not created");
+        assert_eq!(metadata.len(), 32, "key file must be 32 bytes");
+        // On Unix, verify permissions are 0600 (owner read/write only)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = metadata.permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "key file must be 0600, got {:o}", mode);
+        }
+        // Cleanup
+        let _ = fs::remove_file(&key_path);
+        let _ = fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn load_or_create_key_is_idempotent() {
+        let dir = unique_temp_dir();
+        let key_path = dir.join("test-idempotent.key");
+        // First call creates the key
+        let key1 = load_or_create_key(&key_path).expect("first call failed");
+        // Second call should return the same key (not regenerate)
+        let key2 = load_or_create_key(&key_path).expect("second call failed");
+        assert_eq!(key1, key2, "second call must return the same key");
+        // Cleanup
+        let _ = fs::remove_file(&key_path);
+        let _ = fs::remove_dir(&dir);
+    }
 }

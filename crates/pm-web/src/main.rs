@@ -2,17 +2,21 @@
 
 mod routes;
 
+mod secret_key;
+
 use axum::{extract::State, http::StatusCode, middleware, response::Json, routing::get, Router};
 use axum_server::tls_rustls::RustlsConfig;
 use dashmap::DashMap;
 use pm_auth::{
     jwt,
+    password::hash_password,
     rbac::{require_auth, AuthConfig},
 };
 use pm_core::{
-    config::AppConfig, db, logging, models::PkiBundle, request_id::request_id_middleware,
+    config::AppConfig, db, logging, models::ApprovedEntry, request_id::request_id_middleware,
 };
-use routes::sso::{OidcCache, SsoSession};
+use rand::Rng;
+use routes::sso::{OidcCache, SsoHandoff, SsoSession};
 use routes::ws::WsTicket;
 use serde_json::{json, Value};
 use std::{net::SocketAddr, sync::Arc, time::Duration};
@@ -25,6 +29,93 @@ use tower_http::{
     trace::TraceLayer,
 };
 
+/// Placeholder Argon2id hash prefix used in the seed admin migration (issue #8).
+/// Detecting this prefix means the admin password has not been bootstrapped yet.
+const ADMIN_PLACEHOLDER_HASH_PREFIX: &str = "$argon2id$v=19$m=65536,t=3,p=1$AAAAAAAAAAAAAAAA";
+
+/// Bootstrap the default admin account with a random password.
+///
+/// On first startup after a fresh install, the `users` table contains the seed
+/// admin row with a clearly-invalid placeholder hash (cannot validate any password).
+/// This function detects that placeholder, generates a cryptographically random
+/// 24-character password, hashes it with Argon2id, and UPDATEs the admin row.
+///
+/// The plaintext password is printed **once** to stderr (visible in `systemctl status`
+/// or `journalctl`) and is never stored on disk.
+///
+/// If the admin row already has a real hash, this function is a no-op.
+async fn bootstrap_admin_password(pool: &sqlx::PgPool) {
+    // Check if the admin account still has the placeholder hash.
+    let result: Option<String> = sqlx::query_scalar(
+        "SELECT password_hash FROM users WHERE username = 'admin' AND auth_provider = 'local'",
+    )
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None);
+
+    let current_hash = match result {
+        Some(h) => h,
+        None => return, // No admin row — nothing to bootstrap.
+    };
+
+    if !current_hash.starts_with(ADMIN_PLACEHOLDER_HASH_PREFIX) {
+        // Admin already has a real password — nothing to do.
+        return;
+    }
+
+    // Generate a 24-character random alphanumeric password.
+    let password: String = rand::thread_rng()
+        .sample_iter(&rand::distributions::Alphanumeric)
+        .take(24)
+        .map(char::from)
+        .collect();
+
+    // Hash it with the application's Argon2id parameters.
+    let new_hash = match hash_password(&password) {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to hash bootstrap admin password");
+            return;
+        },
+    };
+
+    // Replace the placeholder hash with the real one.
+    // The WHERE clause matches the placeholder prefix to ensure idempotency.
+    let rows = sqlx::query(
+        r#"UPDATE users
+            SET password_hash = $1
+            WHERE username = 'admin'
+              AND auth_provider = 'local'
+              AND password_hash LIKE '$argon2id$v=19$m=65536,t=3,p=1$AAAAAAAAAAAAAAAA%'"#,
+    )
+    .bind(&new_hash)
+    .execute(pool)
+    .await;
+
+    match rows {
+        Ok(result) if result.rows_affected() == 1 => {
+            eprintln!();
+            eprintln!("========================================");
+            eprintln!("  INITIAL ADMIN PASSWORD (shown once)");
+            eprintln!("  Username: admin");
+            eprintln!("  Password: {}", password);
+            eprintln!();
+            eprintln!("  You will be forced to change this on first login.");
+            eprintln!("  If lost, restart the service to generate a new one.");
+            eprintln!("========================================");
+            eprintln!();
+            tracing::info!("Bootstrap admin password generated and set");
+        },
+        Ok(_) => {
+            // Rows affected != 1 — concurrent bootstrap or already replaced.
+            tracing::info!("Admin password already bootstrapped (concurrent or prior)");
+        },
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to update admin password hash");
+        },
+    }
+}
+
 /// Shared application state threaded through Axum.
 #[derive(Clone)]
 pub struct AppState {
@@ -36,12 +127,18 @@ pub struct AppState {
     pub ws_tickets: Arc<DashMap<String, WsTicket>>,
     /// In-memory store for SSO PKCE sessions (state → code_verifier).
     pub sso_sessions: Arc<DashMap<String, SsoSession>>,
+    /// In-memory store for SSO handoff codes (single-use, 60s TTL).
+    /// See `tasks/sso-token-handoff-spec.md` §4.1.
+    pub sso_handoffs: Arc<DashMap<String, SsoHandoff>>,
     /// Cached OIDC discovery document and JWKS for SSO id_token verification.
     pub oidc_cache: Arc<Mutex<OidcCache>>,
     /// Internal certificate authority for mTLS client cert issuance.
     pub ca: Arc<pm_ca::CertAuthority>,
     /// Short-lived cache for approved enrollment PKI bundles.
-    pub approved_enrollments: Arc<DashMap<String, PkiBundle>>,
+    ///
+    /// Entries are single-use (removed on retrieval) and expire after
+    /// [`ENROLLMENT_BUNDLE_TTL_SECS`](pm_core::models::ENROLLMENT_BUNDLE_TTL_SECS).
+    pub approved_enrollments: Arc<DashMap<String, ApprovedEntry>>,
 }
 
 #[tokio::main]
@@ -80,10 +177,14 @@ async fn main() -> anyhow::Result<()> {
     let auth_config = Arc::new(AuthConfig::new(
         verify_key_pem,
         &config.security.ip_whitelist,
+        &config.security.trusted_proxies,
     ));
 
     let pool = db::init_pool(&config.database).await?;
     db::run_migrations(&pool).await?;
+
+    // Bootstrap admin password if the seed admin still has the placeholder hash (issue #8).
+    bootstrap_admin_password(&pool).await;
 
     // Initialise the internal CA using the configured certificate paths.
     // The CA certificate and key must exist at the configured locations and be
@@ -100,8 +201,9 @@ async fn main() -> anyhow::Result<()> {
 
     let ws_tickets: Arc<DashMap<String, WsTicket>> = Arc::new(DashMap::new());
     let sso_sessions: Arc<DashMap<String, SsoSession>> = Arc::new(DashMap::new());
+    let sso_handoffs: Arc<DashMap<String, SsoHandoff>> = Arc::new(DashMap::new());
     let oidc_cache: Arc<Mutex<OidcCache>> = Arc::new(Mutex::new(OidcCache::default()));
-    let approved_enrollments: Arc<DashMap<String, PkiBundle>> = Arc::new(DashMap::new());
+    let approved_enrollments: Arc<DashMap<String, ApprovedEntry>> = Arc::new(DashMap::new());
 
     // Background task: purge expired WS tickets every 30 seconds.
     {
@@ -140,14 +242,42 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // Background task: purge approved enrollment PKI bundles every 10 minutes.
+    // Background task: purge expired approved enrollment PKI bundles.
+    // Entries are also removed on first retrieval (single-use), so this
+    // task only cleans up bundles that were never picked up by the agent.
     {
         let approved = approved_enrollments.clone();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(600));
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
             loop {
                 interval.tick().await;
-                approved.clear();
+                let before = approved.len();
+                approved.retain(|_, entry| !entry.is_expired());
+                let removed = before.saturating_sub(approved.len());
+                if removed > 0 {
+                    tracing::debug!(removed, "Purged expired enrollment PKI bundles");
+                }
+            }
+        });
+    }
+
+    // Background task: purge expired SSO handoff codes every 60 seconds.
+    // See `tasks/sso-token-handoff-spec.md` §4.3. Handoffs are also
+    // atomically removed on exchange (single-use), so this task only
+    // cleans up codes that the SPA never POSTed back for.
+    {
+        let handoffs = sso_handoffs.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                let now = std::time::Instant::now();
+                let before = handoffs.len();
+                handoffs.retain(|_, v| v.expires_at > now);
+                let removed = before.saturating_sub(handoffs.len());
+                if removed > 0 {
+                    tracing::debug!(removed, "Purged expired SSO handoff codes");
+                }
             }
         });
     }
@@ -159,6 +289,7 @@ async fn main() -> anyhow::Result<()> {
         auth_config,
         ws_tickets,
         sso_sessions,
+        sso_handoffs,
         ca: Arc::new(ca),
         approved_enrollments,
         oidc_cache,

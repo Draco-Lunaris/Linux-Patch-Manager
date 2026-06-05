@@ -15,6 +15,30 @@
 **Rule:** Check the obvious source (gitea repo, Vaultwarden store) before spinning wheels on complex alternatives.
 **Status:** Active
 
+## 2026-06-02: Always Verify the Authoritative Repo Before Starting Work
+**Pattern:** I cloned from Gitea and did all work there, when GitHub is the master source for Linux Patch Manager. This created divergent histories and blocked PR creation.
+**Mistake:** Did not check which repo was authoritative before starting work. The git-workflow skill only documented Gitea operations. I assumed Gitea was the source of truth because it was the configured remote.
+**Impact:** All commits were made on a Gitea-based branch. When I tried to create a PR on GitHub, the branches had no common ancestor. The project was put in an unstable state.
+**Rule:** BEFORE starting any work on a project, ALWAYS check which repo is the authoritative source. If the issue is on GitHub, clone from GitHub. If the issue is on Gitea, clone from Gitea. NEVER assume based on configured remotes.
+**Rule:** When a project has multiple remotes, ALWAYS ask Kelly which one is authoritative before starting work.
+**Rule:** Update the git-workflow skill to document the authoritative repo for each project.
+**Status:** Active
+
+## 2026-06-02: SSH_ASKPASS=/dev/null Blocks Git Commit Signing
+**Pattern:** The container environment sets `SSH_ASKPASS=/dev/null` and `SSH_ASKPASS_REQUIRE=force`, which overrides ssh-agent and prevents git from finding signing keys during commit signing.
+**Mistake:** Attempted git commit multiple times without checking why it hung. The signing key was in ssh-agent but SSH_ASKPASS was redirecting the passphrase prompt to /dev/null (not executable), causing the commit to fail with "incorrect passphrase".
+**Fix:** Unset `SSH_ASKPASS` and `SSH_ASKPASS_REQUIRE` before running git commit, then use `ssh-add` with the passphrase from Vaultwarden to add the signing key to ssh-agent.
+**Rule:** Before git commit signing, check `echo $SSH_ASKPASS` and `echo $SSH_ASKPASS_REQUIRE`. If SSH_ASKPASS is set to /dev/null or another non-executable, unset both variables before committing.
+**Rule:** Always retrieve signing key passphrases from Vaultwarden using `vw_client.py get`, not from local files or memory.
+**Status:** Active
+
+## 2026-06-02: Always Run credential-bootstrap at Session Start
+**Pattern:** Profile rules mandate running `bash /a0/usr/skills/credential-bootstrap/scripts/bootstrap.sh` at the start of every conversation before any SSH or authenticated operations. I violated this rule by starting work without bootstrapping.
+**Mistake:** Began implementation work without running credential-bootstrap, then wasted multiple attempts trying to commit with a signing key that wasn't in ssh-agent.
+**Rule:** ALWAYS run credential-bootstrap at session start, before any authenticated operations. This includes git commit signing.
+**Rule:** If a credential operation fails, STOP and run credential-bootstrap before retrying. Do not attempt workarounds.
+**Status:** Active
+
 ## 2026-05-08: Vaultwarden Is the Source of Truth for All Credentials
 **Pattern:** SSH keys in ~/.ssh/ are ephemeral — lost on every container recreation. Local copies are unreliable.
 **Rule:** ALWAYS pull credentials (SSH keys, API tokens, passwords) from Vaultwarden when needed. Do NOT rely on local copies in ~/.ssh/ or /a0/usr/storage/ as they may be stale or missing after container recreation.
@@ -146,4 +170,15 @@ The Docker container intercepted some jobs and ran them in its Alpine environmen
 4. Installed pycryptodome dependency for vw_client.py
 **Rule:** At session start, run bootstrap checks silently. If ~/.ssh/id_ed25519 missing, retrieve from Vaultwarden via vw_client.py (not from file storage).
 **Rule:** vw_client.py is primary (sub-second). bw CLI is fallback only (9-12s per operation).
+**Status:** Active
+
+## 2026-06-01: Handlers Should Take a Minimal State Struct, Not the Full AppState
+**Pattern:** The `ws_handler` in `crates/pm-web/src/routes/ws.rs` is wired to `State<AppState>`, and `AppState` contains `sqlx::PgPool` (requires a real DB) and `pm_ca::CertAuthority` (private fields, requires on-disk key material + DB on `init()`). This made end-to-end integration tests in `tests/ws_origin.rs` infeasible without a Postgres + filesystem fixture.
+**Why it matters:** Test seams should be at the function/handler boundary, not require the full production state. The fix landed as 33 unit tests on the module-private helpers (`parse_origin_header`, `is_origin_allowed`, `check_origin`) — 100% coverage of the security-critical logic, zero coverage of the handler wiring. That tradeoff was acceptable here because the wiring is `HeaderMap` extraction + a function call (cargo check + clippy catches wiring bugs), but the principle stands: it's better to fix the test seam than to test around it.
+**Rule:** When designing a new handler, define a minimal state struct (e.g., `WsState { ws_tickets, config }`) and have `AppState` either contain it or convert to it. Handlers should only take what they need. This is a refactor on the table for follow-up work; the WS Origin fix did NOT do it (out of scope per the spec).
+**Status:** Active
+
+## 2026-06-01: Always Order CSWSH Defenses So They Don't Burn Legitimate Credentials
+**Pattern:** The WS Origin allowlist check runs BEFORE the ticket validation. A cross-origin probe with a stolen ticket returns `403 forbidden_origin` without consuming the ticket. The opposite order (ticket first, then Origin) would let an attacker with a leaked ticket mount a low-cost DoS by repeatedly burning the legitimate user's 60-second tickets with `403` responses.
+**Rule:** When adding defense-in-depth gates to an authenticated endpoint, order them so that the cheaper / less-credentialed gate runs first. A rejected request at gate N must not consume credentials checked at gate N+1.
 **Status:** Active

@@ -11,7 +11,8 @@ use pm_auth::AuthUser;
 use pm_core::{
     db,
     models::{
-        CreateEnrollmentRequest, EnrollmentRequest, EnrollmentStatusResponse, Host, PkiBundle,
+        ApprovedEntry, CreateEnrollmentRequest, EnrollmentRequest, EnrollmentStatusResponse, Host,
+        PkiBundle,
     },
 };
 use rand::{distributions::Alphanumeric, Rng};
@@ -76,7 +77,10 @@ async fn enroll_status(
     State(state): State<AppState>,
     Path(token): Path<String>,
 ) -> Result<Json<EnrollmentStatusResponse>, (StatusCode, Json<serde_json::Value>)> {
-    // Hash the provided token to match DB
+    // Hash the provided token to match DB.
+    // Security note: the raw polling token is intentionally never logged.
+    // Only the SHA-256 hash is stored and compared; all tracing calls in
+    // this module log error contexts only, never the token itself.
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());
@@ -98,11 +102,17 @@ async fn enroll_status(
     }
 
     // 2. If not in pending, check if it was recently approved.
-    if let Some(pki) = state.approved_enrollments.get(&token_hash) {
+    //    Single-retrieval: remove() atomically consumes the entry, ensuring
+    //    the private key can only be fetched once regardless of concurrent requests.
+    if let Some((_, entry)) = state.approved_enrollments.remove(&token_hash) {
+        if entry.is_expired() {
+            // Bundle TTL expired — treat as not found. Entry is already removed.
+            return Ok(Json(EnrollmentStatusResponse::NotFound));
+        }
         return Ok(Json(EnrollmentStatusResponse::Approved {
-            ca_crt: pki.ca_crt.clone(),
-            server_crt: pki.server_crt.clone(),
-            server_key: pki.server_key.clone(),
+            ca_crt: entry.pki.ca_crt.clone(),
+            server_crt: entry.pki.server_crt.clone(),
+            server_key: entry.pki.server_key.clone(),
         }));
     }
 
@@ -277,12 +287,31 @@ async fn approve_enrollment(
             )
         })?;
 
-    // Store PKI bundle in cache for client retrieval
+    // Store PKI bundle in cache for single-use client retrieval.
+    //
+    // Design decision — server-generated keys vs CSR-based enrollment:
+    // Currently the server generates the agent's private key and transmits it
+    // over the (already mTLS-secured) polling endpoint. This approach was chosen
+    // for initial implementation simplicity: the agent only needs to poll one
+    // endpoint and receives a complete PKI bundle without an extra round-trip.
+    //
+    // A future enhancement should adopt CSR-based enrollment where the agent
+    // generates its own key pair locally and submits a Certificate Signing
+    // Request, eliminating the need for the server to ever hold or transmit
+    // the agent's private key. This reduces the attack surface significantly
+    // — the private key never traverses the network and never resides in
+    // server memory beyond the signing operation.
+    //
+    // See: https://github.com/Draco-Lunaris/Linux-Patch-Manager/issues/9
+    //
     // Include the full CA chain (for root mode, same as ca_crt; for sub-CA,
     // includes intermediate + root) and the current CRL.
     let ca_chain = issued.ca_root_pem.clone(); // Root mode: chain is just the root cert
-    let crl_pem = state.ca.generate_crl(&state.db).await.unwrap_or_default(); // Empty string on failure: agent falls back to WebPKI-only
-
+    let crl_pem = state
+        .ca
+        .generate_crl(&state.db)
+        .await
+        .unwrap_or_default(); // Empty string on failure: agent falls back to WebPKI-only
     let pki = PkiBundle {
         ca_crt: issued.ca_root_pem,
         ca_chain,
@@ -290,9 +319,10 @@ async fn approve_enrollment(
         server_key: issued.server_key_pem,
         crl_pem,
     };
-    state
-        .approved_enrollments
-        .insert(enrollment_request.polling_token.clone(), pki);
+    state.approved_enrollments.insert(
+        enrollment_request.polling_token.clone(),
+        ApprovedEntry::new(pki),
+    );
 
     Ok(StatusCode::OK)
 }

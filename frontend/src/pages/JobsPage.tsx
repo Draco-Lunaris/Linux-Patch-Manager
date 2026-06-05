@@ -194,7 +194,13 @@ function JobRow({
         <TableCell>
           <StatusChip status={job.status} />
         </TableCell>
-        <TableCell align="right">{job.host_count}</TableCell>
+        <TableCell>
+          {job.host_names.length === 1
+            ? job.host_names[0]
+            : job.host_names.length > 1
+              ? <Tooltip title={job.host_names.join(', ')}><span>{job.host_names[0]} +{job.host_names.length - 1}</span></Tooltip>
+              : '—'}
+        </TableCell>
         <TableCell align="right">
           <Typography color="success.main" fontWeight={600}>
             {job.succeeded_count}
@@ -512,7 +518,7 @@ export default function JobsPage() {
                 <TableCell>Created</TableCell>
                 <TableCell>Kind</TableCell>
                 <TableCell>Status</TableCell>
-                <TableCell align="right">Hosts</TableCell>
+                <TableCell>Hosts</TableCell>
                 <TableCell align="right">Succeeded</TableCell>
                 <TableCell align="right">Failed</TableCell>
                 <TableCell>Schedule</TableCell>

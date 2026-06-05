@@ -14,6 +14,16 @@ Security: JWT Bearer Token (except Public Endpoints)
 | POST | `/auth/mfa/verify` | Verify MFA code |
 | DELETE | `/auth/mfa` | Disable MFA for user |
 
+## 1b. SSO (Single Sign-On)
+*No authentication required.* These endpoints implement the OIDC Authorization Code + PKCE flow. See `tasks/sso-token-handoff-spec.md` for the full design.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/auth/sso/login` | Initiate OIDC login: redirects browser to the configured IdP's authorization URL |
+| GET | `/auth/sso/callback` | OIDC redirect URI: handles the IdP response, issues a single-use 60s `handoff_code`, stores the JWT access/refresh tokens in memory, and 302-redirects to the SPA with `?handoff=<code>` in the URL (no tokens in the URL — see issue #4) |
+| GET | `/auth/sso/config` | Returns minimal SSO configuration for the login page (`enabled`, `display_name`, `auth_url`). No secrets exposed |
+| POST | `/auth/sso/handoff` | **(new in issue #4)** Exchange a single-use `handoff_code` for the JWT access/refresh tokens. The SPA calls this from `SsoCallbackPage` after the OIDC callback redirect. Returns `{ access_token, refresh_token, token_type, expires_in, user }`. The code is single-use, 60s TTL, and atomically removed on exchange (concurrent attempts: exactly one wins). `400 invalid_handoff` on unknown/expired/already-consumed codes |
+
 ## 2. Public Endpoints (Self-Enrollment)
 *No authentication required.*
 | Method | Endpoint | Description |
@@ -60,11 +70,15 @@ Security: JWT Bearer Token (except Public Endpoints)
 ## 7. Jobs & Patch Deployment
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/jobs` | List patch jobs |
+| GET | `/jobs` | List patch jobs (includes `host_names` per job) |
 | POST | `/jobs` | Create new patch job |
 | GET | `/jobs/{id}` | Get job status/details |
 | POST | `/jobs/{id}/cancel` | Cancel running job |
 | POST | `/jobs/{id}/rollback` | Rollback completed job |
+
+### GET /jobs Response Fields
+Each job summary object includes:
+- `host_names`: Array of display names for hosts targeted by this job. Falls back to `fqdn` when `display_name` is empty. Single-host jobs show one name; multi-host jobs show all names sorted alphabetically.
 
 ## 8. Maintenance Windows
 *Scoped to host.*
@@ -102,12 +116,14 @@ Security: JWT Bearer Token (except Public Endpoints)
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/settings` | Get system settings |
-| PUT | `/settings` | Update system settings |
+| PUT | `/settings` | Update system settings **(Admin only — Operators receive `403 forbidden_role`)** |
 | POST | `/settings/smtp/test` | Test SMTP configuration |
-| POST | `/settings/sso/discover` | Discover OIDC provider config |
-| POST | `/settings/sso/test` | Test SSO connection |
+| POST | `/settings/sso/discover` | Discover OIDC provider config **(Admin only — Operators receive `403 forbidden_role`)** |
+| POST | `/settings/sso/test` | Test SSO connection **(Admin only — Operators receive `403 forbidden_role`)** |
 | POST | `/settings/azure-sso/test` | Test Azure SSO compatibility |
 | POST | `/settings/audit-integrity` | Verify audit log integrity |
+
+> **Note (issue #6):** As of May 2026, sensitive fields (`oidc.client_secret`, `smtp.password`) are encrypted at rest in the database (AES-256-GCM). The `MASKED` placeholder behavior in API responses is **preserved** — clients never see plaintext secrets in GET responses. See [docs/runbooks/key-management.md](runbooks/key-management.md) for key management procedures.
 
 ## 12. Single Sign-On (SSO)
 | Method | Endpoint | Description |

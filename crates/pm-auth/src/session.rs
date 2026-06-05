@@ -40,6 +40,8 @@ pub enum SessionError {
     Password(#[from] PasswordError),
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
+    #[error("Internal error: {0}")]
+    Internal(String),
 }
 
 /// Successful login response returned to the client.
@@ -77,7 +79,10 @@ struct DbUser {
     role: UserRole,
     auth_provider: AuthProvider,
     password_hash: Option<String>,
-    totp_secret: Option<String>,
+    /// AES-256-GCM encrypted TOTP secret (issue #6 fix). None = TOTP not configured.
+    totp_secret_encrypted: Option<Vec<u8>>,
+    /// AES-256-GCM nonce for TOTP secret. Must be paired with `totp_secret_encrypted`.
+    totp_secret_nonce: Option<Vec<u8>>,
     mfa_enabled: bool,
     is_active: bool,
     force_password_reset: bool,
@@ -194,9 +199,25 @@ pub async fn login(
     // 4. MFA check
     if user.mfa_enabled {
         let code = req.totp_code.as_deref().ok_or(SessionError::MfaRequired)?;
-        let secret = user.totp_secret.as_deref().unwrap_or("");
+        // Decrypt the TOTP secret (issue #6 fix — stored as encrypted+nonce BYTEA)
+        let secret = match (&user.totp_secret_encrypted, &user.totp_secret_nonce) {
+            (Some(enc), Some(nonce)) => {
+                let key = pm_core::crypto::load_or_create_key(std::path::Path::new(
+                    pm_core::crypto::SECRET_ENCRYPTION_KEY_PATH,
+                ))
+                .map_err(|e| {
+                    tracing::error!(error = %e, "Failed to load secret-encryption key");
+                    SessionError::Internal("Encryption key error".to_string())
+                })?;
+                pm_core::crypto::decrypt(enc, nonce, &key).map_err(|e| {
+                    tracing::error!(error = %e, "Failed to decrypt TOTP secret");
+                    SessionError::Internal("TOTP decryption error".to_string())
+                })?
+            },
+            _ => String::new(),
+        };
 
-        let mfa_ok = mfa_totp::verify_code(&user.username, secret, code).unwrap_or(false);
+        let mfa_ok = mfa_totp::verify_code(&user.username, &secret, code).unwrap_or(false);
 
         if !mfa_ok {
             tracing::warn!(username = %req.username, "Login failed: invalid MFA code");

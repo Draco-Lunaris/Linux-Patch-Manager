@@ -76,6 +76,20 @@ format = "json"
 # Example: ["10.0.0.0/8", "192.168.1.50"]
 ip_whitelist = []
 
+# Trusted reverse proxies: list of CIDRs or individual IPs. When the immediate
+# TCP peer is in this list, `X-Forwarded-For` is honored (leftmost untrusted
+# hop is used for allowlist enforcement). When this list is EMPTY (the
+# default), `X-Forwarded-For` is IGNORED entirely and the socket peer IP is
+# used — the strict, fail-closed default.
+#
+# REQUIRED if you front pm-web with nginx/HAProxy/Cloudflare/etc.: add the
+# proxy's egress IP (or CIDR) here, otherwise the allowlist will evaluate
+# against the proxy's IP and deny legitimate traffic. If your proxy chain
+# has multiple hops, add each hop you control.
+# Example: ["10.0.0.0/8"]   (corporate egress)
+# Example: ["172.16.0.0/12"] (internal load balancer)
+trusted_proxies = []
+
 # Ed25519 JWT signing key (private key, PEM format)
 # Generate: openssl genpkey -algorithm ed25519 -out /etc/patch-manager/jwt/signing.pem
 jwt_signing_key_path = "/etc/patch-manager/jwt/signing.pem"
@@ -107,6 +121,21 @@ web_tls_key_path  = "/etc/patch-manager/tls/web.key"
 # The backend sends tokens as query parameters to this URL.
 # Default: "http://localhost:5173/auth/sso/callback" (Vite dev server)
 sso_callback_url = "http://localhost:5173/auth/sso/callback"
+
+# Allowlist of browser `Origin` values permitted to open the
+# `/api/v1/ws/jobs` WebSocket upgrade. Each entry is an exact
+# `scheme://host[:port]` string (no wildcards, no paths). When this list is
+# empty, the server derives a single-entry default from `sso_callback_url`
+# at startup (the host of the SSO callback). If the derivation also fails,
+# a warning is logged and the WS endpoint rejects all browser upgrades
+# (fail-closed).
+#
+# Add additional origins here if your SPA and API are served from different
+# hosts (e.g. SPA on https://app.example.com talking to API on
+# https://api.example.com). For typical single-host deployments the derived
+# default is correct and this line should be left commented out.
+#
+# allowed_origins = ["https://patch-manager.example.com"]
 
 # ============================================================
 # Rate Limiting

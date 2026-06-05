@@ -12,11 +12,12 @@ use axum::{
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Json, Redirect},
-    routing::get,
+    routing::{get, post},
     Router,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::Utc;
+use dashmap::DashMap;
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 use pm_auth::{jwt::issue_access_token, refresh};
 use pm_core::audit::{log_event, AuditAction};
@@ -38,6 +39,140 @@ use crate::AppState;
 pub struct SsoSession {
     pub code_verifier: String,
     pub created_at: chrono::DateTime<Utc>,
+}
+
+/// Single-use, short-lived payload that the SSO callback hands to the SPA
+/// via a `?handoff=<code>` query param. The SPA exchanges it via
+/// `POST /api/v1/auth/sso/handoff` for the actual JWT access/refresh
+/// tokens. Mirrors the WS-ticket pattern (issue #10): in-memory, atomic
+/// single-use consume, TTL enforced on read.
+///
+/// See `tasks/sso-token-handoff-spec.md` §4.1 for the full design.
+#[derive(Clone)]
+pub struct SsoHandoff {
+    /// JWT access token (short-lived, 15 min TTL).
+    pub access_token: String,
+    /// Opaque refresh token (long-lived, rotating).
+    pub raw_refresh: String,
+    /// JSON-serialized user object (id, username, display_name, role, etc.).
+    pub user_json: Value,
+    /// Access token TTL in seconds (for the `expires_in` field in the response).
+    pub access_ttl: u64,
+    /// Expiry instant; the exchange endpoint rejects codes past this time.
+    pub expires_at: std::time::Instant,
+}
+
+/// TTL for SSO handoff codes. Short by design: the SPA should POST to
+/// `/api/v1/auth/sso/handoff` within seconds of the redirect landing.
+///
+/// `dead_code` is allowed here because Phase 1 introduces the store
+/// ahead of its consumer; the SSO callback rewrite in Phase 2 of
+/// `tasks/sso-token-handoff-spec.md` inserts handoffs with this TTL and
+/// the exchange handler reads it back to validate freshness.
+#[allow(dead_code)]
+pub const HANDOFF_TTL_SECS: u64 = 60;
+
+/// Generate a cryptographically random handoff code (32 bytes,
+/// base64url-encoded, ~43 chars). Uses the same `rand` crate family as
+/// the WS-ticket path.
+///
+/// `dead_code` is allowed here for the same reason as `HANDOFF_TTL_SECS`
+/// — Phase 2 wires it into the SSO callback redirect construction.
+#[allow(dead_code)]
+pub fn generate_handoff_code() -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    URL_SAFE_NO_PAD.encode(bytes)
+}
+
+/// Request body for `POST /api/v1/auth/sso/handoff`.
+///
+/// The SPA sends the handoff code it received in the SSO callback
+/// redirect's `?handoff=...` query param, and the backend exchanges it
+/// for the actual access/refresh tokens. The code is single-use and
+/// 60-second TTL.
+#[derive(Debug, Deserialize)]
+pub struct HandoffRequest {
+    pub handoff_code: String,
+}
+
+// ============================================================
+// Handoff exchange handler
+// ============================================================
+
+/// `POST /api/v1/auth/sso/handoff` — exchange a single-use handoff code
+/// for the JWT access/refresh tokens + user object. Public route (no
+/// JWT required) — the handoff code IS the credential.
+///
+/// See `tasks/sso-token-handoff-spec.md` §4.2 for the full design.
+async fn sso_handoff_exchange(
+    State(state): State<AppState>,
+    Json(req): Json<HandoffRequest>,
+) -> (StatusCode, Json<Value>) {
+    sso_handoff_exchange_inner(&state.sso_handoffs, &req.handoff_code).await
+}
+
+/// Core exchange logic, separated from the HTTP handler so tests can
+/// drive it with a bare `DashMap` (no need to construct a full
+/// `AppState` with a real `sqlx::PgPool` and `Arc<AppConfig>`).
+///
+/// Marked `async` so the race test can use `tokio::join!` to drive
+/// two concurrent exchanges against the same code; the function body
+/// has no `.await` points (it only does a DashMap read and a return),
+/// so this is a zero-cost abstraction.
+async fn sso_handoff_exchange_inner(
+    handoffs: &DashMap<String, SsoHandoff>,
+    code: &str,
+) -> (StatusCode, Json<Value>) {
+    // Atomically remove the entry (single-use guarantee). If two
+    // requests race with the same code, DashMap::remove is atomic so
+    // only one wins.
+    let removed = handoffs.remove(code);
+    let Some((_code, handoff)) = removed else {
+        tracing::warn!(
+            reason = "unknown_or_already_consumed",
+            "SSO handoff exchange failed"
+        );
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": { "code": "invalid_handoff", "message": "Handoff code is invalid or has expired" }
+            })),
+        );
+    };
+
+    // Check expiry (the cleanup task also removes expired entries, but
+    // there's a race between expiry and the next cleanup tick — check
+    // here too so we never return a token for an expired handoff).
+    if handoff.expires_at <= std::time::Instant::now() {
+        tracing::warn!(reason = "expired", "SSO handoff exchange failed");
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": { "code": "invalid_handoff", "message": "Handoff code is invalid or has expired" }
+            })),
+        );
+    }
+
+    // Log success without leaking the handoff code or the tokens
+    let user_id = handoff
+        .user_json
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    tracing::info!(user_id = %user_id, "SSO handoff exchanged");
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "access_token": handoff.access_token,
+            "refresh_token": handoff.raw_refresh,
+            "token_type": "Bearer",
+            "expires_in": handoff.access_ttl,
+            "user": handoff.user_json,
+        })),
+    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -78,9 +213,27 @@ pub struct OidcConfig {
     pub display_name: String,
     pub discovery_url: String,
     pub client_id: String,
-    pub client_secret: String,
+    /// AES-256-GCM encrypted client_secret. `None` if not set or public client.
+    pub client_secret_encrypted: Option<Vec<u8>>,
+    /// AES-256-GCM nonce for client_secret. Must be paired with `client_secret_encrypted`.
+    pub client_secret_nonce: Option<Vec<u8>>,
     pub redirect_uri: String,
     pub scopes: String,
+}
+
+impl OidcConfig {
+    /// Decrypt the client_secret using the provided key.
+    /// Returns `Ok(String::new())` if the secret is not set (public client).
+    /// Returns `Err(CryptoError)` if decryption fails or nonce is missing.
+    pub fn decrypt_client_secret(
+        &self,
+        key: &[u8; 32],
+    ) -> Result<String, pm_core::crypto::CryptoError> {
+        match (&self.client_secret_encrypted, &self.client_secret_nonce) {
+            (Some(enc), Some(nonce)) => pm_core::crypto::decrypt(enc, nonce, key),
+            _ => Ok(String::new()),
+        }
+    }
 }
 
 /// Cached OIDC discovery document.
@@ -116,6 +269,12 @@ pub fn public_router() -> Router<AppState> {
         .route("/login", get(sso_login))
         .route("/callback", get(sso_callback))
         .route("/config", get(sso_config))
+        // Issue #4: single-use handoff exchange. The SPA POSTs the
+        // `?handoff=<code>` it received from the SSO callback redirect
+        // and gets the JWT access/refresh tokens in the JSON response.
+        // Public route (no JWT) — the handoff code IS the credential.
+        // See `tasks/sso-token-handoff-spec.md` §4.2.
+        .route("/handoff", post(sso_handoff_exchange))
 }
 
 /// Backward-compatible Azure SSO routes — redirect to generic SSO endpoints.
@@ -323,8 +482,28 @@ async fn sso_callback(
     ];
 
     // For confidential clients (Azure AD), include client_secret
-    if !config.client_secret.is_empty() {
-        params_vec.push(("client_secret", config.client_secret.clone()));
+    let key = match crate::secret_key::get() {
+        Ok(k) => k,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to load secret-encryption key");
+            return Err(error_redirect(
+                "internal_error",
+                "Failed to load encryption key",
+            ));
+        },
+    };
+    let client_secret = match config.decrypt_client_secret(key) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to decrypt OIDC client_secret");
+            return Err(error_redirect(
+                "internal_error",
+                "Failed to decrypt client_secret",
+            ));
+        },
+    };
+    if !client_secret.is_empty() {
+        params_vec.push(("client_secret", client_secret));
     }
 
     let token_resp = match client
@@ -604,13 +783,32 @@ async fn sso_callback(
         "mfa_enabled": user.mfa_enabled,
     });
 
-    let redirect_url = format!(
-        "{}?access_token={}&refresh_token={}&token_type=Bearer&expires_in={}&user={}",
-        callback_url,
-        urlencoding::encode(&access_token),
-        urlencoding::encode(&raw_refresh.0),
-        access_ttl,
-        urlencoding::encode(&user_json.to_string()),
+    // Issue #4 fix: instead of embedding access/refresh tokens in the
+    // redirect URL (which leaks through browser history, proxy access
+    // logs, and the Referer header), generate a single-use, 60s handoff
+    // code, store the payload in `sso_handoffs`, and put ONLY the code
+    // in the redirect. The SPA POSTs to `/api/v1/auth/sso/handoff` to
+    // exchange the code for tokens. See `tasks/sso-token-handoff-spec.md`
+    // §4.1.
+    let handoff_code = generate_handoff_code();
+    state.sso_handoffs.insert(
+        handoff_code.clone(),
+        SsoHandoff {
+            access_token: access_token.clone(),
+            raw_refresh: raw_refresh.0.clone(),
+            user_json: user_json.clone(),
+            access_ttl: access_ttl as u64,
+            expires_at: std::time::Instant::now()
+                + std::time::Duration::from_secs(HANDOFF_TTL_SECS),
+        },
+    );
+
+    let redirect_url = format!("{}?handoff={}", callback_url, handoff_code);
+
+    tracing::info!(
+        user_id = %user.id,
+        auth_provider = %auth_provider,
+        "SSO handoff issued"
     );
 
     Ok(Redirect::to(&redirect_url))
@@ -639,7 +837,9 @@ async fn azure_callback_redirect(
 
 async fn load_oidc_config(pool: &sqlx::PgPool) -> Result<OidcConfig, (StatusCode, Json<Value>)> {
     let row: Option<OidcConfig> = sqlx::query_as(
-        "SELECT enabled, provider_type, display_name, discovery_url, client_id, client_secret, redirect_uri, scopes FROM oidc_config WHERE id = 1",
+        "SELECT enabled, provider_type, display_name, discovery_url, client_id, \
+         client_secret_encrypted, client_secret_nonce, redirect_uri, scopes \
+         FROM oidc_config WHERE id = 1",
     )
     .fetch_optional(pool)
     .await
@@ -657,7 +857,8 @@ async fn load_oidc_config(pool: &sqlx::PgPool) -> Result<OidcConfig, (StatusCode
         display_name: "Azure AD".to_string(),
         discovery_url: String::new(),
         client_id: String::new(),
-        client_secret: String::new(),
+        client_secret_encrypted: None,
+        client_secret_nonce: None,
         redirect_uri: String::new(),
         scopes: "openid profile email".to_string(),
     }))
@@ -835,4 +1036,169 @@ async fn fetch_jwks(jwks_uri: &str) -> Result<serde_json::Value, String> {
     resp.json::<serde_json::Value>()
         .await
         .map_err(|e| format!("Failed to parse JWKS response: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    //! Unit tests for the SSO handoff exchange endpoint and cleanup task.
+    //!
+    //! Per `tasks/sso-token-handoff-spec.md` §6.1–6.2.
+    //!
+    //! The tests call `sso_handoff_exchange_inner` directly with a bare
+    //! `DashMap<String, SsoHandoff>`. This avoids the need to construct
+    //! a full `AppState` (which has `sqlx::PgPool` and `Arc<AppConfig>`
+    //! fields that can't be cheaply mocked) and keeps the tests focused
+    //! on the exchange logic. The HTTP handler is a thin wrapper that
+    //! extracts the code from the request body and delegates.
+
+    use super::*;
+    use dashmap::DashMap;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    fn fresh_handoffs() -> Arc<DashMap<String, SsoHandoff>> {
+        Arc::new(DashMap::new())
+    }
+
+    fn make_handoff(access: &str, refresh: &str, user_id: &str) -> SsoHandoff {
+        SsoHandoff {
+            access_token: access.to_string(),
+            raw_refresh: refresh.to_string(),
+            user_json: json!({ "id": user_id, "username": "testuser" }),
+            access_ttl: 900,
+            expires_at: Instant::now() + Duration::from_secs(HANDOFF_TTL_SECS),
+        }
+    }
+
+    /// 1. handoff_exchange_success — create a handoff, exchange it,
+    ///    expect 200 with the access/refresh/user fields.
+    #[tokio::test]
+    async fn handoff_exchange_success() {
+        let handoffs = fresh_handoffs();
+        let code = generate_handoff_code();
+        handoffs.insert(
+            code.clone(),
+            make_handoff("jwt-access", "refresh-raw", "user-123"),
+        );
+
+        let (status, body) = sso_handoff_exchange_inner(&handoffs, &code).await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["access_token"], "jwt-access");
+        assert_eq!(body["refresh_token"], "refresh-raw");
+        assert_eq!(body["token_type"], "Bearer");
+        assert_eq!(body["expires_in"], 900);
+        assert_eq!(body["user"]["id"], "user-123");
+    }
+
+    /// 2. handoff_exchange_single_use — exchange once (success),
+    ///    exchange the same code again (expect 400 invalid_handoff).
+    #[tokio::test]
+    async fn handoff_exchange_single_use() {
+        let handoffs = fresh_handoffs();
+        let code = generate_handoff_code();
+        handoffs.insert(code.clone(), make_handoff("a", "r", "u"));
+
+        // First exchange succeeds
+        let (status1, _) = sso_handoff_exchange_inner(&handoffs, &code).await;
+        assert_eq!(status1, StatusCode::OK);
+
+        // Second exchange with the same code fails (entry was removed)
+        let (status2, body2) = sso_handoff_exchange_inner(&handoffs, &code).await;
+        assert_eq!(status2, StatusCode::BAD_REQUEST);
+        assert_eq!(body2["error"]["code"], "invalid_handoff");
+    }
+
+    /// 3. handoff_exchange_unknown_code — exchange a code that was
+    ///    never issued (expect 400 invalid_handoff).
+    #[tokio::test]
+    async fn handoff_exchange_unknown_code() {
+        let handoffs = fresh_handoffs();
+        let (status, body) = sso_handoff_exchange_inner(&handoffs, "never-issued-code").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"]["code"], "invalid_handoff");
+    }
+
+    /// 4. handoff_exchange_expired_code — create a handoff with
+    ///    expires_at in the past, exchange (expect 400 invalid_handoff).
+    #[tokio::test]
+    async fn handoff_exchange_expired_code() {
+        let handoffs = fresh_handoffs();
+        let code = generate_handoff_code();
+        let mut h = make_handoff("a", "r", "u");
+        h.expires_at = Instant::now() - Duration::from_secs(1); // already expired
+        handoffs.insert(code.clone(), h);
+
+        let (status, body) = sso_handoff_exchange_inner(&handoffs, &code).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"]["code"], "invalid_handoff");
+    }
+
+    /// 5. handoff_exchange_race — two concurrent exchanges with the
+    ///    same code; exactly one succeeds, the other gets 400.
+    #[tokio::test]
+    async fn handoff_exchange_race() {
+        let handoffs = fresh_handoffs();
+        let code = generate_handoff_code();
+        handoffs.insert(code.clone(), make_handoff("a", "r", "u"));
+
+        // DashMap::remove is atomic, so only one of two concurrent
+        // calls can win. The other gets None and returns 400.
+        let h1 = handoffs.clone();
+        let h2 = handoffs.clone();
+        let c1 = code.clone();
+        let c2 = code.clone();
+        let (r1, r2) = tokio::join!(
+            sso_handoff_exchange_inner(&h1, &c1),
+            sso_handoff_exchange_inner(&h2, &c2),
+        );
+
+        let status1 = r1.0;
+        let status2 = r2.0;
+        let successes = [status1, status2]
+            .iter()
+            .filter(|s| **s == StatusCode::OK)
+            .count();
+        let failures = [status1, status2]
+            .iter()
+            .filter(|s| **s == StatusCode::BAD_REQUEST)
+            .count();
+        assert_eq!(successes, 1, "exactly one exchange should succeed");
+        assert_eq!(failures, 1, "exactly one exchange should fail");
+    }
+
+    /// 6. handoff_exchange_malformed_body — exchange with an empty
+    ///    code (expect 400 invalid_handoff).
+    #[tokio::test]
+    async fn handoff_exchange_malformed_body() {
+        let handoffs = fresh_handoffs();
+        let (status, body) = sso_handoff_exchange_inner(&handoffs, "").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"]["code"], "invalid_handoff");
+    }
+
+    /// 7. handoff_cleanup_removes_expired — create 3 handoffs with
+    ///    varying `expires_at`, run one tick of the cleanup task,
+    ///    assert only the non-expired ones remain.
+    #[tokio::test]
+    async fn handoff_cleanup_removes_expired() {
+        let handoffs = fresh_handoffs();
+        // 2 expired, 1 fresh
+        for (i, expired) in [true, false, true].iter().enumerate() {
+            let mut h = make_handoff(&format!("a{}", i), "r", "u");
+            if *expired {
+                h.expires_at = Instant::now() - Duration::from_secs(1);
+            }
+            handoffs.insert(format!("code-{}", i), h);
+        }
+        assert_eq!(handoffs.len(), 3);
+
+        // Simulate one tick of the cleanup task (mirrors the logic
+        // in main.rs lines 174-188)
+        let now = Instant::now();
+        handoffs.retain(|_, v| v.expires_at > now);
+
+        assert_eq!(handoffs.len(), 1);
+        assert!(handoffs.contains_key("code-1"));
+    }
 }

@@ -8,7 +8,7 @@
 | Version | 0.0.3 |
 | Status | Draft |
 | Standard | Aligned with IEEE 1016-2009 |
-| Owner | Echo (for Kelly / Moon Dragon) |
+| Owner | Draco Lunaris |
 | Last Updated | 2026-04-23 |
 | Related Docs | `SPEC.md`, `REQUIREMENTS.md`, `README.md` |
 

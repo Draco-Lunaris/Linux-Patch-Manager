@@ -1,0 +1,19 @@
+[package]
+name = "migrate-secrets"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "migrate-secrets"
+path = "src/main.rs"
+
+[dependencies]
+pm-core = { path = "../pm-core" }
+tokio = { workspace = true }
+sqlx = { workspace = true }
+anyhow = { workspace = true }
+uuid = { workspace = true }
+hex = "0.4"

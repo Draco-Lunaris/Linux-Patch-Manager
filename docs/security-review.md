@@ -31,9 +31,25 @@ verifying that all mandated security controls are implemented and operational.
 ### 1.3 IP Whitelist Enforcement
 | Control | Status | Evidence |
 |---------|--------|----------|
-| IP whitelist on all connection points | ✅ Verified | Middleware extracts `X-Forwarded-For` / `X-Real-IP`; checks against `AuthConfig.ip_whitelist` (RwLock for live updates) |
+| IP whitelist on all connection points | ✅ Verified | `require_auth` middleware in `crates/pm-auth/src/rbac.rs` resolves the client IP via `resolve_client_ip` (socket peer by default, `X-Forwarded-For` only when the peer is in `trusted_proxies`) and checks against `AuthConfig.ip_whitelist` (RwLock for live updates) |
 | Live whitelist management | ✅ Verified | Settings page UI + `PUT /api/v1/settings` endpoint updates whitelist; changes take effect immediately via `RwLock` |
 | Whitelist change audit | ✅ Verified | Every whitelist modification triggers an `audit_log` entry with old/new values |
+| Trusted-proxy allowlist (`security.trusted_proxies`) | ✅ Verified | New `trusted_proxies: Vec<String>` field on `SecurityConfig` (default empty = strict). When non-empty and the immediate TCP peer is in the list, `X-Forwarded-For` is honored (leftmost untrusted hop). Documented in `config/config.example.toml`. `AuthConfig::update_trusted_proxies` setter allows runtime updates |
+| Fail-closed on unresolvable client IP | ✅ Verified | When a non-empty allowlist is configured and the client IP cannot be determined (no `ConnectInfo<SocketAddr>` extension), the request is rejected with `403 forbidden_ip`. `tracing::warn!` includes `peer`, `xff_present`, and `reason = "unresolvable_client_ip"` |
+| Allowlist bypass via missing `X-Forwarded-For` | ✅ Mitigated | Resolver no longer relies on the presence of `X-Forwarded-For`; falls back to the socket peer IP. Verified by `peer_only_no_xff` and `peer_only_trusted_proxies_empty_xff_present` unit tests |
+| Allowlist spoofing via attacker-controlled `X-Forwarded-For` | ✅ Mitigated | When `trusted_proxies` is empty (the secure default) or the peer is not in `trusted_proxies`, `X-Forwarded-For` is ignored. Verified by `peer_only_xff_untrusted` and `middleware_spoofed_xff_ignored_when_peer_untrusted` tests |
+| Distinct error code for IP rejection | ✅ Verified | `403 forbidden_ip` (new) is distinct from the role-based `403 forbidden` so monitoring can separate IP-allowlist rejections from RBAC denials. Documented in `tasks/ip-allowlist-spec.md` §4.5 |
+
+### 1.4 WebSocket Origin Allowlist (CSWSH Defense-in-Depth)
+| Control | Status | Evidence |
+|---------|--------|----------|
+| `Origin` header allowlist on browser WS upgrade | ✅ Verified | `crates/pm-web/src/routes/ws.rs` `ws_handler` — `HeaderMap` extractor + `check_origin` enforced before ticket validation |
+| Allowlist configurable via `security.allowed_origins` | ✅ Verified | `crates/pm-core/src/config.rs` `SecurityConfig::allowed_origins`; documented in `config/config.example.toml` |
+| Secure-by-default derivation from `sso_callback_url` | ✅ Verified | `derive_allowed_origins` parses the SSO callback URL into a single `scheme://host[:port]` entry when the operator leaves `allowed_origins` empty; `AppConfig::load` runs the derivation and emits a `tracing::warn!` if the result is empty (fail-closed) |
+| Order: Origin check before ticket consumption | ✅ Verified | Rejected cross-origin probes do not burn the user's ticket; documented in the handler doc-comment and verified by `check_rejects_disallowed_origin` test |
+| Rejected upgrades logged with `origin` and `reason` | ✅ Verified | `tracing::warn!` in `ws_handler`; ticket value is never logged |
+
+**Note:** The browser WebSocket endpoint (`GET /api/v1/ws/jobs`) is the only browser-reachable WS server in the codebase. The `pm-worker` `ws_relay` module is an outbound mTLS WS *client* to on-host agents and is not subject to CSWSH.
 
 ---
 
@@ -69,6 +85,7 @@ verifying that all mandated security controls are implemented and operational.
 | Admin: full rights | ✅ Verified | Admin role bypasses group scoping; access to all resources |
 | Operator: group-scoped | ✅ Verified | Operators can only manage hosts in their assigned groups; middleware enforces on every request |
 | RBAC middleware | ✅ Verified | Axum middleware extracts role from JWT; enforces before route handler execution |
+| **Manager-wide auth config is Admin-only (issue #5 fix)** | ✅ Verified | `admin_required` gate in `crates/pm-web/src/routes/settings.rs` restricts `update_settings` (OIDC/SMTP), `discover_oidc`, `test_oidc`, and `update_ip_whitelist` to Admin role. Operators receive `403 forbidden_role`. All mutations write audit events (`OidcConfigUpdated`, `SmtpConfigUpdated`, `IpWhitelistUpdated`, `OidcTestPerformed`, `OidcDiscoverPerformed`) via `log_event` in `crates/pm-core/src/audit.rs`. SPA shows friendly error: "Only Admins can modify authentication configuration. Contact an Admin to make this change." Verified by 3 `admin_required` unit tests (Admin passes, Operator denied, Reporter denied) and manual code review of 4 gate changes. Full integration tests deferred to [issue #15](https://github.com/Draco-Lunaris/Linux-Patch-Manager/issues/15). |
 
 ### 2.5 Azure SSO
 | Control | Status | Evidence |
@@ -76,6 +93,9 @@ verifying that all mandated security controls are implemented and operational.
 | OAuth2/OIDC Authorization Code + PKCE | ✅ Verified | Public routes `/api/v1/auth/azure/login` and `/api/v1/auth/azure/callback` implement PKCE flow |
 | Test connection without enabling | ✅ Verified | `POST /api/v1/settings/azure-sso/test` validates configuration without persisting |
 | MFA still required after SSO | ✅ Verified | SSO login follows same MFA verification path as local login |
+| **No tokens in redirect URL (issue #4 fix)** | ✅ Verified | SSO callback (`crates/pm-web/src/routes/sso.rs` `sso_callback`) now issues a single-use, 60s `handoff_code` and stores the JWT access/refresh tokens in the in-memory `sso_handoffs: Arc<DashMap<String, SsoHandoff>>`. The redirect URL contains only `?handoff=<code>`. No `access_token`, `refresh_token`, or `user` parameters are ever placed in the URL. The SPA exchanges the code via `POST /api/v1/auth/sso/handoff`. See `tasks/sso-token-handoff-spec.md` for the full design. |
+| **Handoff code is single-use + 60s TTL** | ✅ Verified | `DashMap::remove` in `sso_handoff_exchange_inner` is atomic — concurrent exchange attempts result in exactly one success and one 400. Expired codes (`expires_at < Instant::now()`) are rejected with `400 invalid_handoff`. A background cleanup task removes expired entries every 60s. Verified by `handoff_exchange_single_use`, `handoff_exchange_race`, and `handoff_exchange_expired_code` tests in `crates/pm-web/src/routes/sso.rs`. |
+| **Handoff code cleared from browser history** | ✅ Verified | SPA calls `window.history.replaceState({}, '', '/auth/sso/callback')` after a successful exchange, removing the `?handoff=` param from the address bar. Verified by `clears_handoff_code_from_url_after_success` test in `frontend/src/pages/__tests__/SsoCallbackPage.test.tsx`. |
 
 ---
 
@@ -105,7 +125,8 @@ verifying that all mandated security controls are implemented and operational.
 | Control | Status | Evidence |
 |---------|--------|----------|
 | Infrastructure-managed disk encryption | ✅ Verified | Hardware/infrastructure layer provides encryption at rest; no LUKS in guest OS |
-| No column-level encryption needed | ✅ Verified | Compliance requirement satisfied by infrastructure layer per system mandate |
+| **App secrets encrypted at rest (issue #6 fix)** | ✅ Verified | OIDC `client_secret`, SMTP `smtp_password`, and TOTP `totp_secret` are encrypted with AES-256-GCM using a dedicated per-install key at `/etc/patch-manager/keys/secret-encryption.key` (auto-generated on first start, 0600 permissions). Separate from the health-check key for blast-radius isolation. Encryption/decryption via `pm-core::crypto::encrypt`/`decrypt`. Schema migration `020_encrypt_secrets_at_rest.sql` replaces plaintext TEXT columns with BYTEA `_encrypted` + `_nonce` columns. All 6 read/write sites updated: `sso.rs`, `settings.rs` (OIDC + SMTP), `session.rs` (TOTP read), `auth.rs` (TOTP write), `users.rs` (TOTP NULL), `pm-worker/email.rs` (SMTP read). The `MASKED` placeholder behavior in API responses is preserved. |
+| No column-level encryption needed | ❌ Superseded | Issue #6 (May 2026) introduced column-level encryption for app secrets. Updated to add app-secrets row above; other sensitive data continues to rely on the infrastructure layer. |
 
 ### 4.2 Secret Management
 | Control | Status | Evidence |

@@ -1,12 +1,17 @@
 -- Migration: 002_seed_admin
 -- Description: Seed the default admin account.
 --
--- Default credentials (CHANGE BEFORE PRODUCTION USE):
---   Username: admin
---   Password: ChangeMe123!
+-- IMPORTANT (issue #8): The password_hash below is a PLACEHOLDER
+-- that cannot validate any password. On first startup, pm-web detects
+-- this placeholder and generates a random admin password, replacing
+-- the hash in the database. The generated password is printed once
+-- to stderr (visible in systemd journal).
 --
--- The password hash below is Argon2id of "ChangeMe123!" with
--- m=65536, t=3, p=1. Replace after first login.
+-- If the application never starts (e.g., manual migration only),
+-- the admin account is inaccessible — this is fail-closed.
+--
+-- On first successful login with a real password, the admin is forced to
+-- set a new password (force_password_reset = TRUE).
 
 INSERT INTO users (
     id,
@@ -27,10 +32,11 @@ VALUES (
     'admin@localhost',
     'admin',
     'local',
-    -- Argon2id hash of "ChangeMe123!" — REPLACE IN PRODUCTION
-    '$argon2id$v=19$m=65536,t=3,p=1$Kv8bkGiE81yIuXARq9fwsw$NrBRFvgL1dVsW7bEK6NxEOzIX2q1p4B0K422idAVIDQ',
-    FALSE,  -- MFA disabled by default; admin must set up on first login
+    -- PLACEHOLDER Argon2id hash (issue #8). Cannot validate any password.
+    -- pm-web replaces this with a real hash on first startup.
+    '$argon2id$v=19$m=65536,t=3,p=1$AAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+    FALSE,
     TRUE,
-    TRUE    -- Force password reset on first login
+    TRUE
 )
 ON CONFLICT (username) DO NOTHING;

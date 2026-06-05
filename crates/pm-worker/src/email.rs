@@ -32,11 +32,16 @@ struct NotificationSettings {
 }
 
 /// Load SMTP settings from the `system_config` table.
+///
+/// Issue #6 fix: SMTP password is stored as two rows:
+///   - `smtp_password_encrypted` (hex of AES-256-GCM ciphertext)
+///   - `smtp_password_nonce` (hex of AES-256-GCM nonce)
 async fn load_smtp_settings(pool: &PgPool) -> SmtpSettings {
     let rows: Vec<(String, String)> = sqlx::query_as(
         "SELECT key, value FROM system_config WHERE key IN (
             'smtp_enabled', 'smtp_host', 'smtp_port', 'smtp_username',
-            'smtp_password', 'smtp_from', 'smtp_tls_mode'
+            'smtp_password_encrypted', 'smtp_password_nonce',
+            'smtp_from', 'smtp_tls_mode'
         )",
     )
     .fetch_all(pool)
@@ -50,15 +55,44 @@ async fn load_smtp_settings(pool: &PgPool) -> SmtpSettings {
             .unwrap_or_default()
     };
 
+    // Decrypt the SMTP password
+    let enc_hex = get("smtp_password_encrypted");
+    let nonce_hex = get("smtp_password_nonce");
+    let password = if !enc_hex.is_empty() && !nonce_hex.is_empty() {
+        match (
+            hex_decode(&enc_hex),
+            hex_decode(&nonce_hex),
+            crate::secret_key::get(),
+        ) {
+            (Some(enc), Some(nonce), Ok(key)) => {
+                pm_core::crypto::decrypt(&enc, &nonce, key).unwrap_or_default()
+            },
+            _ => String::new(),
+        }
+    } else {
+        String::new()
+    };
+
     SmtpSettings {
         enabled: get("smtp_enabled") == "true",
         host: get("smtp_host"),
         port: get("smtp_port").parse().unwrap_or(587),
         username: get("smtp_username"),
-        password: get("smtp_password"),
+        password,
         from: get("smtp_from"),
         tls_mode: get("smtp_tls_mode"),
     }
+}
+
+/// Decode a hex string to bytes. Returns None on invalid input.
+fn hex_decode(s: &str) -> Option<Vec<u8>> {
+    if !s.len().is_multiple_of(2) {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
+        .collect()
 }
 
 /// Load notification preferences from `system_config`.
