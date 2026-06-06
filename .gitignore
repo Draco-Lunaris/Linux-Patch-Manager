@@ -28,5 +28,9 @@ frontend/dist
 *.deb
 package-build/
 
-# TLS certificates - generated on first run
-crates/pm-agent-client/certs/
+# Private key material - NEVER commit
+*.key
+*.key.pem
+crates/pm-agent-client/certs/*.crt
+crates/pm-agent-client/certs/*.key
+crates/pm-agent-client/certs/*.pem

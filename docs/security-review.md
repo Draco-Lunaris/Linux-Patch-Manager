@@ -160,9 +160,30 @@ verifying that all mandated security controls are implemented and operational.
 
 ## 6. Findings & Recommendations
 
-### No Critical or High Findings
+### 🔴 CRITICAL: Committed Private Key Material (Issue #12) — RESOLVED
 
-All security controls are implemented as specified in the system requirements.
+**Description:**
+Private key file `client.key` and public certificates (`client.crt`, `ca.crt`) were committed
+to version control in `crates/pm-agent-client/certs/`. Committed private keys are a critical
+security risk: anyone with repository access can impersonate agents or decrypt captured TLS traffic.
+
+**Status:** ✅ RESOLVED
+
+**Remediation Applied:**
+1. Removed all cert files from git tracking (`git rm --cached`)
+2. Added `*.key`, `*.key.pem` and `crates/pm-agent-client/certs/` to `.gitignore`
+3. Updated `pm-agent-client` doc examples to use `std::fs::read()` instead of `include_bytes!`
+4. Added `gitleaks` secret scanning to CI pipeline
+5. Added README to `crates/pm-agent-client/certs/` explaining runtime cert generation
+6. Git history will be purged with `git filter-repo` after PR merge
+
+**Key Rotation:**
+These keys were dev/test only. No production key rotation is needed. All committed keys
+should be considered compromised and must not be used in production.
+
+### No Other Critical or High Findings
+
+All other security controls are implemented as specified in the system requirements.
 
 ### Recommendations (Low Priority)
 
@@ -192,3 +213,4 @@ All security controls are implemented as specified in the system requirements.
 - [x] Backup encryption supported (GPG)
 - [x] Azure SSO with PKCE flow
 - [x] No plaintext credential storage
+- [x] Committed private key material removed from repository (Issue #12)
