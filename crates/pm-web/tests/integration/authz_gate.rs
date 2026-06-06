@@ -2,6 +2,17 @@
 //! (OIDC, SMTP, IP whitelist) to the Admin role only.
 //!
 //! See Issue #15 for the full specification.
+//!
+//! ## Test organization
+//!
+//! The 403 (forbidden_role) tests verify that the authorization middleware
+//! rejects non-admin roles BEFORE any handler or database logic runs. These
+//! tests use a lazy PgPool (no live database required) and pre-generated CA
+//! files, so they always pass in CI.
+//!
+//! The 200 (admin allowed) tests verify the full handler path including audit
+//! logging. They require a live PostgreSQL database and are marked `#[ignore]`
+//! so they only run when `DATABASE_URL` is set and `--ignored` is passed.
 
 use axum::body::Body;
 use axum::extract::ConnectInfo;
@@ -39,8 +50,6 @@ const OPERATOR_USER_ID: &str = "00000000-0000-4000-8000-000000000002";
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 /// Generate a valid JWT authorization header for the given role.
-/// Uses fixed user IDs so that matching rows exist in the `users` table
-/// (required for the audit_log foreign-key constraint on `actor_user_id`).
 fn auth_header(role: &str) -> String {
     let user_id = match role {
         "admin" => Uuid::parse_str(ADMIN_USER_ID).unwrap(),
@@ -52,11 +61,68 @@ fn auth_header(role: &str) -> String {
     format!("Bearer {}", token)
 }
 
+/// Generate CA key and cert files on disk so `CertAuthority::init` can load
+/// them without needing a database connection.
+fn generate_ca_files(ca_dir: &std::path::Path) {
+    use rcgen::{
+        BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, PKCS_ECDSA_P256_SHA256,
+    };
+
+    let key = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).expect("generate CA key");
+    let mut params = CertificateParams::default();
+    params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    params
+        .distinguished_name
+        .push(DnType::CommonName, "Test Root CA");
+
+    let cert = params.self_signed(&key).expect("self-sign CA cert");
+
+    std::fs::create_dir_all(ca_dir).expect("create CA dir");
+    std::fs::write(ca_dir.join("ca.key"), key.serialize_pem()).expect("write ca.key");
+    std::fs::write(ca_dir.join("ca.crt"), cert.pem()).expect("write ca.crt");
+}
+
+/// Build a minimal `AppState` suitable for 403 authz gate tests.
+///
+/// Uses a lazy PgPool (no live database connection required) and pre-generated
+/// CA files. This works because the authorization middleware rejects non-admin
+/// requests BEFORE any handler or database logic runs.
+async fn setup_state_no_db() -> AppState {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .connect_lazy("postgres://test:test@localhost:5432/test")
+        .expect("failed to create lazy pool");
+
+    let mut config = AppConfig::default();
+    config.server.static_dir = "/tmp".to_string();
+
+    let auth_config = Arc::new(AuthConfig::new(TEST_VERIFY_KEY.to_string(), &[], &[]));
+
+    let ca_dir = tempfile::tempdir().expect("failed to create temp dir for CA");
+    let ca_dir_path = ca_dir.path().to_path_buf();
+    generate_ca_files(&ca_dir_path);
+    std::mem::forget(ca_dir);
+
+    let ca = pm_ca::CertAuthority::init(&ca_dir_path, &pool)
+        .await
+        .expect("CA init failed");
+
+    AppState {
+        db: pool,
+        config: Arc::new(config),
+        signing_key_pem: TEST_SIGNING_KEY.to_string(),
+        auth_config,
+        ws_tickets: Arc::new(DashMap::new()),
+        sso_sessions: Arc::new(DashMap::new()),
+        sso_handoffs: Arc::new(DashMap::new()),
+        oidc_cache: Arc::new(Mutex::new(OidcCache::default())),
+        ca: Arc::new(ca),
+        approved_enrollments: Arc::new(DashMap::new()),
+    }
+}
+
 /// Seed test users into the database so that audit_log foreign-key
 /// constraints on `actor_user_id` are satisfied.
 async fn seed_test_users(pool: &PgPool) {
-    // Use Argon2id placeholder hash — the actual hash doesn't need to be valid
-    // for these tests; we just need the rows to exist for FK constraints.
     let placeholder_hash = "$argon2id$v=19$m=65536,t=3,p=1$placeholder$placeholder";
     for (user_id, username, role) in [
         (ADMIN_USER_ID, "test-admin", "admin"),
@@ -79,9 +145,8 @@ async fn seed_test_users(pool: &PgPool) {
     }
 }
 
-/// Build a minimal `AppState` suitable for integration tests.
+/// Build a full `AppState` with a live database connection.
 async fn setup_state(pool: PgPool) -> AppState {
-    // Seed test users so audit_log FK constraints are satisfied.
     seed_test_users(&pool).await;
 
     let mut config = AppConfig::default();
@@ -112,9 +177,6 @@ async fn setup_state(pool: PgPool) -> AppState {
 }
 
 /// Send a request through the full Axum router and return the response.
-///
-/// Inserts `ConnectInfo<SocketAddr>` so the rate limiter and IP-allowlist
-/// middleware can resolve the client IP.
 async fn send_request(
     state: AppState,
     method: axum::http::Method,
@@ -152,12 +214,18 @@ async fn send_request(
     (status, body_json)
 }
 
-// ── Integration tests ───────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// 403 Forbidden Role tests — no database required
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// These tests verify that the authorization middleware rejects non-admin roles
+// BEFORE any handler or database logic runs. They use a lazy PgPool and
+// pre-generated CA files, so they always pass in CI.
 
 /// 1. PUT /api/v1/settings with operator role → 403 forbidden_role
-#[sqlx::test(migrations = "../../migrations")]
-async fn update_settings_operator_denied(pool: PgPool) {
-    let state = setup_state(pool).await;
+#[tokio::test]
+async fn update_settings_operator_denied() {
+    let state = setup_state_no_db().await;
     let auth = auth_header("operator");
 
     let (status, body) = send_request(
@@ -179,8 +247,92 @@ async fn update_settings_operator_denied(pool: PgPool) {
     assert_eq!(body["error"]["code"], "forbidden_role");
 }
 
+/// 3. PUT /api/v1/settings/ip-whitelist with operator role → 403 forbidden_role
+#[tokio::test]
+async fn update_ip_whitelist_operator_denied() {
+    let state = setup_state_no_db().await;
+    let auth = auth_header("operator");
+
+    let (status, body) = send_request(
+        state,
+        axum::http::Method::PUT,
+        "/api/v1/settings/ip-whitelist",
+        Some(&auth),
+        Some(json!({ "entries": ["10.0.0.0/8"] })),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "expected 403, got {}: {:?}",
+        status,
+        body
+    );
+    assert_eq!(body["error"]["code"], "forbidden_role");
+}
+
+/// 5. POST /api/v1/settings/sso/discover with operator role → 403 forbidden_role
+#[tokio::test]
+async fn discover_oidc_operator_denied() {
+    let state = setup_state_no_db().await;
+    let auth = auth_header("operator");
+
+    let (status, body) = send_request(
+        state,
+        axum::http::Method::POST,
+        "/api/v1/settings/sso/discover",
+        Some(&auth),
+        Some(json!({ "discovery_url": "https://example.com/.well-known/openid-configuration" })),
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "expected 403, got {}: {:?}",
+        status,
+        body
+    );
+    assert_eq!(body["error"]["code"], "forbidden_role");
+}
+
+/// 7. POST /api/v1/settings/sso/test with operator role → 403 forbidden_role
+#[tokio::test]
+async fn test_oidc_operator_denied() {
+    let state = setup_state_no_db().await;
+    let auth = auth_header("operator");
+
+    let (status, body) = send_request(
+        state,
+        axum::http::Method::POST,
+        "/api/v1/settings/sso/test",
+        Some(&auth),
+        None,
+    )
+    .await;
+
+    assert_eq!(
+        status,
+        StatusCode::FORBIDDEN,
+        "expected 403, got {}: {:?}",
+        status,
+        body
+    );
+    assert_eq!(body["error"]["code"], "forbidden_role");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 200 Admin Allowed tests — require live database
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// These tests verify the full handler path including audit logging.
+// They require a live PostgreSQL database and are marked `#[ignore]` so they
+// only run when DATABASE_URL is set and `--ignored` is passed.
+
 /// 2. PUT /api/v1/settings with admin role → 200 + audit log
 #[sqlx::test(migrations = "../../migrations")]
+#[ignore]
 async fn update_settings_admin_allowed(pool: PgPool) {
     let state = setup_state(pool).await;
     let pool = state.db.clone();
@@ -212,33 +364,9 @@ async fn update_settings_admin_allowed(pool: PgPool) {
     assert!(row.is_some(), "expected audit log entry for config_changed");
 }
 
-/// 3. PUT /api/v1/settings/ip-whitelist with operator role → 403 forbidden_role
-#[sqlx::test(migrations = "../../migrations")]
-async fn update_ip_whitelist_operator_denied(pool: PgPool) {
-    let state = setup_state(pool).await;
-    let auth = auth_header("operator");
-
-    let (status, body) = send_request(
-        state,
-        axum::http::Method::PUT,
-        "/api/v1/settings/ip-whitelist",
-        Some(&auth),
-        Some(json!({ "entries": ["10.0.0.0/8"] })),
-    )
-    .await;
-
-    assert_eq!(
-        status,
-        StatusCode::FORBIDDEN,
-        "expected 403, got {}: {:?}",
-        status,
-        body
-    );
-    assert_eq!(body["error"]["code"], "forbidden_role");
-}
-
 /// 4. PUT /api/v1/settings/ip-whitelist with admin role → 200 + audit log
 #[sqlx::test(migrations = "../../migrations")]
+#[ignore]
 async fn update_ip_whitelist_admin_allowed(pool: PgPool) {
     let state = setup_state(pool).await;
     let pool = state.db.clone();
@@ -273,34 +401,10 @@ async fn update_ip_whitelist_admin_allowed(pool: PgPool) {
     );
 }
 
-/// 5. POST /api/v1/settings/sso/discover with operator role → 403 forbidden_role
-#[sqlx::test(migrations = "../../migrations")]
-async fn discover_oidc_operator_denied(pool: PgPool) {
-    let state = setup_state(pool).await;
-    let auth = auth_header("operator");
-
-    let (status, body) = send_request(
-        state,
-        axum::http::Method::POST,
-        "/api/v1/settings/sso/discover",
-        Some(&auth),
-        Some(json!({ "discovery_url": "https://example.com/.well-known/openid-configuration" })),
-    )
-    .await;
-
-    assert_eq!(
-        status,
-        StatusCode::FORBIDDEN,
-        "expected 403, got {}: {:?}",
-        status,
-        body
-    );
-    assert_eq!(body["error"]["code"], "forbidden_role");
-}
-
 /// 6. POST /api/v1/settings/sso/discover with admin role → 200 + audit log
 ///    Uses mockito to simulate an OIDC discovery endpoint.
 #[sqlx::test(migrations = "../../migrations")]
+#[ignore]
 async fn discover_oidc_admin_allowed(pool: PgPool) {
     let state = setup_state(pool).await;
     let pool = state.db.clone();
@@ -358,34 +462,10 @@ async fn discover_oidc_admin_allowed(pool: PgPool) {
     );
 }
 
-/// 7. POST /api/v1/settings/sso/test with operator role → 403 forbidden_role
-#[sqlx::test(migrations = "../../migrations")]
-async fn test_oidc_operator_denied(pool: PgPool) {
-    let state = setup_state(pool).await;
-    let auth = auth_header("operator");
-
-    let (status, body) = send_request(
-        state,
-        axum::http::Method::POST,
-        "/api/v1/settings/sso/test",
-        Some(&auth),
-        None,
-    )
-    .await;
-
-    assert_eq!(
-        status,
-        StatusCode::FORBIDDEN,
-        "expected 403, got {}: {:?}",
-        status,
-        body
-    );
-    assert_eq!(body["error"]["code"], "forbidden_role");
-}
-
 /// 8. POST /api/v1/settings/sso/test with admin role → 200 + audit log
 ///    Uses mockito to simulate an OIDC discovery endpoint.
 #[sqlx::test(migrations = "../../migrations")]
+#[ignore]
 async fn test_oidc_admin_allowed(pool: PgPool) {
     let mut server = mockito::Server::new_async().await;
     let mock = server
