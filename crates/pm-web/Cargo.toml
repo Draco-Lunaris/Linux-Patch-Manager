@@ -5,6 +5,10 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[lib]
+name = "pm_web"
+path = "src/lib.rs"
+
 [[bin]]
 name = "pm-web"
 path = "src/main.rs"
@@ -46,4 +50,7 @@ url = { workspace = true }
 urlencoding = "2"
 
 [dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+mockito = "1"
 tempfile = "3"
