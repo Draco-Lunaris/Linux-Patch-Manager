@@ -120,7 +120,7 @@ pub async fn login(
     let user: Option<DbUser> = sqlx::query_as(
         r#"
         SELECT id, username, display_name, role, auth_provider,
-               password_hash, totp_secret, mfa_enabled, is_active, force_password_reset,
+               password_hash, totp_secret_encrypted, totp_secret_nonce, mfa_enabled, is_active, force_password_reset,
                failed_login_attempts, locked_until
         FROM users
         WHERE username = $1 AND auth_provider = 'local'
@@ -278,7 +278,7 @@ pub async fn refresh_session(
     let user: DbUser = sqlx::query_as(
         r#"
         SELECT id, username, display_name, role, auth_provider,
-               password_hash, totp_secret, mfa_enabled, is_active, force_password_reset,
+               password_hash, totp_secret_encrypted, totp_secret_nonce, mfa_enabled, is_active, force_password_reset,
                failed_login_attempts, locked_until
         FROM users WHERE id = $1
         "#,
