@@ -553,7 +553,7 @@ impl CertAuthority {
              FROM certificates \
              WHERE status = 'revoked'::cert_status \
                AND revoked_at IS NOT NULL \
-               AND not_after > NOW() \
+               AND expires_at > NOW() \
              ORDER BY revoked_at ASC",
         )
         .fetch_all(db)
