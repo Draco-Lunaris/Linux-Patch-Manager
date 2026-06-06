@@ -111,8 +111,10 @@ async fn enroll_status(
         }
         return Ok(Json(EnrollmentStatusResponse::Approved {
             ca_crt: entry.pki.ca_crt.clone(),
+            ca_chain: entry.pki.ca_chain.clone(),
             server_crt: entry.pki.server_crt.clone(),
             server_key: entry.pki.server_key.clone(),
+            crl_pem: entry.pki.crl_pem.clone(),
         }));
     }
 
