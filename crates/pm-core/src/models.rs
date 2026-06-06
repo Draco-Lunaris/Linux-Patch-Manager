@@ -178,8 +178,10 @@ pub enum EnrollmentStatusResponse {
     Pending,
     Approved {
         ca_crt: String,
+        ca_chain: String,
         server_crt: String,
         server_key: String,
+        crl_pem: String,
     },
     Denied,
     NotFound,
