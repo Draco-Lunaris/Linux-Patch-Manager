@@ -10,12 +10,17 @@
 //! use pm_agent_client::AgentClient;
 //!
 //! # async fn run() -> Result<(), pm_agent_client::AgentClientError> {
+//! // Load certificates from files (never hardcode or include_bytes! private keys)
+//! let client_cert = std::fs::read("/etc/patch-manager/certs/client.crt")?;
+//! let client_key = std::fs::read("/etc/patch-manager/certs/client.key")?;
+//! let ca_cert = std::fs::read("/etc/patch-manager/ca/ca.crt")?;
+//!
 //! let client = AgentClient::new(
 //!     "10.0.1.5",
 //!     12443,
-//!     include_bytes!("../certs/client.crt"),
-//!     include_bytes!("../certs/client.key"),
-//!     include_bytes!("../certs/ca.crt"),
+//!     &client_cert,
+//!     &client_key,
+//!     &ca_cert,
 //! )?;
 //!
 //! let health = client.health().await?;
