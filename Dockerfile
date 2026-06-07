@@ -58,23 +58,15 @@ RUN npm run build
 # ---------------------------------------------------------------------------
 # Stage 3: Runtime
 # ---------------------------------------------------------------------------
-FROM debian:bookworm-slim AS runtime
+FROM ubuntu:24.04 AS runtime
 
-# Add PostgreSQL APT repository for postgresql-client-16
-# (Bookworm default repos only ship PostgreSQL 15)
-RUN apt-get update && apt-get install -y ca-certificates curl gnupg2 \
-    && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
-       | gpg --dearmor -o /usr/share/keyrings/postgresql-keyring.gpg \
-    && echo "deb [signed-by=/usr/share/keyrings/postgresql-keyring.gpg] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
-       > /etc/apt/sources.list.d/pgdg.list \
-    && apt-get update \
-    && apt-get install -y \
-       libssl3 \
-       libfontconfig1 \
-       postgresql-client-16 \
-       argon2 \
-    && apt-get purge -y gnupg2 \
-    && apt-get autoremove -y \
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3t64 \
+    libfontconfig1 \
+    postgresql-client-16 \
+    argon2 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Create service user
