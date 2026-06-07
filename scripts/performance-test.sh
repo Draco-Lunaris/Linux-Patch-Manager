@@ -15,6 +15,13 @@
 
 set -euo pipefail
 
+# ---------------------------------------------------------------------------
+# BusyBox-compatible millisecond timing (_now_ms not available)
+# ---------------------------------------------------------------------------
+_now_ms() {
+    python3 -c "import time; print(int(time.time()*1000))"
+}
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -72,10 +79,10 @@ api_call() {
 time_api_call() {
     local method="$1" endpoint="$2" shift; shift
     local start end elapsed
-    start=$(date +%s%N)
+    start=$(_now_ms)
     api_call "${method}" "${endpoint}" -o /dev/null "$@" 2>/dev/null || true
-    end=$(date +%s%N)
-    elapsed=$(( (end - start) / 1000000 ))  # milliseconds
+    end=$(_now_ms)
+    elapsed=$(( end - start ))  # milliseconds
     echo "$(echo "scale=3; ${elapsed}/1000" | bc)"
 }
 
@@ -97,10 +104,10 @@ test_dashboard_load() {
 
     # Also measure frontend static asset load
     info "Measuring frontend index.html load time..."
-    start=$(date +%s%N)
+    start=$(_now_ms)
     curl -sk -o /dev/null "${BASE_URL}/" 2>/dev/null || true
-    end=$(date +%s%N)
-    elapsed=$(( (end - start) / 1000000 ))
+    end=$(_now_ms)
+    elapsed=$(( end - start ))
     FRONTEND_TIME=$(echo "scale=3; ${elapsed}/1000" | bc)
     info "Frontend load time: ${FRONTEND_TIME}s"
     pass "Frontend static load: ${FRONTEND_TIME}s"
@@ -169,14 +176,14 @@ test_bulk_host_operations() {
 
     # 4.2 Sequential host creation (measure throughput)
     info "4.2 Sequential host creation (10 hosts)"
-    local start=$(date +%s%N)
+    local start=$(_now_ms)
     for i in $(seq 1 10); do
         api_call POST /api/v1/hosts \
             -d "{\"fqdn\": \"perf-test-${i}.example.com\", \"ip_address\": \"10.99.0.${i}\"}" \
             -o /dev/null 2>/dev/null || true
     done
-    local end=$(date +%s%N)
-    local total_ms=$(( (end - start) / 1000000 ))
+    local end=$(_now_ms)
+    local total_ms=$(( end - start ))
     local total_s=$(echo "scale=3; ${total_ms}/1000" | bc)
     local per_host=$(echo "scale=3; ${total_s}/10" | bc)
     info "10 hosts created in ${total_s}s (${per_host}s per host)"
@@ -199,11 +206,11 @@ test_cidr_scan() {
     # Note: This test initiates a real CIDR scan which may not complete quickly
     # without reachable hosts. We measure the API response time for initiating.
     info "5.1 CIDR scan initiation time"
-    local start=$(date +%s%N)
+    local start=$(_now_ms)
     SCAN_RESP=$(api_call POST /api/v1/discovery/cidr \
         -d '{"cidr": "10.0.0.0/30", "timeout": 1.5}' 2>/dev/null || true)
-    local end=$(date +%s%N)
-    local elapsed_ms=$(( (end - start) / 1000000 ))
+    local end=$(_now_ms)
+    local elapsed_ms=$(( end - start ))
     local elapsed_s=$(echo "scale=3; ${elapsed_ms}/1000" | bc)
 
     info "CIDR scan initiation: ${elapsed_s}s"
@@ -240,13 +247,13 @@ test_concurrent_load() {
 
     # Fire 20 concurrent requests and measure total time
     info "6.1 20 concurrent fleet status requests"
-    local start=$(date +%s%N)
+    local start=$(_now_ms)
     for i in $(seq 1 20); do
         api_call GET /api/v1/status/fleet -o /dev/null 2>/dev/null &
     done
     wait
-    local end=$(date +%s%N)
-    local total_ms=$(( (end - start) / 1000000 ))
+    local end=$(_now_ms)
+    local total_ms=$(( end - start ))
     local total_s=$(echo "scale=3; ${total_ms}/1000" | bc)
     local per_req=$(echo "scale=3; ${total_s}/20" | bc)
 
@@ -259,7 +266,7 @@ test_concurrent_load() {
 
     # 6.2 Mixed endpoint concurrent load
     info "6.2 20 concurrent mixed-endpoint requests"
-    start=$(date +%s%N)
+    start=$(_now_ms)
     for i in $(seq 1 5); do
         api_call GET /api/v1/hosts -o /dev/null 2>/dev/null &
         api_call GET /api/v1/groups -o /dev/null 2>/dev/null &
@@ -267,8 +274,8 @@ test_concurrent_load() {
         api_call GET /api/v1/status/fleet -o /dev/null 2>/dev/null &
     done
     wait
-    end=$(date +%s%N)
-    total_ms=$(( (end - start) / 1000000 ))
+    end=$(_now_ms)
+    total_ms=$(( end - start ))
     total_s=$(echo "scale=3; ${total_ms}/1000" | bc)
     per_req=$(echo "scale=3; ${total_s}/20" | bc)
     info "Mixed concurrent: ${total_s}s total, ${per_req}s avg"
@@ -282,12 +289,12 @@ test_ws_ticket_performance() {
     echo -e "\n${CYAN}=== Test 7: WebSocket Ticket Issuance ===${NC}"
 
     info "7.1 Sequential ticket creation (10 tickets)"
-    local start=$(date +%s%N)
+    local start=$(_now_ms)
     for i in $(seq 1 10); do
         api_call POST /api/v1/ws/ticket -o /dev/null 2>/dev/null || true
     done
-    local end=$(date +%s%N)
-    local total_ms=$(( (end - start) / 1000000 ))
+    local end=$(_now_ms)
+    local total_ms=$(( end - start ))
     local total_s=$(echo "scale=3; ${total_ms}/1000" | bc)
     local per_ticket=$(echo "scale=3; ${total_s}/10" | bc)
     info "10 tickets in ${total_s}s (${per_ticket}s per ticket)"
