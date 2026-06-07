@@ -1,3 +1,9 @@
+linux-patch-manager (1.0.0-1) unstable; urgency=low
+
+  * Release v1.0.0
+
+ -- git-echo <git-echo@moon-dragon.us>  Sun, 07 Jun 2026 12:58:46 -0500
+
 linux-patch-manager (0.1.9-1) noble; urgency=medium
 
   * Fix: Replace broken DashMap rate limiting with tower-governor middleware
