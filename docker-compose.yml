@@ -1,0 +1,58 @@
+# =============================================================================
+# Linux Patch Manager — Docker Compose Deployment
+# =============================================================================
+# Usage:
+#   cp .env.example .env   # Edit DB_PASSWORD
+#   docker compose up -d
+# =============================================================================
+
+services:
+  db:
+    image: postgres:16-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: patch_manager
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: patch_manager
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U patch_manager -d patch_manager"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - patch-manager-net
+
+  app:
+    image: ghcr.io/draco-lunaris/linux-patch-manager:${TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "443:443"
+    environment:
+      DATABASE_URL: postgres://patch_manager:${DB_PASSWORD}@db:5432/patch_manager
+      PATCH_MANAGER_CONFIG: /etc/patch-manager/config.toml
+    volumes:
+      - pm-config:/etc/patch-manager
+      - pm-logs:/var/log/patch-manager
+      - pm-data:/opt/patch-manager
+    networks:
+      - patch-manager-net
+
+volumes:
+  pgdata:
+    driver: local
+  pm-config:
+    driver: local
+  pm-logs:
+    driver: local
+  pm-data:
+    driver: local
+
+networks:
+  patch-manager-net:
+    driver: bridge

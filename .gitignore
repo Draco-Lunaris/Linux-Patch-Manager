@@ -28,6 +28,9 @@ frontend/dist
 *.deb
 package-build/
 
+# Docker environment
+.env
+
 # Private key material - NEVER commit
 *.key
 *.key.pem

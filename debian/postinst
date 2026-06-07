@@ -4,91 +4,348 @@ set -e
 # =============================================================================
 # Linux Patch Manager — Post-install script
 # =============================================================================
+# Fully automated: apt install ./linux-patch-manager_X.X.X-1_amd64.deb
+# results in a running service with a printed admin password.
+# All steps are idempotent (safe to re-run on upgrade).
+# =============================================================================
 
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+info()  { echo -e "${GREEN}[INFO]${NC}  $*"; }
+warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
+error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+
+DB_NAME="patch_manager"
+DB_USER="patch_manager"
+CONFIG_DIR="/etc/patch-manager"
+MIGRATION_DIR="/usr/share/patch-manager/migrations"
+ADMIN_PASSWORD_FILE="/etc/patch-manager/admin-password.txt"
+
+# ---------------------------------------------------------------------------
+# PostgreSQL helpers
+# ---------------------------------------------------------------------------
+psql_run() {
+    # Run SQL as the postgres superuser
+    sudo -u postgres psql -v ON_ERROR_STOP=1 "$@" 2>/dev/null
+}
+
+psql_run_db() {
+    # Run SQL against the patch_manager database
+    sudo -u postgres psql -v ON_ERROR_STOP=1 -d "${DB_NAME}" "$@" 2>/dev/null
+}
+
+# ---------------------------------------------------------------------------
+# 1. Create service user (idempotent)
+# ---------------------------------------------------------------------------
+create_service_user() {
+    if ! id patch-manager &>/dev/null; then
+        useradd --system --no-create-home --shell /usr/sbin/nologin \
+            --comment "Linux Patch Manager service account" patch-manager
+        info "Service user 'patch-manager' created."
+    else
+        info "Service user 'patch-manager' already exists."
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# 2. Create required directories (idempotent)
+# ---------------------------------------------------------------------------
+create_directories() {
+    mkdir -p "${CONFIG_DIR}/ca" "${CONFIG_DIR}/certs" \
+             "${CONFIG_DIR}/jwt" "${CONFIG_DIR}/tls" \
+             /var/log/patch-manager /opt/patch-manager \
+             /var/backups/patch-manager
+
+    chown -R patch-manager:patch-manager \
+        "${CONFIG_DIR}" /var/log/patch-manager \
+        /opt/patch-manager /usr/share/patch-manager/frontend
+
+    chmod 750 "${CONFIG_DIR}/ca" "${CONFIG_DIR}/jwt"
+    chmod 700 /var/backups/patch-manager
+}
+
+# ---------------------------------------------------------------------------
+# 3. Wait for PostgreSQL to be ready
+# ---------------------------------------------------------------------------
+wait_for_postgresql() {
+    info "Waiting for PostgreSQL to be ready..."
+    local retries=30
+    local delay=2
+    local i
+    for ((i = 1; i <= retries; i++)); do
+        if pg_isready -q 2>/dev/null; then
+            info "PostgreSQL is ready."
+            return 0
+        fi
+        warn "PostgreSQL not ready yet (attempt ${i}/${retries}), waiting ${delay}s..."
+        sleep "${delay}"
+    done
+    error "PostgreSQL did not become ready after $((retries * delay)) seconds."
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# 4. Create PostgreSQL user and database (idempotent)
+# ---------------------------------------------------------------------------
+setup_database() {
+    info "Setting up PostgreSQL database and user..."
+
+    # Generate a random password for the DB user
+    local db_password
+    db_password=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32)
+
+    # Create role if not exists
+    local role_exists
+    role_exists=$(psql_run -t -A -c "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'" 2>/dev/null || echo "")
+    if [[ "${role_exists}" != "1" ]]; then
+        psql_run -c "CREATE ROLE ${DB_USER} LOGIN PASSWORD '${db_password}';"
+        info "PostgreSQL user '${DB_USER}' created."
+        # Store password for config generation
+        echo "${db_password}" > /tmp/.pm-db-password-new
+    else
+        info "PostgreSQL user '${DB_USER}' already exists, skipping creation."
+    fi
+
+    # Create database if not exists
+    local db_exists
+    db_exists=$(psql_run -t -A -c "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" 2>/dev/null || echo "")
+    if [[ "${db_exists}" != "1" ]]; then
+        psql_run -c "CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};"
+        info "Database '${DB_NAME}' created."
+    else
+        info "Database '${DB_NAME}' already exists, skipping creation."
+    fi
+
+    # Grant permissions (idempotent)
+    psql_run_db -c "GRANT USAGE ON SCHEMA public TO ${DB_USER};" 2>/dev/null || true
+    psql_run_db -c "GRANT CREATE ON SCHEMA public TO ${DB_USER};" 2>/dev/null || true
+    psql_run_db -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};" 2>/dev/null || true
+}
+
+# ---------------------------------------------------------------------------
+# 5. Apply database migrations (idempotent)
+# ---------------------------------------------------------------------------
+apply_migrations() {
+    info "Applying database migrations..."
+
+    # Ensure pgcrypto extension is available
+    psql_run_db -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;" 2>/dev/null || true
+
+    # Create migration tracking table if not exists
+    psql_run_db <<'MIGSQL'
+CREATE TABLE IF NOT EXISTS _migrations (
+    id          SERIAL PRIMARY KEY,
+    filename    TEXT    NOT NULL UNIQUE,
+    applied_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+MIGSQL
+
+    # Handle upgrade from pre-migration-tracking versions:
+    # If tables exist but _migrations is empty, mark all existing migrations as applied.
+    local migration_count
+    migration_count=$(psql_run_db -t -A -c "SELECT COUNT(*) FROM _migrations;" 2>/dev/null || echo "0")
+    migration_count="${migration_count// /}"
+
+    local tables_exist
+    tables_exist=$(psql_run_db -t -A -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='users';" 2>/dev/null || echo "0")
+    tables_exist="${tables_exist// /}"
+
+    if [[ "${migration_count}" == "0" && "${tables_exist}" -gt 0 ]]; then
+        info "Existing database detected — marking all shipped migrations as already applied."
+        for sql_file in $(ls "${MIGRATION_DIR}"/*.sql 2>/dev/null | sort); do
+            local fname
+            fname=$(basename "${sql_file}")
+            psql_run_db -c "INSERT INTO _migrations (filename) VALUES ('${fname}') ON CONFLICT (filename) DO NOTHING;" 2>/dev/null || true
+        done
+    fi
+
+    # Apply each migration in sorted order, skipping already-applied ones
+    local applied=0
+    local skipped=0
+    for sql_file in $(ls "${MIGRATION_DIR}"/*.sql 2>/dev/null | sort); do
+        local fname
+        fname=$(basename "${sql_file}")
+
+        local already_applied
+        already_applied=$(psql_run_db -t -A -c "SELECT COUNT(*) FROM _migrations WHERE filename='${fname}';" 2>/dev/null || echo "0")
+        already_applied="${already_applied// /}"
+
+        if [[ "${already_applied}" -gt 0 ]]; then
+            skipped=$((skipped + 1))
+            continue
+        fi
+
+        info "  Applying migration: ${fname}"
+        if psql_run_db -f "${sql_file}"; then
+            psql_run_db -c "INSERT INTO _migrations (filename) VALUES ('${fname}');" 2>/dev/null || true
+            applied=$((applied + 1))
+        else
+            error "  Failed to apply migration: ${fname}"
+            return 1
+        fi
+    done
+
+    if [[ "${applied}" -gt 0 ]]; then
+        info "Applied ${applied} new migration(s), skipped ${skipped} already applied."
+    else
+        info "All migrations up to date (${skipped} already applied)."
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# 6. Generate admin password and update database
+# ---------------------------------------------------------------------------
+generate_admin_password() {
+    info "Generating admin password..."
+
+    # Generate a random 24-character password
+    local admin_password
+    admin_password=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9!@#%^&*' | head -c 24)
+
+    # Hash with argon2 (PHC format, compatible with the application)
+    local password_hash
+    password_hash=$(echo -n "${admin_password}" | argon2 salt -id -t 3 -m 65536 -p 1 -l 32 -e)
+
+    # Update admin user password in database
+    # Only update if the placeholder hash is still present
+    # The placeholder starts with: $argon2id$v=19$m=65536,t=3,p=1$AAAAAAAAAAAAAAAA
+    # Using single-quoted variable to preserve $ signs in SQL LIKE pattern
+    local placeholder_pattern
+    placeholder_pattern='$argon2id$v=19$m=65536,t=3,p=1$AAAAAAAAAAAAAAAA%'
+
+    local updated
+    updated=$(psql_run_db -t -A -c \
+        "UPDATE users SET password_hash = '${password_hash}', force_password_reset = TRUE \
+         WHERE username = 'admin' AND password_hash LIKE '${placeholder_pattern}' \
+         RETURNING id;" 2>/dev/null || echo "")
+
+    if [[ -n "${updated}" ]]; then
+        # Write admin password to file (mode 600, owned by root)
+        echo "${admin_password}" > "${ADMIN_PASSWORD_FILE}"
+        chmod 600 "${ADMIN_PASSWORD_FILE}"
+        chown root:root "${ADMIN_PASSWORD_FILE}"
+
+        echo ""
+        echo -e "${CYAN}=============================================${NC}"
+        echo -e "${CYAN}  Linux Patch Manager — Admin Credentials${NC}"
+        echo -e "${CYAN}=============================================${NC}"
+        echo -e "  Username: ${GREEN}admin${NC}"
+        echo -e "  Password: ${GREEN}${admin_password}${NC}"
+        echo ""
+        echo -e "  ${YELLOW}IMPORTANT: Save this password! It will not be shown again.${NC}"
+        echo -e "  Password also saved to: ${ADMIN_PASSWORD_FILE}"
+        echo -e "${CYAN}=============================================${NC}"
+        echo ""
+    else
+        info "Admin password already set (not a fresh install). Password file not regenerated."
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# 7. Write config.toml with DB URL (only if file doesn't exist)
+# ---------------------------------------------------------------------------
+write_config() {
+    local config_file="${CONFIG_DIR}/config.toml"
+
+    if [[ -f "${config_file}" ]]; then
+        info "Config file ${config_file} already exists, not overwriting."
+        return 0
+    fi
+
+    info "Writing configuration file..."
+
+    # Get the DB password — use the one we just generated if we created the user
+    local db_password=""
+    if [[ -f /tmp/.pm-db-password-new ]]; then
+        db_password=$(cat /tmp/.pm-db-password-new)
+    fi
+
+    # If we don't have a password (user already existed), generate a new one
+    # and update the PostgreSQL user so we can connect
+    if [[ -z "${db_password}" ]]; then
+        db_password=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32)
+        psql_run -c "ALTER ROLE ${DB_USER} WITH PASSWORD '${db_password}';" 2>/dev/null || true
+    fi
+
+    # Copy example config and set the DB URL
+    cp /usr/share/patch-manager/config.example.toml "${config_file}"
+    sed -i "s|postgres://patch_manager:CHANGEME@localhost/patch_manager|postgres://${DB_USER}:${db_password}@localhost/${DB_NAME}|" "${config_file}"
+    chown patch-manager:patch-manager "${config_file}"
+    chmod 640 "${config_file}"
+
+    info "Configuration written to ${config_file}"
+}
+
+# ---------------------------------------------------------------------------
+# 8. Generate JWT keys (idempotent)
+# ---------------------------------------------------------------------------
+generate_jwt_keys() {
+    if [[ ! -f "${CONFIG_DIR}/jwt/signing.pem" ]]; then
+        info "Generating Ed25519 JWT signing key..."
+        openssl genpkey -algorithm ed25519 -out "${CONFIG_DIR}/jwt/signing.pem" 2>/dev/null
+        openssl pkey -in "${CONFIG_DIR}/jwt/signing.pem" -pubout -out "${CONFIG_DIR}/jwt/verify.pem" 2>/dev/null
+        chown patch-manager:patch-manager "${CONFIG_DIR}/jwt/signing.pem" "${CONFIG_DIR}/jwt/verify.pem"
+        chmod 600 "${CONFIG_DIR}/jwt/signing.pem"
+        chmod 644 "${CONFIG_DIR}/jwt/verify.pem"
+        info "JWT keys generated."
+    else
+        info "JWT signing key already exists, skipping."
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# 9. Enable and start services
+# ---------------------------------------------------------------------------
+enable_and_start_services() {
+    systemctl daemon-reload
+
+    # Enable the target (which pulls in web + worker)
+    systemctl enable patch-manager.target 2>/dev/null || true
+
+    # Start or restart services
+    if systemctl is-active --quiet patch-manager.target 2>/dev/null; then
+        info "Restarting patch-manager services (upgrade)..."
+        systemctl restart patch-manager.target 2>/dev/null || true
+    else
+        info "Starting patch-manager services..."
+        systemctl start patch-manager.target 2>/dev/null || true
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# 10. Install backup cron (idempotent)
+# ---------------------------------------------------------------------------
+install_backup_cron() {
+    if ! crontab -l 2>/dev/null | grep -qF "backup.sh"; then
+        (crontab -l 2>/dev/null; echo "0 2 * * * /usr/local/bin/backup.sh >> /var/log/patch-manager/backup.log 2>&1") | crontab -
+        info "Nightly backup cron installed."
+    fi
+}
+
+# =============================================================================
+# Main
+# =============================================================================
 case "$1" in
     configure)
-        # Create service user if not exists
-        if ! id patch-manager &>/dev/null; then
-            useradd --system --no-create-home --shell /usr/sbin/nologin \
-                --comment "Linux Patch Manager service account" patch-manager
-        fi
+        create_service_user
+        create_directories
+        wait_for_postgresql
+        setup_database
+        apply_migrations
+        generate_admin_password
+        write_config
+        generate_jwt_keys
+        enable_and_start_services
+        install_backup_cron
 
-        # Create required directories
-        mkdir -p /etc/patch-manager/ca /etc/patch-manager/certs \
-                 /etc/patch-manager/jwt /etc/patch-manager/tls \
-                 /var/log/patch-manager /opt/patch-manager \
-                 /var/backups/patch-manager
+        # Clean up temp file
+        rm -f /tmp/.pm-db-password-new
 
-        chown -R patch-manager:patch-manager \
-            /etc/patch-manager /var/log/patch-manager \
-            /opt/patch-manager /usr/share/patch-manager/frontend
-
-        chmod 750 /etc/patch-manager/ca /etc/patch-manager/jwt
-        chmod 700 /var/backups/patch-manager
-
-        # Generate JWT signing key if not present
-        if [[ ! -f /etc/patch-manager/jwt/signing.pem ]]; then
-            openssl genpkey -algorithm ed25519 -out /etc/patch-manager/jwt/signing.pem 2>/dev/null
-            openssl pkey -in /etc/patch-manager/jwt/signing.pem -pubout -out /etc/patch-manager/jwt/verify.pem 2>/dev/null
-            chown patch-manager:patch-manager /etc/patch-manager/jwt/signing.pem /etc/patch-manager/jwt/verify.pem
-            chmod 600 /etc/patch-manager/jwt/signing.pem
-            chmod 644 /etc/patch-manager/jwt/verify.pem
-        fi
-
-        # Write default config if not present
-        if [[ ! -f /etc/patch-manager/config.toml ]]; then
-            cp /usr/share/patch-manager/config.example.toml /etc/patch-manager/config.toml
-            chown patch-manager:patch-manager /etc/patch-manager/config.toml
-            chmod 640 /etc/patch-manager/config.toml
-        fi
-
-        # Install backup cron if not present
-        if ! crontab -l 2>/dev/null | grep -qF "backup.sh"; then
-            (crontab -l 2>/dev/null; echo "0 2 * * * /usr/local/bin/backup.sh >> /var/log/patch-manager/backup.log 2>&1") | crontab -
-        fi
-
-        # Reload systemd
-        systemctl daemon-reload
-
-        # Restart services if this is an upgrade (not a fresh install)
-        if systemctl is-active --quiet patch-manager-web 2>/dev/null; then
-            systemctl restart patch-manager-web || true
-        fi
-        if systemctl is-active --quiet patch-manager-worker 2>/dev/null; then
-            systemctl restart patch-manager-worker || true
-        fi
-
-        # Run pending database migrations
-        MIGRATION_DIR="/usr/share/patch-manager/migrations"
-        if [[ -d "$MIGRATION_DIR" ]]; then
-            echo "Applying database migrations..."
-            for sql_file in $(ls "$MIGRATION_DIR"/*.sql 2>/dev/null | sort); do
-                echo "  Applying: $(basename "$sql_file")"
-            done
-            echo "Note: Migrations must be applied manually: sudo -u patch_manager psql -d patch_manager -f <migration_file>"
-        fi
-
-        echo ""
-        echo "Linux Patch Manager installed successfully!"
-        echo "==========================================="
-        echo ""
-        echo "Next steps:"
-        echo "  1. Install and configure PostgreSQL:"
-        echo "       apt install postgresql-16"
-        echo "  2. Create the database:"
-        echo "       sudo -u postgres createdb -O patch_manager patch_manager"
-        echo "  3. Edit /etc/patch-manager/config.toml with your database URL"
-        echo "  4. Enable and start services:"
-        echo "       systemctl enable --now patch-manager.target"
-        echo "  5. Access the web UI at https://localhost"
-        echo "     Default admin credentials are set via the seed migration."
-        echo ""
-        echo "IMPORTANT: Change the default admin password immediately after first login!"
-        echo ""
-        echo "If this is an upgrade, services have been restarted automatically."
-        echo "Apply any new database migrations:"
-        echo "  sudo -u patch_manager psql -d patch_manager -f /usr/share/patch-manager/migrations/<NNN_migration>.sql"
-        echo ""
+        info "Linux Patch Manager installation complete."
         ;;
 
     abort-upgrade|abort-remove|abort-deconfigure)
