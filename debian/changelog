@@ -1,3 +1,9 @@
+linux-patch-manager (1.1.0-1) unstable; urgency=low
+
+  * Release v1.1.0
+
+ -- git-echo <git-echo@moon-dragon.us>  Sun, 07 Jun 2026 16:47:03 -0500
+
 linux-patch-manager (1.0.0-1) unstable; urgency=low
 
   * Release v1.0.0
