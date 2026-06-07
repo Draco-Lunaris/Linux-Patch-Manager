@@ -30,7 +30,7 @@ mv "$TEMP_CHANGELOG" debian/changelog
 echo "[2/5] debian/changelog: Added entry for $NEW_VERSION"
 
 # 3. debian/control - Update Version field
-if grep -q "^Version:" debian/control 2>/dev/null; then
+if grep -q "^Version:" debian/control 2>/dev/null || true; then
     sed -i "s/^Version: .*/Version: $NEW_VERSION-1/" debian/control
     echo "[3/5] debian/control: -> $NEW_VERSION-1"
 else
@@ -71,7 +71,7 @@ fi
 
 echo ""
 echo "Stale references check:"
-grep -r "$OLD_VERSION" --include='*.toml' --include='*.sh' --include='*.json' --include='control' . 2>/dev/null | grep -v 'target/' | grep -v '.git/' | grep -v 'node_modules/' | grep -v 'bump-version.sh' || echo "  No stale references found"
+grep -r "$OLD_VERSION" --include='*.toml' --include='*.sh' --include='*.json' --include='control' . 2>/dev/null || true | grep -v 'target/' | grep -v '.git/' | grep -v 'node_modules/' | grep -v 'bump-version.sh' || echo "  No stale references found"
 
 echo ""
 echo "Next steps:"
