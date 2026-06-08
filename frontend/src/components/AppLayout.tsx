@@ -86,16 +86,13 @@ export default function AppLayout() {
 
   const drawer = (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <Toolbar sx={{ justifyContent: 'center', py: 1.5, flexDirection: 'column' }}>
+      <Toolbar sx={{ justifyContent: 'center', py: 1.5 }}>
         <Typography variant="h6" fontWeight={700} sx={{
           background: 'linear-gradient(135deg, #42A5F5 30%, #26C6DA 100%)',
           WebkitBackgroundClip: 'text',
           WebkitTextFillColor: 'transparent',
         }}>
           🐉 Patch Manager
-        </Typography>
-        <Typography variant="caption" sx={{ color: 'text.secondary', opacity: 0.7, mt: -0.5 }}>
-          v{__APP_VERSION__}
         </Typography>
       </Toolbar>
       <Divider />
