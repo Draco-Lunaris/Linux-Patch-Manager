@@ -6,15 +6,23 @@
 # =============================================================================
 
 # ---------------------------------------------------------------------------
-# Stage 1: Rust build
+# Stage 1: Rust build (Ubuntu 24.04 + rustup)
 # ---------------------------------------------------------------------------
-FROM rust:1.82-bookworm AS rust-builder
+FROM ubuntu:24.04 AS rust-builder
+
+ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
     pkg-config \
     libssl-dev \
     libfontconfig1-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Rust via rustup (stable channel, provides 1.85+)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+ENV PATH="/root/.cargo/bin:${PATH}"
 
 WORKDIR /usr/src/app
 
@@ -44,9 +52,21 @@ RUN ls -la target/release/pm-web target/release/pm-worker
 RUN strip target/release/pm-web target/release/pm-worker
 
 # ---------------------------------------------------------------------------
-# Stage 2: Frontend build
+# Stage 2: Frontend build (Ubuntu 24.04 + Node.js 20)
 # ---------------------------------------------------------------------------
-FROM node:20-bookworm-slim AS frontend-builder
+FROM ubuntu:24.04 AS frontend-builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node.js 20 via NodeSource
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /usr/src/app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
