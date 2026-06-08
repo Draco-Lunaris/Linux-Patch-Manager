@@ -8,7 +8,7 @@
 # ---------------------------------------------------------------------------
 # Stage 1: Rust build
 # ---------------------------------------------------------------------------
-FROM rust:1.82-bookworm AS rust-builder
+FROM rust:1.85-bookworm AS rust-builder
 
 RUN apt-get update && apt-get install -y \
     pkg-config \
