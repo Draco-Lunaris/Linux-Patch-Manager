@@ -28,6 +28,14 @@ WORKDIR /usr/src/app
 
 # Cache dependencies by building a dummy project first
 COPY Cargo.toml Cargo.lock ./
+COPY crates/pm-web/Cargo.toml crates/pm-web/Cargo.toml
+COPY crates/pm-worker/Cargo.toml crates/pm-worker/Cargo.toml
+COPY crates/pm-core/Cargo.toml crates/pm-core/Cargo.toml
+COPY crates/pm-agent-client/Cargo.toml crates/pm-agent-client/Cargo.toml
+COPY crates/pm-auth/Cargo.toml crates/pm-auth/Cargo.toml
+COPY crates/pm-ca/Cargo.toml crates/pm-ca/Cargo.toml
+COPY crates/pm-reports/Cargo.toml crates/pm-reports/Cargo.toml
+COPY crates/migrate-secrets/Cargo.toml crates/migrate-secrets/Cargo.toml
 RUN mkdir -p crates/pm-web/src crates/pm-worker/src crates/pm-core/src \
     crates/pm-agent-client/src crates/pm-auth/src crates/pm-ca/src \
     crates/pm-reports/src crates/migrate-secrets/src
@@ -43,6 +51,7 @@ RUN cargo build --release 2>/dev/null || true
 
 # Now build the real project
 COPY crates/ crates/
+COPY migrations/ migrations/
 RUN cargo build --release
 
 # Verify binaries exist
@@ -84,6 +93,7 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3t64 \
     libfontconfig1 \
+    openssl \
     postgresql-client-16 \
     argon2 \
     curl \
