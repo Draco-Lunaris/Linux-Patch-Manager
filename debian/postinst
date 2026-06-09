@@ -217,7 +217,52 @@ MIGSQL
 }
 
 # ---------------------------------------------------------------------------
-# 6. Generate admin password and update database
+# 6. Reassign database object ownership to patch_manager
+# ---------------------------------------------------------------------------
+# The postinst runs migrations as the postgres superuser, so all tables,
+# types, and sequences created by those migrations are owned by postgres.
+# The application connects as patch_manager and needs ownership to ALTER
+# tables during upgrades (e.g. 'must be owner of table groups').
+# This function reassigns ownership of every database object to patch_manager
+# so the application can manage its own schema.
+# ---------------------------------------------------------------------------
+reassign_ownership() {
+    info "Reassigning database object ownership to ${DB_USER}..."
+
+    # REASSIGN OWNED BY covers all tables, enum types, sequences, and views
+    # owned by postgres in the current database.
+    psql_run_db -c "REASSIGN OWNED BY postgres TO ${DB_USER};" \
+        || warn "REASSIGN OWNED BY encountered warnings (may be harmless on fresh installs)."
+
+    # Schemas are NOT covered by REASSIGN OWNED BY — handle explicitly.
+    psql_run_db -c "ALTER SCHEMA public OWNER TO ${DB_USER};" \
+        || warn "Could not alter public schema owner."
+
+    # Grant full privileges so patch_manager can manage all objects
+    psql_run -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};" \
+        || warn "Could not grant database privileges."
+    psql_run_db -c "GRANT ALL PRIVILEGES ON SCHEMA public TO ${DB_USER};" \
+        || warn "Could not grant schema privileges."
+    psql_run_db -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO ${DB_USER};" \
+        || warn "Could not grant table privileges."
+    psql_run_db -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO ${DB_USER};" \
+        || warn "Could not grant sequence privileges."
+    psql_run_db -c "GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public TO ${DB_USER};" \
+        || warn "Could not grant function privileges."
+
+    # Ensure future objects in public schema are also owned by patch_manager
+    psql_run_db -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO ${DB_USER};" \
+        || warn "Could not set default table privileges."
+    psql_run_db -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO ${DB_USER};" \
+        || warn "Could not set default sequence privileges."
+    psql_run_db -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO ${DB_USER};" \
+        || warn "Could not set default function privileges."
+
+    info "Database object ownership reassigned to ${DB_USER}."
+}
+
+# ---------------------------------------------------------------------------
+# 8. Generate admin password and update database
 # ---------------------------------------------------------------------------
 generate_admin_password() {
     info "Generating admin password..."
@@ -269,7 +314,7 @@ generate_admin_password() {
 }
 
 # ---------------------------------------------------------------------------
-# 7. Write config.toml with DB URL
+# 9. Write config.toml with DB URL
 # ---------------------------------------------------------------------------
 # Handles three scenarios:
 #   1. No config file → create from example with real DB password
@@ -317,7 +362,7 @@ write_config() {
 }
 
 # ---------------------------------------------------------------------------
-# 8. Generate JWT keys (idempotent)
+# 10. Generate JWT keys (idempotent)
 # Only generates if missing; regenerates verify.pem from signing.pem if lost.
 # ---------------------------------------------------------------------------
 generate_jwt_keys() {
@@ -341,7 +386,7 @@ generate_jwt_keys() {
 }
 
 # ---------------------------------------------------------------------------
-# 9. Enable and start services
+# 11. Enable and start services
 # ---------------------------------------------------------------------------
 enable_and_start_services() {
     systemctl daemon-reload
@@ -363,7 +408,7 @@ enable_and_start_services() {
 }
 
 # ---------------------------------------------------------------------------
-# 10. Install backup cron (idempotent)
+# 12. Install backup cron (idempotent)
 # ---------------------------------------------------------------------------
 install_backup_cron() {
     if ! crontab -l 2>/dev/null | grep -qF "backup.sh"; then
@@ -382,6 +427,7 @@ case "$1" in
         wait_for_postgresql
         setup_database
         apply_migrations
+        reassign_ownership
         generate_admin_password
         write_config
         generate_jwt_keys
