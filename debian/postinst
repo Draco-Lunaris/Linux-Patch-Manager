@@ -107,7 +107,27 @@ setup_database() {
         # Store password for config generation
         echo "${db_password}" > /tmp/.pm-db-password-new
     else
-        info "PostgreSQL user '${DB_USER}' already exists, skipping creation."
+        info "PostgreSQL user '${DB_USER}' already exists."
+        # Recover the DB password: try from existing config, or generate new.
+        local config_file="${CONFIG_DIR}/config.toml"
+        local existing_pw=""
+        if [[ -f "${config_file}" ]]; then
+            # Extract password from URL: postgres://user:PASSWORD@host/db
+            # Use @localhost anchor so passwords containing @ are extracted correctly.
+            existing_pw=$(sed -n 's|^url = "postgres://[^:]*:\(.*\)@localhost.*"|\1|p' "${config_file}" | head -1)
+        fi
+        if [[ -n "${existing_pw}" && "${existing_pw}" != "CHANGEME" ]]; then
+            # Config has a real password — sync it to PostgreSQL so the app can connect.
+            psql_run -c "ALTER ROLE ${DB_USER} WITH PASSWORD '${existing_pw}';" 2>/dev/null || true
+            echo "${existing_pw}" > /tmp/.pm-db-password-new
+            info "Synced DB password from existing config to PostgreSQL."
+        else
+            # No config or CHANGEME — generate a fresh password and update PostgreSQL.
+            db_password=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32)
+            psql_run -c "ALTER ROLE ${DB_USER} WITH PASSWORD '${db_password}';" 2>/dev/null || true
+            echo "${db_password}" > /tmp/.pm-db-password-new
+            info "Generated new DB password for existing user."
+        fi
     fi
 
     # Create database if not exists
@@ -249,42 +269,56 @@ generate_admin_password() {
 }
 
 # ---------------------------------------------------------------------------
-# 7. Write config.toml with DB URL (only if file doesn't exist)
+# 7. Write config.toml with DB URL
+# ---------------------------------------------------------------------------
+# Handles three scenarios:
+#   1. No config file → create from example with real DB password
+#   2. Config exists with CHANGEME → replace CHANGEME with real DB password
+#   3. Config exists with real password → leave it alone (upgrade)
 # ---------------------------------------------------------------------------
 write_config() {
     local config_file="${CONFIG_DIR}/config.toml"
 
-    if [[ -f "${config_file}" ]]; then
-        info "Config file ${config_file} already exists, not overwriting."
-        return 0
-    fi
-
-    info "Writing configuration file..."
-
-    # Get the DB password — use the one we just generated if we created the user
+    # Resolve the DB password to use: from setup_database() or generate fresh.
     local db_password=""
     if [[ -f /tmp/.pm-db-password-new ]]; then
         db_password=$(cat /tmp/.pm-db-password-new)
     fi
 
-    # If we don't have a password (user already existed), generate a new one
-    # and update the PostgreSQL user so we can connect
-    if [[ -z "${db_password}" ]]; then
-        db_password=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32)
-        psql_run -c "ALTER ROLE ${DB_USER} WITH PASSWORD '${db_password}';" 2>/dev/null || true
+    if [[ -f "${config_file}" ]]; then
+        # Check if the config still has the CHANGEME placeholder
+        if grep -q 'CHANGEME' "${config_file}"; then
+            if [[ -z "${db_password}" ]]; then
+                # No password from setup_database() — generate a fresh one
+                db_password=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32)
+                psql_run -c "ALTER ROLE ${DB_USER} WITH PASSWORD '${db_password}';" 2>/dev/null || true
+            fi
+            info "Replacing CHANGEME placeholder in existing config with real DB password."
+            sed -i "s|postgres://patch_manager:CHANGEME@localhost/patch_manager|postgres://${DB_USER}:${db_password}@localhost/${DB_NAME}|" "${config_file}"
+        else
+            info "Config file ${config_file} already exists with a real password, leaving it unchanged."
+            return 0
+        fi
+    else
+        # No config file — create from example
+        if [[ -z "${db_password}" ]]; then
+            db_password=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32)
+            psql_run -c "ALTER ROLE ${DB_USER} WITH PASSWORD '${db_password}';" 2>/dev/null || true
+        fi
+
+        info "Writing configuration file..."
+        cp /usr/share/patch-manager/config.example.toml "${config_file}"
+        sed -i "s|postgres://patch_manager:CHANGEME@localhost/patch_manager|postgres://${DB_USER}:${db_password}@localhost/${DB_NAME}|" "${config_file}"
     fi
 
-    # Copy example config and set the DB URL
-    cp /usr/share/patch-manager/config.example.toml "${config_file}"
-    sed -i "s|postgres://patch_manager:CHANGEME@localhost/patch_manager|postgres://${DB_USER}:${db_password}@localhost/${DB_NAME}|" "${config_file}"
     chown patch-manager:patch-manager "${config_file}"
     chmod 640 "${config_file}"
-
     info "Configuration written to ${config_file}"
 }
 
 # ---------------------------------------------------------------------------
 # 8. Generate JWT keys (idempotent)
+# Only generates if missing; regenerates verify.pem from signing.pem if lost.
 # ---------------------------------------------------------------------------
 generate_jwt_keys() {
     if [[ ! -f "${CONFIG_DIR}/jwt/signing.pem" ]]; then
@@ -295,8 +329,14 @@ generate_jwt_keys() {
         chmod 600 "${CONFIG_DIR}/jwt/signing.pem"
         chmod 644 "${CONFIG_DIR}/jwt/verify.pem"
         info "JWT keys generated."
+    elif [[ ! -f "${CONFIG_DIR}/jwt/verify.pem" ]]; then
+        info "Regenerating missing JWT verification key from existing signing key..."
+        openssl pkey -in "${CONFIG_DIR}/jwt/signing.pem" -pubout -out "${CONFIG_DIR}/jwt/verify.pem" 2>/dev/null
+        chown patch-manager:patch-manager "${CONFIG_DIR}/jwt/verify.pem"
+        chmod 644 "${CONFIG_DIR}/jwt/verify.pem"
+        info "JWT verification key regenerated."
     else
-        info "JWT signing key already exists, skipping."
+        info "JWT keys already exist, skipping."
     fi
 }
 
