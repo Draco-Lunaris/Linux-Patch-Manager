@@ -1,7 +1,7 @@
 -- Migration: 016_enrollment_requests
 -- Description: Create enrollment_requests table for host self-enrollment
 
-CREATE TABLE enrollment_requests (
+CREATE TABLE IF NOT EXISTS enrollment_requests (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     machine_id      TEXT NOT NULL UNIQUE,
     fqdn            TEXT NOT NULL,
@@ -12,5 +12,5 @@ CREATE TABLE enrollment_requests (
     expires_at      TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '24 hours'
 );
 
-CREATE INDEX idx_enrollment_requests_token ON enrollment_requests (polling_token);
-CREATE INDEX idx_enrollment_requests_expires ON enrollment_requests (expires_at);
+CREATE INDEX IF NOT EXISTS idx_enrollment_requests_token ON enrollment_requests (polling_token);
+CREATE INDEX IF NOT EXISTS idx_enrollment_requests_expires ON enrollment_requests (expires_at);

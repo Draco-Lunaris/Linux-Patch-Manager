@@ -4,7 +4,7 @@
 -- FK with ON DELETE SET NULL: if target host deleted, revert to default.
 
 ALTER TABLE host_health_checks
-  ADD COLUMN target_host_id UUID REFERENCES hosts(id) ON DELETE SET NULL;
+  ADD COLUMN IF NOT EXISTS target_host_id UUID REFERENCES hosts(id) ON DELETE SET NULL;
 
-CREATE INDEX idx_health_checks_target_host ON host_health_checks (target_host_id)
+CREATE INDEX IF NOT EXISTS idx_health_checks_target_host ON host_health_checks (target_host_id)
   WHERE target_host_id IS NOT NULL;

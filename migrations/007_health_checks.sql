@@ -1,7 +1,7 @@
 -- Migration 007: Health check configuration and results
 
 -- Health checks configured per host (1-5 per host)
-CREATE TABLE host_health_checks (
+CREATE TABLE IF NOT EXISTS host_health_checks (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     host_id         UUID NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
     name            VARCHAR(100) NOT NULL,
@@ -27,10 +27,10 @@ CREATE TABLE host_health_checks (
     )
 );
 
-CREATE INDEX idx_health_checks_host ON host_health_checks (host_id);
+CREATE INDEX IF NOT EXISTS idx_health_checks_host ON host_health_checks (host_id);
 
 -- Health check poll results (4-day retention, pruned by worker)
-CREATE TABLE host_health_check_results (
+CREATE TABLE IF NOT EXISTS host_health_check_results (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     check_id    UUID NOT NULL REFERENCES host_health_checks(id) ON DELETE CASCADE,
     healthy     BOOLEAN NOT NULL,
@@ -39,4 +39,4 @@ CREATE TABLE host_health_check_results (
     checked_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_health_results_check ON host_health_check_results (check_id, checked_at DESC);
+CREATE INDEX IF NOT EXISTS idx_health_results_check ON host_health_check_results (check_id, checked_at DESC);

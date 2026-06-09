@@ -349,6 +349,9 @@ enable_and_start_services() {
     # Enable the target (which pulls in web + worker)
     systemctl enable patch-manager.target 2>/dev/null || true
 
+    # Enable individual services so they survive a reboot
+    systemctl enable patch-manager-web.service patch-manager-worker.service 2>/dev/null || true
+
     # Start or restart services
     if systemctl is-active --quiet patch-manager.target 2>/dev/null; then
         info "Restarting patch-manager services (upgrade)..."
