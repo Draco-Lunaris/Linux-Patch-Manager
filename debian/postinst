@@ -207,8 +207,11 @@ generate_admin_password() {
     admin_password=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9!@#%^&*' | head -c 24)
 
     # Hash with argon2 (PHC format, compatible with the application)
+    # Generate a random 16-character salt (argon2 requires minimum 8 characters)
+    local admin_salt
+    admin_salt=$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 16)
     local password_hash
-    password_hash=$(echo -n "${admin_password}" | argon2 salt -id -t 3 -m 16 -p 1 -l 32 -e)
+    password_hash=$(echo -n "${admin_password}" | argon2 "${admin_salt}" -id -t 3 -m 16 -p 1 -l 32 -e)
 
     # Update admin user password in database
     # Only update if the placeholder hash is still present
