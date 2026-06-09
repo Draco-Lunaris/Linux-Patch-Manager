@@ -22,7 +22,7 @@ warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="1.1.4"
+VERSION="1.1.5"
 RELEASE="1"
 PKG_NAME="linux-patch-manager"
 DEB_NAME="${PKG_NAME}_${VERSION}-${RELEASE}_amd64.deb"
