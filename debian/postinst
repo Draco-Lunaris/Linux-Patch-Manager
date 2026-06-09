@@ -34,8 +34,14 @@ psql_run() {
 }
 
 psql_run_db() {
-    # Run SQL against the patch_manager database
+    # Run SQL against the patch_manager database as postgres superuser
     sudo -u postgres psql -v ON_ERROR_STOP=1 -d "${DB_NAME}" "$@" 2>/dev/null
+}
+
+psql_run_as_pm() {
+    # Run SQL against the patch_manager database as patch_manager user
+    # Requires PGPASSWORD to be set in the calling environment
+    PGPASSWORD="${PGPASSWORD}" psql -v ON_ERROR_STOP=1 -U "${DB_USER}" -h localhost -d "${DB_NAME}" "$@" 2>/dev/null
 }
 
 # ---------------------------------------------------------------------------
@@ -140,23 +146,47 @@ setup_database() {
         info "Database '${DB_NAME}' already exists, skipping creation."
     fi
 
-    # Grant permissions (idempotent)
-    psql_run_db -c "GRANT USAGE ON SCHEMA public TO ${DB_USER};" 2>/dev/null || true
-    psql_run_db -c "GRANT CREATE ON SCHEMA public TO ${DB_USER};" 2>/dev/null || true
+    # Grant full permissions so patch_manager owns and manages all objects
+    psql_run_db -c "GRANT ALL PRIVILEGES ON SCHEMA public TO ${DB_USER};" 2>/dev/null || true
     psql_run_db -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};" 2>/dev/null || true
+    # If any future migration runs as postgres, ensure objects are still accessible by patch_manager
+    psql_run_db -c "ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO ${DB_USER};" 2>/dev/null || true
+    psql_run_db -c "ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO ${DB_USER};" 2>/dev/null || true
+    psql_run_db -c "ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON FUNCTIONS TO ${DB_USER};" 2>/dev/null || true
 }
 
 # ---------------------------------------------------------------------------
 # 5. Apply database migrations (idempotent)
+# Migrations run as patch_manager so all created objects are owned by
+# patch_manager — this avoids the ownership conflicts that occur when
+# postgres-owned objects need ALTER TABLE by a non-superuser.
 # ---------------------------------------------------------------------------
 apply_migrations() {
     info "Applying database migrations..."
 
-    # Ensure pgcrypto extension is available
+    # Get the DB password for patch_manager authentication
+    local db_password=""
+    if [[ -f /tmp/.pm-db-password-new ]]; then
+        db_password=$(cat /tmp/.pm-db-password-new)
+    else
+        # Fallback: extract from config
+        local config_file="${CONFIG_DIR}/config.toml"
+        if [[ -f "${config_file}" ]]; then
+            db_password=$(sed -n 's|^url = "postgres://[^:]*:\(.*\)@localhost.*"|\1|p' "${config_file}" | head -1)
+        fi
+        if [[ -z "${db_password}" || "${db_password}" == "CHANGEME" ]]; then
+            error "Cannot determine DB password for migrations."
+            return 1
+        fi
+    fi
+
+    export PGPASSWORD="${db_password}"
+
+    # Ensure pgcrypto extension is available (requires superuser)
     psql_run_db -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;" 2>/dev/null || true
 
-    # Create migration tracking table if not exists
-    psql_run_db <<'MIGSQL'
+    # Create migration tracking table if not exists (run as patch_manager)
+    psql_run_as_pm <<'MIGSQL'
 CREATE TABLE IF NOT EXISTS _migrations (
     id          SERIAL PRIMARY KEY,
     filename    TEXT    NOT NULL UNIQUE,
@@ -167,11 +197,11 @@ MIGSQL
     # Handle upgrade from pre-migration-tracking versions:
     # If tables exist but _migrations is empty, mark all existing migrations as applied.
     local migration_count
-    migration_count=$(psql_run_db -t -A -c "SELECT COUNT(*) FROM _migrations;" 2>/dev/null || echo "0")
+    migration_count=$(psql_run_as_pm -t -A -c "SELECT COUNT(*) FROM _migrations;" 2>/dev/null || echo "0")
     migration_count="${migration_count// /}"
 
     local tables_exist
-    tables_exist=$(psql_run_db -t -A -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='users';" 2>/dev/null || echo "0")
+    tables_exist=$(psql_run_as_pm -t -A -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='users';" 2>/dev/null || echo "0")
     tables_exist="${tables_exist// /}"
 
     if [[ "${migration_count}" == "0" && "${tables_exist}" -gt 0 ]]; then
@@ -179,7 +209,7 @@ MIGSQL
         for sql_file in $(ls "${MIGRATION_DIR}"/*.sql 2>/dev/null | sort); do
             local fname
             fname=$(basename "${sql_file}")
-            psql_run_db -c "INSERT INTO _migrations (filename) VALUES ('${fname}') ON CONFLICT (filename) DO NOTHING;" 2>/dev/null || true
+            psql_run_as_pm -c "INSERT INTO _migrations (filename) VALUES ('${fname}') ON CONFLICT (filename) DO NOTHING;" 2>/dev/null || true
         done
     fi
 
@@ -191,7 +221,7 @@ MIGSQL
         fname=$(basename "${sql_file}")
 
         local already_applied
-        already_applied=$(psql_run_db -t -A -c "SELECT COUNT(*) FROM _migrations WHERE filename='${fname}';" 2>/dev/null || echo "0")
+        already_applied=$(psql_run_as_pm -t -A -c "SELECT COUNT(*) FROM _migrations WHERE filename='${fname}';" 2>/dev/null || echo "0")
         already_applied="${already_applied// /}"
 
         if [[ "${already_applied}" -gt 0 ]]; then
@@ -200,14 +230,17 @@ MIGSQL
         fi
 
         info "  Applying migration: ${fname}"
-        if psql_run_db -f "${sql_file}"; then
-            psql_run_db -c "INSERT INTO _migrations (filename) VALUES ('${fname}');" 2>/dev/null || true
+        if psql_run_as_pm -f "${sql_file}"; then
+            psql_run_as_pm -c "INSERT INTO _migrations (filename) VALUES ('${fname}');" 2>/dev/null || true
             applied=$((applied + 1))
         else
             error "  Failed to apply migration: ${fname}"
+            unset PGPASSWORD
             return 1
         fi
     done
+
+    unset PGPASSWORD
 
     if [[ "${applied}" -gt 0 ]]; then
         info "Applied ${applied} new migration(s), skipped ${skipped} already applied."
@@ -217,52 +250,7 @@ MIGSQL
 }
 
 # ---------------------------------------------------------------------------
-# 6. Reassign database object ownership to patch_manager
-# ---------------------------------------------------------------------------
-# The postinst runs migrations as the postgres superuser, so all tables,
-# types, and sequences created by those migrations are owned by postgres.
-# The application connects as patch_manager and needs ownership to ALTER
-# tables during upgrades (e.g. 'must be owner of table groups').
-# This function reassigns ownership of every database object to patch_manager
-# so the application can manage its own schema.
-# ---------------------------------------------------------------------------
-reassign_ownership() {
-    info "Reassigning database object ownership to ${DB_USER}..."
-
-    # REASSIGN OWNED BY covers all tables, enum types, sequences, and views
-    # owned by postgres in the current database.
-    psql_run_db -c "REASSIGN OWNED BY postgres TO ${DB_USER};" \
-        || warn "REASSIGN OWNED BY encountered warnings (may be harmless on fresh installs)."
-
-    # Schemas are NOT covered by REASSIGN OWNED BY — handle explicitly.
-    psql_run_db -c "ALTER SCHEMA public OWNER TO ${DB_USER};" \
-        || warn "Could not alter public schema owner."
-
-    # Grant full privileges so patch_manager can manage all objects
-    psql_run -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};" \
-        || warn "Could not grant database privileges."
-    psql_run_db -c "GRANT ALL PRIVILEGES ON SCHEMA public TO ${DB_USER};" \
-        || warn "Could not grant schema privileges."
-    psql_run_db -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO ${DB_USER};" \
-        || warn "Could not grant table privileges."
-    psql_run_db -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO ${DB_USER};" \
-        || warn "Could not grant sequence privileges."
-    psql_run_db -c "GRANT ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA public TO ${DB_USER};" \
-        || warn "Could not grant function privileges."
-
-    # Ensure future objects in public schema are also owned by patch_manager
-    psql_run_db -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO ${DB_USER};" \
-        || warn "Could not set default table privileges."
-    psql_run_db -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO ${DB_USER};" \
-        || warn "Could not set default sequence privileges."
-    psql_run_db -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO ${DB_USER};" \
-        || warn "Could not set default function privileges."
-
-    info "Database object ownership reassigned to ${DB_USER}."
-}
-
-# ---------------------------------------------------------------------------
-# 8. Generate admin password and update database
+# 6. Generate admin password and update database
 # ---------------------------------------------------------------------------
 generate_admin_password() {
     info "Generating admin password..."
@@ -314,7 +302,7 @@ generate_admin_password() {
 }
 
 # ---------------------------------------------------------------------------
-# 9. Write config.toml with DB URL
+# 7. Write config.toml with DB URL
 # ---------------------------------------------------------------------------
 # Handles three scenarios:
 #   1. No config file → create from example with real DB password
@@ -362,7 +350,7 @@ write_config() {
 }
 
 # ---------------------------------------------------------------------------
-# 10. Generate JWT keys (idempotent)
+# 8. Generate JWT keys (idempotent)
 # Only generates if missing; regenerates verify.pem from signing.pem if lost.
 # ---------------------------------------------------------------------------
 generate_jwt_keys() {
@@ -386,7 +374,7 @@ generate_jwt_keys() {
 }
 
 # ---------------------------------------------------------------------------
-# 11. Enable and start services
+# 9. Enable and start services
 # ---------------------------------------------------------------------------
 enable_and_start_services() {
     systemctl daemon-reload
@@ -408,7 +396,7 @@ enable_and_start_services() {
 }
 
 # ---------------------------------------------------------------------------
-# 12. Install backup cron (idempotent)
+# 10. Install backup cron (idempotent)
 # ---------------------------------------------------------------------------
 install_backup_cron() {
     if ! crontab -l 2>/dev/null | grep -qF "backup.sh"; then
@@ -427,7 +415,6 @@ case "$1" in
         wait_for_postgresql
         setup_database
         apply_migrations
-        reassign_ownership
         generate_admin_password
         write_config
         generate_jwt_keys
