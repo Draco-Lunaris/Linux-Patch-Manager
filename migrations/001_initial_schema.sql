@@ -12,31 +12,63 @@ CREATE EXTENSION IF NOT EXISTS "pg_trgm";    -- fuzzy text search on host names
 -- Enumerations
 -- ============================================================
 
-CREATE TYPE user_role AS ENUM ('admin', 'operator');
-CREATE TYPE auth_provider AS ENUM ('local', 'azure_sso');
-CREATE TYPE host_health_status AS ENUM ('pending', 'healthy', 'degraded', 'unreachable');
-CREATE TYPE job_status AS ENUM ('queued', 'pending', 'running', 'succeeded', 'failed', 'cancelled');
-CREATE TYPE job_kind AS ENUM ('patch_apply', 'patch_remove', 'reboot', 'rollback');
-CREATE TYPE window_recurrence AS ENUM ('once', 'daily', 'weekly', 'monthly');
-CREATE TYPE cert_status AS ENUM ('active', 'revoked', 'expired');
-CREATE TYPE audit_action AS ENUM (
-    'user_login', 'user_logout', 'user_login_failed',
-    'user_created', 'user_deleted', 'user_updated',
-    'host_registered', 'host_removed',
-    'group_created', 'group_deleted',
-    'group_membership_changed',
-    'patch_job_created', 'patch_job_cancelled', 'patch_job_rollback',
-    'maintenance_window_created', 'maintenance_window_updated', 'maintenance_window_deleted',
-    'certificate_issued', 'certificate_renewed', 'certificate_revoked', 'certificate_downloaded',
-    'config_changed',
-    'discovery_scan_started'
-);
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'user_role') THEN
+        CREATE TYPE user_role AS ENUM ('admin', 'operator');
+    END IF;
+END $$;
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'auth_provider') THEN
+        CREATE TYPE auth_provider AS ENUM ('local', 'azure_sso');
+    END IF;
+END $$;
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'host_health_status') THEN
+        CREATE TYPE host_health_status AS ENUM ('pending', 'healthy', 'degraded', 'unreachable');
+    END IF;
+END $$;
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'job_status') THEN
+        CREATE TYPE job_status AS ENUM ('queued', 'pending', 'running', 'succeeded', 'failed', 'cancelled');
+    END IF;
+END $$;
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'job_kind') THEN
+        CREATE TYPE job_kind AS ENUM ('patch_apply', 'patch_remove', 'reboot', 'rollback');
+    END IF;
+END $$;
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'window_recurrence') THEN
+        CREATE TYPE window_recurrence AS ENUM ('once', 'daily', 'weekly', 'monthly');
+    END IF;
+END $$;
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'cert_status') THEN
+        CREATE TYPE cert_status AS ENUM ('active', 'revoked', 'expired');
+    END IF;
+END $$;
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'audit_action') THEN
+        CREATE TYPE audit_action AS ENUM (
+            'user_login', 'user_logout', 'user_login_failed',
+            'user_created', 'user_deleted', 'user_updated',
+            'host_registered', 'host_removed',
+            'group_created', 'group_deleted',
+            'group_membership_changed',
+            'patch_job_created', 'patch_job_cancelled', 'patch_job_rollback',
+            'maintenance_window_created', 'maintenance_window_updated', 'maintenance_window_deleted',
+            'certificate_issued', 'certificate_renewed', 'certificate_revoked', 'certificate_downloaded',
+            'config_changed',
+            'discovery_scan_started'
+        );
+    END IF;
+END $$;
 
 -- ============================================================
 -- Groups (defined before users/hosts for FK ordering)
 -- ============================================================
 
-CREATE TABLE groups (
+CREATE TABLE IF NOT EXISTS groups (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name        TEXT NOT NULL UNIQUE,
     description TEXT NOT NULL DEFAULT '',
@@ -44,13 +76,13 @@ CREATE TABLE groups (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_groups_name ON groups (name);
+CREATE INDEX IF NOT EXISTS idx_groups_name ON groups (name);
 
 -- ============================================================
 -- Users
 -- ============================================================
 
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     username            TEXT NOT NULL UNIQUE,
     display_name        TEXT NOT NULL DEFAULT '',
@@ -73,28 +105,28 @@ CREATE TABLE users (
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_users_email ON users (email);
-CREATE INDEX idx_users_azure_oid ON users (azure_oid) WHERE azure_oid IS NOT NULL;
-CREATE INDEX idx_users_role ON users (role);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
+CREATE INDEX IF NOT EXISTS idx_users_azure_oid ON users (azure_oid) WHERE azure_oid IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_role ON users (role);
 
 -- ============================================================
 -- User <-> Group membership
 -- ============================================================
 
-CREATE TABLE user_groups (
+CREATE TABLE IF NOT EXISTS user_groups (
     user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     group_id   UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
     assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (user_id, group_id)
 );
 
-CREATE INDEX idx_user_groups_group ON user_groups (group_id);
+CREATE INDEX IF NOT EXISTS idx_user_groups_group ON user_groups (group_id);
 
 -- ============================================================
 -- Refresh Tokens
 -- ============================================================
 
-CREATE TABLE refresh_tokens (
+CREATE TABLE IF NOT EXISTS refresh_tokens (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     -- Stored as Argon2id hash of the opaque token bytes
@@ -109,14 +141,14 @@ CREATE TABLE refresh_tokens (
     ip_address      INET
 );
 
-CREATE INDEX idx_refresh_tokens_user ON refresh_tokens (user_id);
-CREATE INDEX idx_refresh_tokens_expires ON refresh_tokens (expires_at) WHERE revoked = FALSE;
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens (user_id);
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires ON refresh_tokens (expires_at) WHERE revoked = FALSE;
 
 -- ============================================================
 -- Hosts
 -- ============================================================
 
-CREATE TABLE hosts (
+CREATE TABLE IF NOT EXISTS hosts (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     fqdn            TEXT NOT NULL,
     ip_address      INET NOT NULL,
@@ -136,28 +168,28 @@ CREATE TABLE hosts (
     CONSTRAINT hosts_fqdn_ip_unique UNIQUE (fqdn, ip_address)
 );
 
-CREATE INDEX idx_hosts_health_status ON hosts (health_status);
-CREATE INDEX idx_hosts_fqdn ON hosts USING gin (fqdn gin_trgm_ops);
-CREATE INDEX idx_hosts_ip ON hosts (ip_address);
+CREATE INDEX IF NOT EXISTS idx_hosts_health_status ON hosts (health_status);
+CREATE INDEX IF NOT EXISTS idx_hosts_fqdn ON hosts USING gin (fqdn gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_hosts_ip ON hosts (ip_address);
 
 -- ============================================================
 -- Host <-> Group membership
 -- ============================================================
 
-CREATE TABLE host_groups (
+CREATE TABLE IF NOT EXISTS host_groups (
     host_id     UUID NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
     group_id    UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
     assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (host_id, group_id)
 );
 
-CREATE INDEX idx_host_groups_group ON host_groups (group_id);
+CREATE INDEX IF NOT EXISTS idx_host_groups_group ON host_groups (group_id);
 
 -- ============================================================
 -- Host Health Data (cached results from 5-min polls)
 -- ============================================================
 
-CREATE TABLE host_health_data (
+CREATE TABLE IF NOT EXISTS host_health_data (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     host_id     UUID NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
     polled_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -166,14 +198,14 @@ CREATE TABLE host_health_data (
     payload     JSONB NOT NULL DEFAULT '{}'
 );
 
-CREATE INDEX idx_host_health_host ON host_health_data (host_id, polled_at DESC);
+CREATE INDEX IF NOT EXISTS idx_host_health_host ON host_health_data (host_id, polled_at DESC);
 -- Retained for 30 days (pruned by worker)
 
 -- ============================================================
 -- Host Patch Data (cached results from 30-min polls)
 -- ============================================================
 
-CREATE TABLE host_patch_data (
+CREATE TABLE IF NOT EXISTS host_patch_data (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     host_id         UUID NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
     polled_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -184,14 +216,14 @@ CREATE TABLE host_patch_data (
     cve_count       INTEGER NOT NULL DEFAULT 0
 );
 
-CREATE INDEX idx_host_patch_host ON host_patch_data (host_id, polled_at DESC);
+CREATE INDEX IF NOT EXISTS idx_host_patch_host ON host_patch_data (host_id, polled_at DESC);
 -- Retained for 30 days (pruned by worker)
 
 -- ============================================================
 -- Maintenance Windows
 -- ============================================================
 
-CREATE TABLE maintenance_windows (
+CREATE TABLE IF NOT EXISTS maintenance_windows (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     host_id         UUID NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
     label           TEXT NOT NULL DEFAULT '',
@@ -207,14 +239,14 @@ CREATE TABLE maintenance_windows (
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_mw_host ON maintenance_windows (host_id);
-CREATE INDEX idx_mw_start ON maintenance_windows (start_at) WHERE enabled = TRUE;
+CREATE INDEX IF NOT EXISTS idx_mw_host ON maintenance_windows (host_id);
+CREATE INDEX IF NOT EXISTS idx_mw_start ON maintenance_windows (start_at) WHERE enabled = TRUE;
 
 -- ============================================================
 -- Patch Jobs
 -- ============================================================
 
-CREATE TABLE patch_jobs (
+CREATE TABLE IF NOT EXISTS patch_jobs (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     kind                job_kind NOT NULL DEFAULT 'patch_apply',
     status              job_status NOT NULL DEFAULT 'queued',
@@ -233,15 +265,15 @@ CREATE TABLE patch_jobs (
     completed_at        TIMESTAMPTZ
 );
 
-CREATE INDEX idx_patch_jobs_status ON patch_jobs (status);
-CREATE INDEX idx_patch_jobs_created ON patch_jobs (created_at DESC);
-CREATE INDEX idx_patch_jobs_user ON patch_jobs (created_by_user_id);
+CREATE INDEX IF NOT EXISTS idx_patch_jobs_status ON patch_jobs (status);
+CREATE INDEX IF NOT EXISTS idx_patch_jobs_created ON patch_jobs (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_patch_jobs_user ON patch_jobs (created_by_user_id);
 
 -- ============================================================
 -- Patch Job Hosts (per-host status within a batch job)
 -- ============================================================
 
-CREATE TABLE patch_job_hosts (
+CREATE TABLE IF NOT EXISTS patch_job_hosts (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     job_id          UUID NOT NULL REFERENCES patch_jobs(id) ON DELETE CASCADE,
     host_id         UUID NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
@@ -257,15 +289,15 @@ CREATE TABLE patch_job_hosts (
     UNIQUE (job_id, host_id)
 );
 
-CREATE INDEX idx_pjh_job ON patch_job_hosts (job_id);
-CREATE INDEX idx_pjh_host ON patch_job_hosts (host_id);
-CREATE INDEX idx_pjh_status ON patch_job_hosts (status);
+CREATE INDEX IF NOT EXISTS idx_pjh_job ON patch_job_hosts (job_id);
+CREATE INDEX IF NOT EXISTS idx_pjh_host ON patch_job_hosts (host_id);
+CREATE INDEX IF NOT EXISTS idx_pjh_status ON patch_job_hosts (status);
 
 -- ============================================================
 -- Certificates
 -- ============================================================
 
-CREATE TABLE certificates (
+CREATE TABLE IF NOT EXISTS certificates (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     -- NULL = root CA cert
     host_id         UUID REFERENCES hosts(id) ON DELETE CASCADE,
@@ -279,15 +311,15 @@ CREATE TABLE certificates (
     cert_pem        TEXT NOT NULL
 );
 
-CREATE INDEX idx_certs_host ON certificates (host_id);
-CREATE INDEX idx_certs_status ON certificates (status);
-CREATE INDEX idx_certs_expires ON certificates (expires_at);
+CREATE INDEX IF NOT EXISTS idx_certs_host ON certificates (host_id);
+CREATE INDEX IF NOT EXISTS idx_certs_status ON certificates (status);
+CREATE INDEX IF NOT EXISTS idx_certs_expires ON certificates (expires_at);
 
 -- ============================================================
 -- Audit Log (tamper-evident, hash-chained)
 -- ============================================================
 
-CREATE TABLE audit_log (
+CREATE TABLE IF NOT EXISTS audit_log (
     id              BIGSERIAL PRIMARY KEY,
     action          audit_action NOT NULL,
     actor_user_id   UUID REFERENCES users(id) ON DELETE SET NULL,
@@ -302,17 +334,17 @@ CREATE TABLE audit_log (
     row_hash        TEXT NOT NULL DEFAULT ''
 );
 
-CREATE INDEX idx_audit_created ON audit_log (created_at DESC);
-CREATE INDEX idx_audit_actor ON audit_log (actor_user_id);
-CREATE INDEX idx_audit_action ON audit_log (action);
-CREATE INDEX idx_audit_target ON audit_log (target_type, target_id);
+CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log (actor_user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log (action);
+CREATE INDEX IF NOT EXISTS idx_audit_target ON audit_log (target_type, target_id);
 -- Retained for 6 months (pruned by worker)
 
 -- ============================================================
 -- Azure SSO Configuration
 -- ============================================================
 
-CREATE TABLE azure_sso_config (
+CREATE TABLE IF NOT EXISTS azure_sso_config (
     id              INTEGER PRIMARY KEY DEFAULT 1,  -- singleton row
     enabled         BOOLEAN NOT NULL DEFAULT FALSE,
     tenant_id       TEXT NOT NULL DEFAULT '',
@@ -329,7 +361,7 @@ CREATE TABLE azure_sso_config (
 -- System Configuration (key/value runtime settings)
 -- ============================================================
 
-CREATE TABLE system_config (
+CREATE TABLE IF NOT EXISTS system_config (
     key         TEXT PRIMARY KEY,
     value       TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
@@ -351,13 +383,14 @@ INSERT INTO system_config (key, value, description) VALUES
     ('smtp_from',                  '',      'From address for notifications'),
     ('smtp_tls_mode',              'starttls', 'SMTP TLS mode: none, starttls, tls'),
     ('web_tls_strategy',           'internal_ca', 'Web UI TLS cert strategy: internal_ca or operator_supplied'),
-    ('ip_whitelist',               '[]',    'JSON array of allowed CIDR/IP strings; empty = allow all');
+    ('ip_whitelist',               '[]',    'JSON array of allowed CIDR/IP strings; empty = allow all')
+ON CONFLICT (key) DO NOTHING;
 
 -- ============================================================
 -- Worker Heartbeat
 -- ============================================================
 
-CREATE TABLE worker_heartbeat (
+CREATE TABLE IF NOT EXISTS worker_heartbeat (
     id              INTEGER PRIMARY KEY DEFAULT 1,  -- singleton row
     last_seen       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     worker_version  TEXT NOT NULL DEFAULT '',
@@ -368,7 +401,7 @@ CREATE TABLE worker_heartbeat (
 -- Discovery Results (transient; cleared before each scan)
 -- ============================================================
 
-CREATE TABLE discovery_results (
+CREATE TABLE IF NOT EXISTS discovery_results (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     scan_id         UUID NOT NULL,
     ip_address      INET NOT NULL,
@@ -381,5 +414,5 @@ CREATE TABLE discovery_results (
     registered      BOOLEAN NOT NULL DEFAULT FALSE
 );
 
-CREATE INDEX idx_discovery_scan ON discovery_results (scan_id);
-CREATE INDEX idx_discovery_ip ON discovery_results (ip_address);
+CREATE INDEX IF NOT EXISTS idx_discovery_scan ON discovery_results (scan_id);
+CREATE INDEX IF NOT EXISTS idx_discovery_ip ON discovery_results (ip_address);

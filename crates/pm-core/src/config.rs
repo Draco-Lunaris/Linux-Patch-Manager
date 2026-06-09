@@ -101,7 +101,8 @@ pub struct WorkerConfig {
     pub health_check_poll_interval_secs: u64,
     /// Maximum concurrent agent calls
     pub max_concurrent_agent_calls: usize,
-    /// Worker heartbeat interval in seconds
+    /// Worker heartbeat interval in seconds (default: 300 = 5 min)
+    #[serde(default = "default_heartbeat_interval")]
     pub heartbeat_interval_secs: u64,
     /// WS relay HTTP polling fallback interval in seconds (default: 10)
     pub ws_relay_poll_interval_secs: u64,
@@ -252,6 +253,10 @@ impl AppConfig {
 }
 
 fn default_health_check_poll_interval() -> u64 {
+    300
+}
+
+fn default_heartbeat_interval() -> u64 {
     300
 }
 

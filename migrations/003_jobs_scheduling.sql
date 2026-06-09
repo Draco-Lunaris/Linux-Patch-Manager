@@ -8,11 +8,11 @@
 
 -- When the retry engine should next attempt this host; NULL = not scheduled
 ALTER TABLE patch_job_hosts
-    ADD COLUMN retry_next_at TIMESTAMPTZ;
+    ADD COLUMN IF NOT EXISTS retry_next_at TIMESTAMPTZ;
 
 -- Last failure reason captured by the worker for display in the UI
 ALTER TABLE patch_job_hosts
-    ADD COLUMN last_error TEXT;
+    ADD COLUMN IF NOT EXISTS last_error TEXT;
 
 -- ============================================================
 -- pg_notify trigger: fires when an immediate job is inserted
@@ -30,15 +30,21 @@ BEGIN
 END;
 $$;
 
-CREATE TRIGGER trg_job_enqueued
-    AFTER INSERT ON patch_jobs
-    FOR EACH ROW
-    EXECUTE FUNCTION notify_job_enqueued();
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger WHERE tgname = 'trg_job_enqueued'
+    ) THEN
+        CREATE TRIGGER trg_job_enqueued
+            AFTER INSERT ON patch_jobs
+            FOR EACH ROW
+            EXECUTE FUNCTION notify_job_enqueued();
+    END IF;
+END $$;
 
 -- ============================================================
 -- Index: efficiently find hosts due for retry
 -- ============================================================
 
-CREATE INDEX idx_pjh_retry
+CREATE INDEX IF NOT EXISTS idx_pjh_retry
     ON patch_job_hosts (retry_next_at)
     WHERE retry_next_at IS NOT NULL;

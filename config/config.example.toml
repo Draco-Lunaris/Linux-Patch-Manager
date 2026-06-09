@@ -49,7 +49,8 @@ health_check_poll_interval_secs = 300
 # Maximum concurrent mTLS agent calls (Tokio Semaphore)
 max_concurrent_agent_calls = 64
 
-# Worker heartbeat write interval (seconds)
+# Worker heartbeat write interval (seconds). Default: 300 = 5 minutes
+heartbeat_interval_secs = 300
 
 # WS relay HTTP polling fallback interval (seconds). When WebSocket connection to
 # an agent fails, the relay falls back to polling the agent's HTTP API at this
