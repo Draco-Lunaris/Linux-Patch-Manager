@@ -208,7 +208,7 @@ generate_admin_password() {
 
     # Hash with argon2 (PHC format, compatible with the application)
     local password_hash
-    password_hash=$(echo -n "${admin_password}" | argon2 salt -id -t 3 -m 65536 -p 1 -l 32 -e)
+    password_hash=$(echo -n "${admin_password}" | argon2 salt -id -t 3 -m 16 -p 1 -l 32 -e)
 
     # Update admin user password in database
     # Only update if the placeholder hash is still present
