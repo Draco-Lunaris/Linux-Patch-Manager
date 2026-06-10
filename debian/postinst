@@ -277,6 +277,8 @@ generate_tls_certs() {
     if [[ ! -f "${ca_cert}" ]]; then
         info "Generating internal Certificate Authority (ECDSA P-256, 10-year validity)..."
         openssl ecparam -genkey -name prime256v1 -noout -out "${ca_key}"
+        # Convert SEC1 → PKCS#8 (the Rust pm-ca crate only parses PKCS#8).
+        openssl pkcs8 -topk8 -nocrypt -in "${ca_key}" -out "${ca_key}.tmp" && mv "${ca_key}.tmp" "${ca_key}"
         openssl req -new -x509 -key "${ca_key}" -out "${ca_cert}" \
             -days 3650 \
             -subj "/CN=Patch Manager Root CA/O=Patch Manager" \
