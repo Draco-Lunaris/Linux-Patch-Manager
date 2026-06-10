@@ -5,11 +5,13 @@ set -e
 # Linux Patch Manager — Post-install script
 # =============================================================================
 # Fully automated: apt install ./linux-patch-manager_X.X.X-1_amd64.deb
-# results in a running service with a printed admin password.
-# All steps are idempotent (safe to re-run on upgrade).
+# results in a running HTTPS service. The service generates and prints the
+# initial admin password to its journal on first startup.
 #
+# All steps are idempotent (safe to re-run on upgrade).
 # Migrations are handled by the application via sqlx on startup.
-# This script only creates the database, user, and grants.
+# This script: system user, dirs, DB/role, config, JWT keys, CA + web TLS
+# cert, sqlx checksum repair (for upgrades from <= 1.1.7), services.
 # =============================================================================
 
 RED='\033[0;31m'
@@ -25,31 +27,36 @@ error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 DB_NAME="patch_manager"
 DB_USER="patch_manager"
 CONFIG_DIR="/etc/patch-manager"
-ADMIN_PASSWORD_FILE="/etc/patch-manager/admin-password.txt"
+SERVICE_USER="patch-manager"
+
+# Secure temp file for passing the DB password between functions.
+# (Was a predictable, world-readable /tmp/.pm-db-password-new.)
+PM_TMP="$(umask 077 && mktemp /run/pm-postinst.XXXXXX)"
+cleanup() { rm -f "${PM_TMP}"; }
+trap cleanup EXIT
 
 # ---------------------------------------------------------------------------
-# PostgreSQL helpers
+# PostgreSQL helpers — runuser instead of sudo (sudo is not guaranteed
+# to exist and is discouraged in maintainer scripts).
 # ---------------------------------------------------------------------------
 psql_run() {
-    # Run SQL as the postgres superuser
-    sudo -u postgres psql -v ON_ERROR_STOP=1 "$@" 2>/dev/null
+    runuser -u postgres -- psql -v ON_ERROR_STOP=1 "$@" 2>/dev/null
 }
 
 psql_run_db() {
-    # Run SQL against the patch_manager database as postgres superuser
-    sudo -u postgres psql -v ON_ERROR_STOP=1 -d "${DB_NAME}" "$@" 2>/dev/null
+    runuser -u postgres -- psql -v ON_ERROR_STOP=1 -d "${DB_NAME}" "$@" 2>/dev/null
 }
 
 # ---------------------------------------------------------------------------
 # 1. Create service user (idempotent)
 # ---------------------------------------------------------------------------
 create_service_user() {
-    if ! id patch-manager &>/dev/null; then
+    if ! id "${SERVICE_USER}" &>/dev/null; then
         useradd --system --no-create-home --shell /usr/sbin/nologin \
-            --comment "Linux Patch Manager service account" patch-manager
-        info "Service user 'patch-manager' created."
+            --comment "Linux Patch Manager service account" "${SERVICE_USER}"
+        info "Service user '${SERVICE_USER}' created."
     else
-        info "Service user 'patch-manager' already exists."
+        info "Service user '${SERVICE_USER}' already exists."
     fi
 }
 
@@ -62,31 +69,36 @@ create_directories() {
              /var/log/patch-manager /opt/patch-manager \
              /var/backups/patch-manager
 
-    chown -R patch-manager:patch-manager \
-        "${CONFIG_DIR}" /var/log/patch-manager \
-        /opt/patch-manager /usr/share/patch-manager/frontend
+    chown -R "${SERVICE_USER}:${SERVICE_USER}" \
+        "${CONFIG_DIR}" /var/log/patch-manager /opt/patch-manager
+
+    # Frontend assets stay root-owned and read-only: the service must not be
+    # able to rewrite the JavaScript it serves (persistence vector if pm-web
+    # is ever compromised). pm-web only reads these files.
+    chown -R root:root /usr/share/patch-manager/frontend
+    chmod -R a+rX /usr/share/patch-manager/frontend
 
     chmod 750 "${CONFIG_DIR}/ca" "${CONFIG_DIR}/jwt"
     chmod 700 /var/backups/patch-manager
 }
 
 # ---------------------------------------------------------------------------
-# 3. Wait for PostgreSQL to be ready
+# 3. Wait for PostgreSQL to be ready (non-fatal failure is impossible here:
+#    postgresql-16 is a hard dependency and its packaging starts the cluster,
+#    but give it time on slow first boots).
 # ---------------------------------------------------------------------------
 wait_for_postgresql() {
     info "Waiting for PostgreSQL to be ready..."
-    local retries=30
-    local delay=2
     local i
-    for ((i = 1; i <= retries; i++)); do
+    for ((i = 1; i <= 30; i++)); do
         if pg_isready -q 2>/dev/null; then
             info "PostgreSQL is ready."
             return 0
         fi
-        warn "PostgreSQL not ready yet (attempt ${i}/${retries}), waiting ${delay}s..."
-        sleep "${delay}"
+        warn "PostgreSQL not ready yet (attempt ${i}/30), waiting 2s..."
+        sleep 2
     done
-    error "PostgreSQL did not become ready after $((retries * delay)) seconds."
+    error "PostgreSQL did not become ready after 60 seconds."
     return 1
 }
 
@@ -96,43 +108,33 @@ wait_for_postgresql() {
 setup_database() {
     info "Setting up PostgreSQL database and user..."
 
-    # Generate a random password for the DB user
     local db_password
-    db_password=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32)
+    db_password=$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 32)
 
-    # Create role if not exists
     local role_exists
     role_exists=$(psql_run -t -A -c "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'" 2>/dev/null || echo "")
     if [[ "${role_exists}" != "1" ]]; then
         psql_run -c "CREATE ROLE ${DB_USER} LOGIN PASSWORD '${db_password}';"
         info "PostgreSQL user '${DB_USER}' created."
-        # Store password for config generation
-        echo "${db_password}" > /tmp/.pm-db-password-new
+        printf '%s' "${db_password}" > "${PM_TMP}"
     else
         info "PostgreSQL user '${DB_USER}' already exists."
-        # Recover the DB password: try from existing config, or generate new.
         local config_file="${CONFIG_DIR}/config.toml"
         local existing_pw=""
         if [[ -f "${config_file}" ]]; then
-            # Extract password from URL: postgres://user:PASSWORD@host/db
-            # Use @localhost anchor so passwords containing @ are extracted correctly.
             existing_pw=$(sed -n 's|^url = "postgres://[^:]*:\(.*\)@localhost.*"|\1|p' "${config_file}" | head -1)
         fi
         if [[ -n "${existing_pw}" && "${existing_pw}" != "CHANGEME" ]]; then
-            # Config has a real password — sync it to PostgreSQL so the app can connect.
             psql_run -c "ALTER ROLE ${DB_USER} WITH PASSWORD '${existing_pw}';" 2>/dev/null || true
-            echo "${existing_pw}" > /tmp/.pm-db-password-new
+            printf '%s' "${existing_pw}" > "${PM_TMP}"
             info "Synced DB password from existing config to PostgreSQL."
         else
-            # No config or CHANGEME — generate a fresh password and update PostgreSQL.
-            db_password=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32)
             psql_run -c "ALTER ROLE ${DB_USER} WITH PASSWORD '${db_password}';" 2>/dev/null || true
-            echo "${db_password}" > /tmp/.pm-db-password-new
+            printf '%s' "${db_password}" > "${PM_TMP}"
             info "Generated new DB password for existing user."
         fi
     fi
 
-    # Create database if not exists
     local db_exists
     db_exists=$(psql_run -t -A -c "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" 2>/dev/null || echo "")
     if [[ "${db_exists}" != "1" ]]; then
@@ -142,41 +144,74 @@ setup_database() {
         info "Database '${DB_NAME}' already exists, skipping creation."
     fi
 
-    # Ensure pgcrypto extension is available (required by application migrations)
     psql_run_db -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;" 2>/dev/null || true
-
-    # Grant full permissions so patch_manager owns and manages all objects
     psql_run_db -c "GRANT ALL PRIVILEGES ON SCHEMA public TO ${DB_USER};" 2>/dev/null || true
     psql_run_db -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};" 2>/dev/null || true
-    # If any future migration runs as postgres, ensure objects are still accessible by patch_manager
     psql_run_db -c "ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO ${DB_USER};" 2>/dev/null || true
     psql_run_db -c "ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO ${DB_USER};" 2>/dev/null || true
     psql_run_db -c "ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON FUNCTIONS TO ${DB_USER};" 2>/dev/null || true
 }
 
 # ---------------------------------------------------------------------------
-# 5. Write config.toml with DB URL
+# 5. Repair sqlx migration checksums (upgrade from <= 1.1.7 only).
+#
+# Commit 4cac290 (v1.1.8) rewrote migrations 001/003/007/011/016 in place.
+# sqlx::migrate! validates the SHA-384 checksum recorded in _sqlx_migrations
+# against the embedded file on every startup, so any database migrated
+# before 1.1.8 fails with "migration N was previously applied but has been
+# modified" and pm-web crash-loops.
+#
+# The schema produced by old and new versions of these files is identical
+# (the rewrite only added IF-NOT-EXISTS guards), so it is safe to update the
+# recorded checksum to match the current embedded content. We only touch
+# rows whose checksum matches the known OLD value — fresh installs and
+# already-repaired databases are untouched.
+#
+# NEVER edit an applied migration again; append a new one instead.
 # ---------------------------------------------------------------------------
-# Handles three scenarios:
-#   1. No config file → create from example with real DB password
-#   2. Config exists with CHANGEME → replace CHANGEME with real DB password
-#   3. Config exists with real password → leave it alone (upgrade)
+repair_migration_checksums() {
+    # Skip if the migrations table doesn't exist yet (fresh install).
+    local has_table
+    has_table=$(psql_run_db -t -A -c "SELECT to_regclass('public._sqlx_migrations') IS NOT NULL;" 2>/dev/null || echo "f")
+    [[ "${has_table}" == "t" ]] || { info "No _sqlx_migrations table (fresh install) — checksum repair not needed."; return 0; }
+
+    info "Checking for stale sqlx migration checksums (pre-1.1.8 databases)..."
+
+    # version | old sha384 | new sha384
+    local repairs=(
+        "1|3e7492a3fdedf177d0467b495717b1b3f75894cabbd57a8aa0a0fa2189bacb8832ce69f400356c5f717cc3cd87c47685|2828d99226ba5017e754a8a72bce4f7f6d5535172817c2ba90d8ea9b93ff488787ec840cf43cc0eca7e1f526c8a1c0ef"
+        "3|097ed9107821f2de4dd3f18b1c1b25aa3110ca4134fe8c37b81049d064357266a8bae05e84edf163bb77a88335943640|e7b6d63f244764184f127234e5b7735c9ea9ee810bd465b06bc9c74370358b56061cec137b7afee91c5417211561164c"
+        "7|f3218a5b94ae9e009655e66cd4808a7abebdfae81675bccfbb079567df192f95cd62eab3b6c4d60b06e8a7dcbb1d9297|95c087779e952333094e6d9e058aaa18dc8a898b480152ba7a6d780ccfd3c562525834ea49f19999b1266b0acb9b68e9"
+        "11|5bb3dabf7caf0a7c31998e74b03b312d1867a948643084b9253acabe0388bc00831d2a157379eacae971298fa9bc481e|f07ac98ae905b9a9730ec302aafbcce3d56eacf80a8fb0904a9cfd0e7c36fdc38bb21129054d6f0765131ce6fa1cdc2e"
+        "16|e5450925e570cbd522cf5edd6990f5e8e010466c494bc39484fcf72651037440083a104eea0d217d65c5625b91bfb514|11d77a7097fe3a212786c55cf5c0b64c44a792ce18ace665aec4336efee1544f41568c0ba4605b9daedbf4ac12e91e6f"
+    )
+
+    local entry version old new updated
+    for entry in "${repairs[@]}"; do
+        IFS='|' read -r version old new <<< "${entry}"
+        updated=$(psql_run_db -q -t -A -c \
+            "UPDATE _sqlx_migrations SET checksum = '\\x${new}'::bytea \
+             WHERE version = ${version} AND checksum = '\\x${old}'::bytea \
+             RETURNING version;" 2>/dev/null || echo "")
+        if [[ -n "${updated}" ]]; then
+            info "Repaired checksum for migration ${version}."
+        fi
+    done
+}
+
+# ---------------------------------------------------------------------------
+# 6. Write config.toml with DB URL
 # ---------------------------------------------------------------------------
 write_config() {
     local config_file="${CONFIG_DIR}/config.toml"
 
-    # Resolve the DB password to use: from setup_database() or generate fresh.
     local db_password=""
-    if [[ -f /tmp/.pm-db-password-new ]]; then
-        db_password=$(cat /tmp/.pm-db-password-new)
-    fi
+    [[ -s "${PM_TMP}" ]] && db_password=$(cat "${PM_TMP}")
 
     if [[ -f "${config_file}" ]]; then
-        # Check if the config still has the CHANGEME placeholder
         if grep -q 'CHANGEME' "${config_file}"; then
             if [[ -z "${db_password}" ]]; then
-                # No password from setup_database() — generate a fresh one
-                db_password=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32)
+                db_password=$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 32)
                 psql_run -c "ALTER ROLE ${DB_USER} WITH PASSWORD '${db_password}';" 2>/dev/null || true
             fi
             info "Replacing CHANGEME placeholder in existing config with real DB password."
@@ -186,39 +221,36 @@ write_config() {
             return 0
         fi
     else
-        # No config file — create from example
         if [[ -z "${db_password}" ]]; then
-            db_password=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32)
+            db_password=$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 32)
             psql_run -c "ALTER ROLE ${DB_USER} WITH PASSWORD '${db_password}';" 2>/dev/null || true
         fi
-
         info "Writing configuration file..."
         cp /usr/share/patch-manager/config.example.toml "${config_file}"
         sed -i "s|postgres://patch_manager:CHANGEME@localhost/patch_manager|postgres://${DB_USER}:${db_password}@localhost/${DB_NAME}|" "${config_file}"
     fi
 
-    chown patch-manager:patch-manager "${config_file}"
+    chown "${SERVICE_USER}:${SERVICE_USER}" "${config_file}"
     chmod 640 "${config_file}"
     info "Configuration written to ${config_file}"
 }
 
 # ---------------------------------------------------------------------------
-# 6. Generate JWT keys (idempotent)
-# Only generates if missing; regenerates verify.pem from signing.pem if lost.
+# 7. Generate JWT keys (idempotent)
 # ---------------------------------------------------------------------------
 generate_jwt_keys() {
     if [[ ! -f "${CONFIG_DIR}/jwt/signing.pem" ]]; then
         info "Generating Ed25519 JWT signing key..."
         openssl genpkey -algorithm ed25519 -out "${CONFIG_DIR}/jwt/signing.pem" 2>/dev/null
         openssl pkey -in "${CONFIG_DIR}/jwt/signing.pem" -pubout -out "${CONFIG_DIR}/jwt/verify.pem" 2>/dev/null
-        chown patch-manager:patch-manager "${CONFIG_DIR}/jwt/signing.pem" "${CONFIG_DIR}/jwt/verify.pem"
+        chown "${SERVICE_USER}:${SERVICE_USER}" "${CONFIG_DIR}/jwt/signing.pem" "${CONFIG_DIR}/jwt/verify.pem"
         chmod 600 "${CONFIG_DIR}/jwt/signing.pem"
         chmod 644 "${CONFIG_DIR}/jwt/verify.pem"
         info "JWT keys generated."
     elif [[ ! -f "${CONFIG_DIR}/jwt/verify.pem" ]]; then
         info "Regenerating missing JWT verification key from existing signing key..."
         openssl pkey -in "${CONFIG_DIR}/jwt/signing.pem" -pubout -out "${CONFIG_DIR}/jwt/verify.pem" 2>/dev/null
-        chown patch-manager:patch-manager "${CONFIG_DIR}/jwt/verify.pem"
+        chown "${SERVICE_USER}:${SERVICE_USER}" "${CONFIG_DIR}/jwt/verify.pem"
         chmod 644 "${CONFIG_DIR}/jwt/verify.pem"
         info "JWT verification key regenerated."
     else
@@ -227,18 +259,72 @@ generate_jwt_keys() {
 }
 
 # ---------------------------------------------------------------------------
-# 7. Enable and start services
+# 8. Generate internal CA and CA-signed web TLS certificate (idempotent).
+#
+# This was previously only done by scripts/setup.sh, which the package does
+# not ship — so .deb installs had no /etc/patch-manager/tls/web.{crt,key},
+# pm-web fell back to PLAIN HTTP on port 443, and the old HTTPS-only
+# health check could never pass. Generating these here makes the package
+# self-contained and HTTPS-by-default.
+# ---------------------------------------------------------------------------
+generate_tls_certs() {
+    local ca_key="${CONFIG_DIR}/ca/ca.key"
+    local ca_cert="${CONFIG_DIR}/ca/ca.crt"
+    local tls_cert="${CONFIG_DIR}/tls/web.crt"
+    local tls_key="${CONFIG_DIR}/tls/web.key"
+    local tls_csr="${CONFIG_DIR}/tls/web.csr"
+
+    if [[ ! -f "${ca_cert}" ]]; then
+        info "Generating internal Certificate Authority (ECDSA P-256, 10-year validity)..."
+        openssl ecparam -genkey -name prime256v1 -noout -out "${ca_key}"
+        openssl req -new -x509 -key "${ca_key}" -out "${ca_cert}" \
+            -days 3650 \
+            -subj "/CN=Patch Manager Root CA/O=Patch Manager" \
+            -addext "basicConstraints=critical,CA:true" \
+            -addext "keyUsage=critical,keyCertSign,cRLSign"
+        chown "${SERVICE_USER}:${SERVICE_USER}" "${ca_key}" "${ca_cert}"
+        chmod 600 "${ca_key}"
+        chmod 644 "${ca_cert}"
+        info "Internal CA generated."
+    else
+        info "Internal CA already exists, skipping."
+    fi
+
+    if [[ ! -f "${tls_cert}" ]]; then
+        info "Generating CA-signed web server certificate (valid 365 days)..."
+        local fqdn short host_ip san
+        fqdn=$(hostname -f 2>/dev/null || echo "localhost")
+        short=$(hostname -s 2>/dev/null || echo "localhost")
+        host_ip=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}' || true)
+        san="DNS:${fqdn},DNS:${short},DNS:localhost,IP:127.0.0.1,IP:::1"
+        [[ -n "${host_ip}" ]] && san="${san},IP:${host_ip}"
+
+        openssl ecparam -genkey -name prime256v1 -noout -out "${tls_key}"
+        openssl req -new -key "${tls_key}" -out "${tls_csr}" \
+            -subj "/CN=${fqdn}/O=Patch Manager" \
+            -addext "subjectAltName=${san}"
+        openssl x509 -req -in "${tls_csr}" -CA "${ca_cert}" -CAkey "${ca_key}" \
+            -CAcreateserial -days 365 -out "${tls_cert}" \
+            -extfile <(printf "subjectAltName=%s\nextendedKeyUsage=serverAuth\n" "${san}")
+        rm -f "${tls_csr}"
+
+        chown "${SERVICE_USER}:${SERVICE_USER}" "${tls_cert}" "${tls_key}"
+        chmod 644 "${tls_cert}"
+        chmod 600 "${tls_key}"
+        info "CA-signed web server certificate generated for ${fqdn}."
+    else
+        info "TLS certificate already exists, skipping."
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# 9. Enable and start services
 # ---------------------------------------------------------------------------
 enable_and_start_services() {
     systemctl daemon-reload
-
-    # Enable the target (which pulls in web + worker)
     systemctl enable patch-manager.target 2>/dev/null || true
-
-    # Enable individual services so they survive a reboot
     systemctl enable patch-manager-web.service patch-manager-worker.service 2>/dev/null || true
 
-    # Start or restart services
     if systemctl is-active --quiet patch-manager.target 2>/dev/null; then
         info "Restarting patch-manager services (upgrade)..."
         systemctl restart patch-manager.target 2>/dev/null || true
@@ -249,90 +335,45 @@ enable_and_start_services() {
 }
 
 # ---------------------------------------------------------------------------
-# 8. Wait for pm-web service to be healthy
-# The application runs database migrations via sqlx on startup.
-# We must wait for it to be ready before generating the admin password,
-# since the users table won't exist until migrations complete.
+# 10. Verify the service came up — ADVISORY ONLY, never fails the install.
+# A failed probe prints diagnostics instead of leaving dpkg half-configured.
 # ---------------------------------------------------------------------------
-wait_for_service_healthy() {
-    info "Waiting for pm-web service to become healthy (migrations run on startup)..."
-    local retries=30
-    local delay=1
+report_service_status() {
+    info "Waiting up to 30s for pm-web to come up (migrations run on startup)..."
     local i
-    for ((i = 1; i <= retries; i++)); do
-        # Check if the service is active
-        if systemctl is-active --quiet patch-manager-web.service 2>/dev/null; then
-            # Service is active — try a health check on the HTTPS port
-            if curl -skf https://localhost:443/ >/dev/null 2>&1 || \
-               curl -skf https://localhost:8443/ >/dev/null 2>&1; then
-                info "pm-web is healthy."
-                return 0
-            fi
+    for ((i = 1; i <= 30; i++)); do
+        if curl -skf https://localhost:443/ >/dev/null 2>&1 || \
+           curl -skf https://localhost:8443/ >/dev/null 2>&1 || \
+           curl -sf  http://localhost:443/  >/dev/null 2>&1 || \
+           curl -sf  http://localhost:8443/ >/dev/null 2>&1; then
+            echo ""
+            echo -e "${CYAN}=================================================================${NC}"
+            echo -e "${GREEN}  Linux Patch Manager is up.${NC}"
+            echo ""
+            echo -e "  Web UI:    ${GREEN}https://$(hostname -f 2>/dev/null || echo localhost)/${NC}"
+            echo -e "  Username:  ${GREEN}admin${NC}"
+            echo -e "  Password:  generated on first startup — retrieve it with:"
+            echo -e "    ${YELLOW}journalctl -u patch-manager-web | grep -A2 'INITIAL ADMIN PASSWORD' | tail -3${NC}"
+            echo ""
+            echo -e "  You will be forced to change it on first login."
+            echo -e "  The internal CA cert (for trusting the web UI) is at:"
+            echo -e "    ${CONFIG_DIR}/ca/ca.crt"
+            echo -e "${CYAN}=================================================================${NC}"
+            echo ""
+            return 0
         fi
-        warn "pm-web not ready yet (attempt ${i}/${retries}), waiting ${delay}s..."
-        sleep "${delay}"
+        sleep 1
     done
-    error "pm-web did not become healthy after $((retries * delay)) seconds."
-    error "Admin password generation may fail because the users table may not exist yet."
-    return 1
+
+    warn "pm-web did not respond within 30s. The install itself succeeded;"
+    warn "the service may still be starting, or it may have failed. Check:"
+    warn "  systemctl status patch-manager-web.service"
+    warn "  journalctl -u patch-manager-web -n 50"
+    return 0
 }
 
 # ---------------------------------------------------------------------------
-# 9. Generate admin password and update database
-# Must run AFTER the service has started and run migrations,
-# because the users table is created by sqlx migrations.
-# ---------------------------------------------------------------------------
-generate_admin_password() {
-    info "Generating admin password..."
-
-    # Generate a random 24-character password
-    local admin_password
-    admin_password=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9!@#%^&*' | head -c 24)
-
-    # Hash with argon2 (PHC format, compatible with the application)
-    # Generate a random 16-character salt (argon2 requires minimum 8 characters)
-    local admin_salt
-    admin_salt=$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 16)
-    local password_hash
-    password_hash=$(echo -n "${admin_password}" | argon2 "${admin_salt}" -id -t 3 -m 16 -p 1 -l 32 -e)
-
-    # Update admin user password in database
-    # Only update if the placeholder hash is still present
-    # The placeholder starts with: $argon2id$v=19$m=65536,t=3,p=1$AAAAAAAAAAAAAAAA
-    # Using single-quoted variable to preserve $ signs in SQL LIKE pattern
-    local placeholder_pattern
-    placeholder_pattern='$argon2id$v=19$m=65536,t=3,p=1$AAAAAAAAAAAAAAAA%'
-
-    local updated
-    updated=$(psql_run_db -t -A -c \
-        "UPDATE users SET password_hash = '${password_hash}', force_password_reset = TRUE \
-         WHERE username = 'admin' AND password_hash LIKE '${placeholder_pattern}' \
-         RETURNING id;" 2>/dev/null || echo "")
-
-    if [[ -n "${updated}" ]]; then
-        # Write admin password to file (mode 600, owned by root)
-        echo "${admin_password}" > "${ADMIN_PASSWORD_FILE}"
-        chmod 600 "${ADMIN_PASSWORD_FILE}"
-        chown root:root "${ADMIN_PASSWORD_FILE}"
-
-        echo ""
-        echo -e "${CYAN}=============================================${NC}"
-        echo -e "${CYAN}  Linux Patch Manager — Admin Credentials${NC}"
-        echo -e "${CYAN}=============================================${NC}"
-        echo -e "  Username: ${GREEN}admin${NC}"
-        echo -e "  Password: ${GREEN}${admin_password}${NC}"
-        echo ""
-        echo -e "  ${YELLOW}IMPORTANT: Save this password! It will not be shown again.${NC}"
-        echo -e "  Password also saved to: ${ADMIN_PASSWORD_FILE}"
-        echo -e "${CYAN}=============================================${NC}"
-        echo ""
-    else
-        info "Admin password already set (not a fresh install). Password file not regenerated."
-    fi
-}
-
-# ---------------------------------------------------------------------------
-# 10. Install backup cron (idempotent)
+# 11. Install backup cron (idempotent)
 # ---------------------------------------------------------------------------
 install_backup_cron() {
     if ! crontab -l 2>/dev/null | grep -qF "backup.sh"; then
@@ -350,15 +391,13 @@ case "$1" in
         create_directories
         wait_for_postgresql
         setup_database
+        repair_migration_checksums
         write_config
         generate_jwt_keys
+        generate_tls_certs
         enable_and_start_services
-        wait_for_service_healthy
-        generate_admin_password
+        report_service_status
         install_backup_cron
-
-        # Clean up temp file
-        rm -f /tmp/.pm-db-password-new
 
         info "Linux Patch Manager installation complete."
         ;;
