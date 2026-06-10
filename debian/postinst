@@ -7,6 +7,9 @@ set -e
 # Fully automated: apt install ./linux-patch-manager_X.X.X-1_amd64.deb
 # results in a running service with a printed admin password.
 # All steps are idempotent (safe to re-run on upgrade).
+#
+# Migrations are handled by the application via sqlx on startup.
+# This script only creates the database, user, and grants.
 # =============================================================================
 
 RED='\033[0;31m'
@@ -22,7 +25,6 @@ error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 DB_NAME="patch_manager"
 DB_USER="patch_manager"
 CONFIG_DIR="/etc/patch-manager"
-MIGRATION_DIR="/usr/share/patch-manager/migrations"
 ADMIN_PASSWORD_FILE="/etc/patch-manager/admin-password.txt"
 
 # ---------------------------------------------------------------------------
@@ -36,12 +38,6 @@ psql_run() {
 psql_run_db() {
     # Run SQL against the patch_manager database as postgres superuser
     sudo -u postgres psql -v ON_ERROR_STOP=1 -d "${DB_NAME}" "$@" 2>/dev/null
-}
-
-psql_run_as_pm() {
-    # Run SQL against the patch_manager database as patch_manager user
-    # Requires PGPASSWORD to be set in the calling environment
-    PGPASSWORD="${PGPASSWORD}" psql -v ON_ERROR_STOP=1 -U "${DB_USER}" -h localhost -d "${DB_NAME}" "$@" 2>/dev/null
 }
 
 # ---------------------------------------------------------------------------
@@ -95,7 +91,7 @@ wait_for_postgresql() {
 }
 
 # ---------------------------------------------------------------------------
-# 4. Create PostgreSQL user and database (idempotent)
+# 4. Create PostgreSQL user, database, and grants (idempotent)
 # ---------------------------------------------------------------------------
 setup_database() {
     info "Setting up PostgreSQL database and user..."
@@ -146,6 +142,9 @@ setup_database() {
         info "Database '${DB_NAME}' already exists, skipping creation."
     fi
 
+    # Ensure pgcrypto extension is available (required by application migrations)
+    psql_run_db -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;" 2>/dev/null || true
+
     # Grant full permissions so patch_manager owns and manages all objects
     psql_run_db -c "GRANT ALL PRIVILEGES ON SCHEMA public TO ${DB_USER};" 2>/dev/null || true
     psql_run_db -c "GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};" 2>/dev/null || true
@@ -156,101 +155,132 @@ setup_database() {
 }
 
 # ---------------------------------------------------------------------------
-# 5. Apply database migrations (idempotent)
-# Migrations run as patch_manager so all created objects are owned by
-# patch_manager — this avoids the ownership conflicts that occur when
-# postgres-owned objects need ALTER TABLE by a non-superuser.
+# 5. Write config.toml with DB URL
 # ---------------------------------------------------------------------------
-apply_migrations() {
-    info "Applying database migrations..."
+# Handles three scenarios:
+#   1. No config file → create from example with real DB password
+#   2. Config exists with CHANGEME → replace CHANGEME with real DB password
+#   3. Config exists with real password → leave it alone (upgrade)
+# ---------------------------------------------------------------------------
+write_config() {
+    local config_file="${CONFIG_DIR}/config.toml"
 
-    # Get the DB password for patch_manager authentication
+    # Resolve the DB password to use: from setup_database() or generate fresh.
     local db_password=""
     if [[ -f /tmp/.pm-db-password-new ]]; then
         db_password=$(cat /tmp/.pm-db-password-new)
-    else
-        # Fallback: extract from config
-        local config_file="${CONFIG_DIR}/config.toml"
-        if [[ -f "${config_file}" ]]; then
-            db_password=$(sed -n 's|^url = "postgres://[^:]*:\(.*\)@localhost.*"|\1|p' "${config_file}" | head -1)
-        fi
-        if [[ -z "${db_password}" || "${db_password}" == "CHANGEME" ]]; then
-            error "Cannot determine DB password for migrations."
-            return 1
-        fi
     fi
 
-    export PGPASSWORD="${db_password}"
-
-    # Ensure pgcrypto extension is available (requires superuser)
-    psql_run_db -c "CREATE EXTENSION IF NOT EXISTS pgcrypto;" 2>/dev/null || true
-
-    # Create migration tracking table if not exists (run as patch_manager)
-    psql_run_as_pm <<'MIGSQL'
-CREATE TABLE IF NOT EXISTS _migrations (
-    id          SERIAL PRIMARY KEY,
-    filename    TEXT    NOT NULL UNIQUE,
-    applied_at  TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-MIGSQL
-
-    # Handle upgrade from pre-migration-tracking versions:
-    # If tables exist but _migrations is empty, mark all existing migrations as applied.
-    local migration_count
-    migration_count=$(psql_run_as_pm -t -A -c "SELECT COUNT(*) FROM _migrations;" 2>/dev/null || echo "0")
-    migration_count="${migration_count// /}"
-
-    local tables_exist
-    tables_exist=$(psql_run_as_pm -t -A -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='users';" 2>/dev/null || echo "0")
-    tables_exist="${tables_exist// /}"
-
-    if [[ "${migration_count}" == "0" && "${tables_exist}" -gt 0 ]]; then
-        info "Existing database detected — marking all shipped migrations as already applied."
-        for sql_file in $(ls "${MIGRATION_DIR}"/*.sql 2>/dev/null | sort); do
-            local fname
-            fname=$(basename "${sql_file}")
-            psql_run_as_pm -c "INSERT INTO _migrations (filename) VALUES ('${fname}') ON CONFLICT (filename) DO NOTHING;" 2>/dev/null || true
-        done
-    fi
-
-    # Apply each migration in sorted order, skipping already-applied ones
-    local applied=0
-    local skipped=0
-    for sql_file in $(ls "${MIGRATION_DIR}"/*.sql 2>/dev/null | sort); do
-        local fname
-        fname=$(basename "${sql_file}")
-
-        local already_applied
-        already_applied=$(psql_run_as_pm -t -A -c "SELECT COUNT(*) FROM _migrations WHERE filename='${fname}';" 2>/dev/null || echo "0")
-        already_applied="${already_applied// /}"
-
-        if [[ "${already_applied}" -gt 0 ]]; then
-            skipped=$((skipped + 1))
-            continue
-        fi
-
-        info "  Applying migration: ${fname}"
-        if psql_run_as_pm -f "${sql_file}"; then
-            psql_run_as_pm -c "INSERT INTO _migrations (filename) VALUES ('${fname}');" 2>/dev/null || true
-            applied=$((applied + 1))
+    if [[ -f "${config_file}" ]]; then
+        # Check if the config still has the CHANGEME placeholder
+        if grep -q 'CHANGEME' "${config_file}"; then
+            if [[ -z "${db_password}" ]]; then
+                # No password from setup_database() — generate a fresh one
+                db_password=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32)
+                psql_run -c "ALTER ROLE ${DB_USER} WITH PASSWORD '${db_password}';" 2>/dev/null || true
+            fi
+            info "Replacing CHANGEME placeholder in existing config with real DB password."
+            sed -i "s|postgres://patch_manager:CHANGEME@localhost/patch_manager|postgres://${DB_USER}:${db_password}@localhost/${DB_NAME}|" "${config_file}"
         else
-            error "  Failed to apply migration: ${fname}"
-            unset PGPASSWORD
-            return 1
+            info "Config file ${config_file} already exists with a real password, leaving it unchanged."
+            return 0
         fi
-    done
-
-    unset PGPASSWORD
-
-    if [[ "${applied}" -gt 0 ]]; then
-        info "Applied ${applied} new migration(s), skipped ${skipped} already applied."
     else
-        info "All migrations up to date (${skipped} already applied)."
+        # No config file — create from example
+        if [[ -z "${db_password}" ]]; then
+            db_password=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32)
+            psql_run -c "ALTER ROLE ${DB_USER} WITH PASSWORD '${db_password}';" 2>/dev/null || true
+        fi
+
+        info "Writing configuration file..."
+        cp /usr/share/patch-manager/config.example.toml "${config_file}"
+        sed -i "s|postgres://patch_manager:CHANGEME@localhost/patch_manager|postgres://${DB_USER}:${db_password}@localhost/${DB_NAME}|" "${config_file}"
+    fi
+
+    chown patch-manager:patch-manager "${config_file}"
+    chmod 640 "${config_file}"
+    info "Configuration written to ${config_file}"
+}
+
+# ---------------------------------------------------------------------------
+# 6. Generate JWT keys (idempotent)
+# Only generates if missing; regenerates verify.pem from signing.pem if lost.
+# ---------------------------------------------------------------------------
+generate_jwt_keys() {
+    if [[ ! -f "${CONFIG_DIR}/jwt/signing.pem" ]]; then
+        info "Generating Ed25519 JWT signing key..."
+        openssl genpkey -algorithm ed25519 -out "${CONFIG_DIR}/jwt/signing.pem" 2>/dev/null
+        openssl pkey -in "${CONFIG_DIR}/jwt/signing.pem" -pubout -out "${CONFIG_DIR}/jwt/verify.pem" 2>/dev/null
+        chown patch-manager:patch-manager "${CONFIG_DIR}/jwt/signing.pem" "${CONFIG_DIR}/jwt/verify.pem"
+        chmod 600 "${CONFIG_DIR}/jwt/signing.pem"
+        chmod 644 "${CONFIG_DIR}/jwt/verify.pem"
+        info "JWT keys generated."
+    elif [[ ! -f "${CONFIG_DIR}/jwt/verify.pem" ]]; then
+        info "Regenerating missing JWT verification key from existing signing key..."
+        openssl pkey -in "${CONFIG_DIR}/jwt/signing.pem" -pubout -out "${CONFIG_DIR}/jwt/verify.pem" 2>/dev/null
+        chown patch-manager:patch-manager "${CONFIG_DIR}/jwt/verify.pem"
+        chmod 644 "${CONFIG_DIR}/jwt/verify.pem"
+        info "JWT verification key regenerated."
+    else
+        info "JWT keys already exist, skipping."
     fi
 }
 
 # ---------------------------------------------------------------------------
-# 6. Generate admin password and update database
+# 7. Enable and start services
+# ---------------------------------------------------------------------------
+enable_and_start_services() {
+    systemctl daemon-reload
+
+    # Enable the target (which pulls in web + worker)
+    systemctl enable patch-manager.target 2>/dev/null || true
+
+    # Enable individual services so they survive a reboot
+    systemctl enable patch-manager-web.service patch-manager-worker.service 2>/dev/null || true
+
+    # Start or restart services
+    if systemctl is-active --quiet patch-manager.target 2>/dev/null; then
+        info "Restarting patch-manager services (upgrade)..."
+        systemctl restart patch-manager.target 2>/dev/null || true
+    else
+        info "Starting patch-manager services..."
+        systemctl start patch-manager.target 2>/dev/null || true
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# 8. Wait for pm-web service to be healthy
+# The application runs database migrations via sqlx on startup.
+# We must wait for it to be ready before generating the admin password,
+# since the users table won't exist until migrations complete.
+# ---------------------------------------------------------------------------
+wait_for_service_healthy() {
+    info "Waiting for pm-web service to become healthy (migrations run on startup)..."
+    local retries=30
+    local delay=1
+    local i
+    for ((i = 1; i <= retries; i++)); do
+        # Check if the service is active
+        if systemctl is-active --quiet patch-manager-web.service 2>/dev/null; then
+            # Service is active — try a health check on the HTTPS port
+            if curl -skf https://localhost:443/ >/dev/null 2>&1 || \
+               curl -skf https://localhost:8443/ >/dev/null 2>&1; then
+                info "pm-web is healthy."
+                return 0
+            fi
+        fi
+        warn "pm-web not ready yet (attempt ${i}/${retries}), waiting ${delay}s..."
+        sleep "${delay}"
+    done
+    error "pm-web did not become healthy after $((retries * delay)) seconds."
+    error "Admin password generation may fail because the users table may not exist yet."
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# 9. Generate admin password and update database
+# Must run AFTER the service has started and run migrations,
+# because the users table is created by sqlx migrations.
 # ---------------------------------------------------------------------------
 generate_admin_password() {
     info "Generating admin password..."
@@ -302,100 +332,6 @@ generate_admin_password() {
 }
 
 # ---------------------------------------------------------------------------
-# 7. Write config.toml with DB URL
-# ---------------------------------------------------------------------------
-# Handles three scenarios:
-#   1. No config file → create from example with real DB password
-#   2. Config exists with CHANGEME → replace CHANGEME with real DB password
-#   3. Config exists with real password → leave it alone (upgrade)
-# ---------------------------------------------------------------------------
-write_config() {
-    local config_file="${CONFIG_DIR}/config.toml"
-
-    # Resolve the DB password to use: from setup_database() or generate fresh.
-    local db_password=""
-    if [[ -f /tmp/.pm-db-password-new ]]; then
-        db_password=$(cat /tmp/.pm-db-password-new)
-    fi
-
-    if [[ -f "${config_file}" ]]; then
-        # Check if the config still has the CHANGEME placeholder
-        if grep -q 'CHANGEME' "${config_file}"; then
-            if [[ -z "${db_password}" ]]; then
-                # No password from setup_database() — generate a fresh one
-                db_password=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32)
-                psql_run -c "ALTER ROLE ${DB_USER} WITH PASSWORD '${db_password}';" 2>/dev/null || true
-            fi
-            info "Replacing CHANGEME placeholder in existing config with real DB password."
-            sed -i "s|postgres://patch_manager:CHANGEME@localhost/patch_manager|postgres://${DB_USER}:${db_password}@localhost/${DB_NAME}|" "${config_file}"
-        else
-            info "Config file ${config_file} already exists with a real password, leaving it unchanged."
-            return 0
-        fi
-    else
-        # No config file — create from example
-        if [[ -z "${db_password}" ]]; then
-            db_password=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32)
-            psql_run -c "ALTER ROLE ${DB_USER} WITH PASSWORD '${db_password}';" 2>/dev/null || true
-        fi
-
-        info "Writing configuration file..."
-        cp /usr/share/patch-manager/config.example.toml "${config_file}"
-        sed -i "s|postgres://patch_manager:CHANGEME@localhost/patch_manager|postgres://${DB_USER}:${db_password}@localhost/${DB_NAME}|" "${config_file}"
-    fi
-
-    chown patch-manager:patch-manager "${config_file}"
-    chmod 640 "${config_file}"
-    info "Configuration written to ${config_file}"
-}
-
-# ---------------------------------------------------------------------------
-# 8. Generate JWT keys (idempotent)
-# Only generates if missing; regenerates verify.pem from signing.pem if lost.
-# ---------------------------------------------------------------------------
-generate_jwt_keys() {
-    if [[ ! -f "${CONFIG_DIR}/jwt/signing.pem" ]]; then
-        info "Generating Ed25519 JWT signing key..."
-        openssl genpkey -algorithm ed25519 -out "${CONFIG_DIR}/jwt/signing.pem" 2>/dev/null
-        openssl pkey -in "${CONFIG_DIR}/jwt/signing.pem" -pubout -out "${CONFIG_DIR}/jwt/verify.pem" 2>/dev/null
-        chown patch-manager:patch-manager "${CONFIG_DIR}/jwt/signing.pem" "${CONFIG_DIR}/jwt/verify.pem"
-        chmod 600 "${CONFIG_DIR}/jwt/signing.pem"
-        chmod 644 "${CONFIG_DIR}/jwt/verify.pem"
-        info "JWT keys generated."
-    elif [[ ! -f "${CONFIG_DIR}/jwt/verify.pem" ]]; then
-        info "Regenerating missing JWT verification key from existing signing key..."
-        openssl pkey -in "${CONFIG_DIR}/jwt/signing.pem" -pubout -out "${CONFIG_DIR}/jwt/verify.pem" 2>/dev/null
-        chown patch-manager:patch-manager "${CONFIG_DIR}/jwt/verify.pem"
-        chmod 644 "${CONFIG_DIR}/jwt/verify.pem"
-        info "JWT verification key regenerated."
-    else
-        info "JWT keys already exist, skipping."
-    fi
-}
-
-# ---------------------------------------------------------------------------
-# 9. Enable and start services
-# ---------------------------------------------------------------------------
-enable_and_start_services() {
-    systemctl daemon-reload
-
-    # Enable the target (which pulls in web + worker)
-    systemctl enable patch-manager.target 2>/dev/null || true
-
-    # Enable individual services so they survive a reboot
-    systemctl enable patch-manager-web.service patch-manager-worker.service 2>/dev/null || true
-
-    # Start or restart services
-    if systemctl is-active --quiet patch-manager.target 2>/dev/null; then
-        info "Restarting patch-manager services (upgrade)..."
-        systemctl restart patch-manager.target 2>/dev/null || true
-    else
-        info "Starting patch-manager services..."
-        systemctl start patch-manager.target 2>/dev/null || true
-    fi
-}
-
-# ---------------------------------------------------------------------------
 # 10. Install backup cron (idempotent)
 # ---------------------------------------------------------------------------
 install_backup_cron() {
@@ -414,11 +350,11 @@ case "$1" in
         create_directories
         wait_for_postgresql
         setup_database
-        apply_migrations
-        generate_admin_password
         write_config
         generate_jwt_keys
         enable_and_start_services
+        wait_for_service_healthy
+        generate_admin_password
         install_backup_cron
 
         # Clean up temp file
