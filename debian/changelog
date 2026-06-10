@@ -1,3 +1,19 @@
+linux-patch-manager (1.1.13-1) unstable; urgency=low
+
+  * fix: remove health check and admin password generation from postinst
+    - The wait_for_service_healthy() function used an HTTPS curl probe against
+      a port that runs HTTP when no TLS certs are present, so it always timed
+      out and caused the postinst (and any subsequent apt operation) to fail
+      with exit code 1, leaving dpkg in a broken state.
+    - The generate_admin_password() function was redundant: the patch-manager
+      service already generates and prints the initial admin password to its
+      journal logs on first startup. Remove it from the postinst.
+    - The postinst now always exits 0, so apt operations succeed normally.
+    - To retrieve the admin password after install:
+        sudo journalctl -u patch-manager-web -n 50 | grep -A 6 'INITIAL ADMIN PASSWORD'
+
+ -- git-echo <git-echo@moon-dragon.us>  Wed, 10 Jun 2026 08:12:13 -0500
+
 linux-patch-manager (1.1.12-1) unstable; urgency=low
 
   * Release v1.1.12

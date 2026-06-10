@@ -5,7 +5,9 @@ set -e
 # Linux Patch Manager — Post-install script
 # =============================================================================
 # Fully automated: apt install ./linux-patch-manager_X.X.X-1_amd64.deb
-# results in a running service with a printed admin password.
+# results in a running service. The service generates and prints the
+# initial admin password to its journal logs on first startup; this
+# script does not generate or print the admin password.
 # All steps are idempotent (safe to re-run on upgrade).
 #
 # Migrations are handled by the application via sqlx on startup.
@@ -25,7 +27,6 @@ error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 DB_NAME="patch_manager"
 DB_USER="patch_manager"
 CONFIG_DIR="/etc/patch-manager"
-ADMIN_PASSWORD_FILE="/etc/patch-manager/admin-password.txt"
 
 # ---------------------------------------------------------------------------
 # PostgreSQL helpers
@@ -249,90 +250,7 @@ enable_and_start_services() {
 }
 
 # ---------------------------------------------------------------------------
-# 8. Wait for pm-web service to be healthy
-# The application runs database migrations via sqlx on startup.
-# We must wait for it to be ready before generating the admin password,
-# since the users table won't exist until migrations complete.
-# ---------------------------------------------------------------------------
-wait_for_service_healthy() {
-    info "Waiting for pm-web service to become healthy (migrations run on startup)..."
-    local retries=30
-    local delay=1
-    local i
-    for ((i = 1; i <= retries; i++)); do
-        # Check if the service is active
-        if systemctl is-active --quiet patch-manager-web.service 2>/dev/null; then
-            # Service is active — try a health check on the HTTPS port
-            if curl -skf https://localhost:443/ >/dev/null 2>&1 || \
-               curl -skf https://localhost:8443/ >/dev/null 2>&1; then
-                info "pm-web is healthy."
-                return 0
-            fi
-        fi
-        warn "pm-web not ready yet (attempt ${i}/${retries}), waiting ${delay}s..."
-        sleep "${delay}"
-    done
-    error "pm-web did not become healthy after $((retries * delay)) seconds."
-    error "Admin password generation may fail because the users table may not exist yet."
-    return 1
-}
-
-# ---------------------------------------------------------------------------
-# 9. Generate admin password and update database
-# Must run AFTER the service has started and run migrations,
-# because the users table is created by sqlx migrations.
-# ---------------------------------------------------------------------------
-generate_admin_password() {
-    info "Generating admin password..."
-
-    # Generate a random 24-character password
-    local admin_password
-    admin_password=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9!@#%^&*' | head -c 24)
-
-    # Hash with argon2 (PHC format, compatible with the application)
-    # Generate a random 16-character salt (argon2 requires minimum 8 characters)
-    local admin_salt
-    admin_salt=$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 16)
-    local password_hash
-    password_hash=$(echo -n "${admin_password}" | argon2 "${admin_salt}" -id -t 3 -m 16 -p 1 -l 32 -e)
-
-    # Update admin user password in database
-    # Only update if the placeholder hash is still present
-    # The placeholder starts with: $argon2id$v=19$m=65536,t=3,p=1$AAAAAAAAAAAAAAAA
-    # Using single-quoted variable to preserve $ signs in SQL LIKE pattern
-    local placeholder_pattern
-    placeholder_pattern='$argon2id$v=19$m=65536,t=3,p=1$AAAAAAAAAAAAAAAA%'
-
-    local updated
-    updated=$(psql_run_db -t -A -c \
-        "UPDATE users SET password_hash = '${password_hash}', force_password_reset = TRUE \
-         WHERE username = 'admin' AND password_hash LIKE '${placeholder_pattern}' \
-         RETURNING id;" 2>/dev/null || echo "")
-
-    if [[ -n "${updated}" ]]; then
-        # Write admin password to file (mode 600, owned by root)
-        echo "${admin_password}" > "${ADMIN_PASSWORD_FILE}"
-        chmod 600 "${ADMIN_PASSWORD_FILE}"
-        chown root:root "${ADMIN_PASSWORD_FILE}"
-
-        echo ""
-        echo -e "${CYAN}=============================================${NC}"
-        echo -e "${CYAN}  Linux Patch Manager — Admin Credentials${NC}"
-        echo -e "${CYAN}=============================================${NC}"
-        echo -e "  Username: ${GREEN}admin${NC}"
-        echo -e "  Password: ${GREEN}${admin_password}${NC}"
-        echo ""
-        echo -e "  ${YELLOW}IMPORTANT: Save this password! It will not be shown again.${NC}"
-        echo -e "  Password also saved to: ${ADMIN_PASSWORD_FILE}"
-        echo -e "${CYAN}=============================================${NC}"
-        echo ""
-    else
-        info "Admin password already set (not a fresh install). Password file not regenerated."
-    fi
-}
-
-# ---------------------------------------------------------------------------
-# 10. Install backup cron (idempotent)
+# 8. Install backup cron (idempotent)
 # ---------------------------------------------------------------------------
 install_backup_cron() {
     if ! crontab -l 2>/dev/null | grep -qF "backup.sh"; then
@@ -353,8 +271,6 @@ case "$1" in
         write_config
         generate_jwt_keys
         enable_and_start_services
-        wait_for_service_healthy
-        generate_admin_password
         install_backup_cron
 
         # Clean up temp file
