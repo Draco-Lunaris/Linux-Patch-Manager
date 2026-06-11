@@ -1,3 +1,11 @@
+linux-patch-manager (1.1.15-1) unstable; urgency=low
+
+  * Release v1.1.15
+    - PR #76: generate manager client cert in setup.sh
+    - PR #77: create keys directory and add to systemd ReadWritePaths
+
+ -- Draco-Lunaris-Echo <draco-lunaris-echo@moon-dragon.us>  Thu, 11 Jun 2026 14:59:08 +0000
+
 linux-patch-manager (1.1.14-1) unstable; urgency=low
 
   * Release v1.1.14
