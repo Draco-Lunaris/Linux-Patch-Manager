@@ -1,3 +1,17 @@
+linux-patch-manager (1.1.16-1) unstable; urgency=low
+
+  * Release v1.1.16
+    - PR #79: include setup.sh in .deb package build
+
+ -- Draco-Lunaris-Echo <draco-lunaris-echo@moon-dragon.us>  Thu, 11 Jun 2026 18:00:46 +0000
+
+linux-patch-manager (1.1.16-1) unstable; urgency=low
+
+  * Release v1.1.16
+    - PR #79: include setup.sh in .deb package build
+
+ -- Draco-Lunaris-Echo <draco-lunaris-echo@moon-dragon.us>  Thu, 11 Jun 2026 18:00:04 +0000
+
 linux-patch-manager (1.1.15-1) unstable; urgency=low
 
   * Release v1.1.15
