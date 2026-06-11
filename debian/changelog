@@ -1,3 +1,15 @@
+linux-patch-manager (1.1.19-1) unstable; urgency=low
+
+  * fix(packaging): sync frontend version with Cargo.toml in build-package.sh
+    - Frontend package.json version was stuck at 1.1.14, never updated
+    - Added automatic version sync in build-package.sh for both source and build copy
+    - Dashboard now shows correct version
+  * fix(packaging): add mTLS client certificate generation to postinst
+    - Manager's own client cert was never generated during .deb installs
+    - Without client.crt/client.key, the manager cannot authenticate to agents
+
+ -- Draco-Lunaris-Echo <draco-lunaris-echo@moon-dragon.us>  Thu, 11 Jun 2026 23:30:00 +0000
+
 linux-patch-manager (1.1.18-1) unstable; urgency=low
 
   * fix(packaging): add mTLS client certificate generation to postinst

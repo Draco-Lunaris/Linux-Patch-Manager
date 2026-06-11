@@ -22,7 +22,7 @@ warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="1.1.18"
+VERSION="1.1.19"
 RELEASE="1"
 PKG_NAME="linux-patch-manager"
 DEB_NAME="${PKG_NAME}_${VERSION}-${RELEASE}_amd64.deb"
@@ -111,6 +111,10 @@ chmod 755 "${BUILD_DIR}/DEBIAN/postinst" "${BUILD_DIR}/DEBIAN/prerm" "${BUILD_DI
 
  # Update Version in control file to match Cargo.toml version
  sed -i "s/^Version: .*/Version: ${VERSION}-${RELEASE}/" "${BUILD_DIR}/DEBIAN/control"
+
+ # Update Version in frontend package.json to match (both source and build copy)
+ sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${VERSION}\"/" "${PROJECT_ROOT}/frontend/package.json"
+ sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${VERSION}\"/" "${BUILD_DIR}/usr/share/patch-manager/frontend/package.json"
 
 # Calculate installed size (in KB)
 INSTALLED_SIZE=$(du -sk "${BUILD_DIR}" | cut -f1)
