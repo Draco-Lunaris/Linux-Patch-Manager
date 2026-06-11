@@ -62,6 +62,7 @@ mkdir -p \
     "${CONFIG_DIR}/ca" \
     "${CONFIG_DIR}/certs" \
     "${CONFIG_DIR}/jwt" \
+    "${CONFIG_DIR}/keys" \
     "${CONFIG_DIR}/tls" \
     "${LOG_DIR}" \
     "${DATA_DIR}" \
@@ -74,7 +75,7 @@ chown -R "${SERVICE_USER}:${SERVICE_GROUP}" \
     "${DATA_DIR}" \
     "${FRONTEND_DIR}"
 
-chmod 750 "${CONFIG_DIR}/ca" "${CONFIG_DIR}/jwt"
+chmod 750 "${CONFIG_DIR}/ca" "${CONFIG_DIR}/jwt" "${CONFIG_DIR}/keys"
 chmod 700 "${BACKUP_DIR}"
 
 info "Directories created."
