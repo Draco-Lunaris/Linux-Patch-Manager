@@ -1,17 +1,12 @@
-linux-patch-manager (1.1.17-1) unstable; urgency=low
+linux-patch-manager (1.1.18-1) unstable; urgency=low
 
-  * Release v1.1.17
-    - PR #81: remove duplicate debian/changelog entry for 1.1.16
-    - PR #82: add keys directory to postinst create_directories()
+  * fix(packaging): add mTLS client certificate generation to postinst
+    - Manager's own client cert was never generated during .deb installs
+    - setup.sh had this in section 6c but postinst was missing it entirely
+    - Without client.crt/client.key, the manager cannot authenticate to agents
+    - Added generate_client_cert() function and call in main block
 
- -- Draco-Lunaris-Echo <draco-lunaris-echo@moon-dragon.us>  Thu, 11 Jun 2026 21:01:22 +0000
-
-linux-patch-manager (1.1.16-1) unstable; urgency=low
-
-  * Release v1.1.16
-    - PR #79: include setup.sh in .deb package build
-
- -- Draco-Lunaris-Echo <draco-lunaris-echo@moon-dragon.us>  Thu, 11 Jun 2026 18:00:46 +0000
+ -- Draco-Lunaris-Echo <draco-lunaris-echo@moon-dragon.us>  Thu, 11 Jun 2026 22:45:00 +0000
 
 linux-patch-manager (1.1.15-1) unstable; urgency=low
 
