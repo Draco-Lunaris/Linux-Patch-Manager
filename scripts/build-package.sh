@@ -82,9 +82,11 @@ mkdir -p "${BUILD_DIR}/lib/systemd/system"
 cp "${PROJECT_ROOT}/target/release/pm-web" "${BUILD_DIR}/usr/local/bin/pm-web"
 cp "${PROJECT_ROOT}/target/release/pm-worker" "${BUILD_DIR}/usr/local/bin/pm-worker"
 cp "${PROJECT_ROOT}/scripts/backup.sh" "${BUILD_DIR}/usr/local/bin/backup.sh"
+cp "${PROJECT_ROOT}/scripts/setup.sh" "${BUILD_DIR}/usr/local/bin/setup.sh"
 chmod 755 "${BUILD_DIR}/usr/local/bin/pm-web"
 chmod 755 "${BUILD_DIR}/usr/local/bin/pm-worker"
 chmod 700 "${BUILD_DIR}/usr/local/bin/backup.sh"
+chmod 755 "${BUILD_DIR}/usr/local/bin/setup.sh"
 
 # Frontend
 cp -r "${PROJECT_ROOT}/frontend/dist/"* "${BUILD_DIR}/usr/share/patch-manager/frontend/"
