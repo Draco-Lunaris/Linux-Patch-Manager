@@ -65,7 +65,7 @@ create_service_user() {
 # ---------------------------------------------------------------------------
 create_directories() {
     mkdir -p "${CONFIG_DIR}/ca" "${CONFIG_DIR}/certs" \
-             "${CONFIG_DIR}/jwt" "${CONFIG_DIR}/tls" \
+             "${CONFIG_DIR}/jwt" "${CONFIG_DIR}/keys" "${CONFIG_DIR}/tls" \
              /var/log/patch-manager /opt/patch-manager \
              /var/backups/patch-manager
 
@@ -78,7 +78,7 @@ create_directories() {
     chown -R root:root /usr/share/patch-manager/frontend
     chmod -R a+rX /usr/share/patch-manager/frontend
 
-    chmod 750 "${CONFIG_DIR}/ca" "${CONFIG_DIR}/jwt"
+    chmod 750 "${CONFIG_DIR}/ca" "${CONFIG_DIR}/jwt" "${CONFIG_DIR}/keys"
     chmod 700 /var/backups/patch-manager
 }
 
