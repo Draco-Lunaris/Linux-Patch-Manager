@@ -218,6 +218,41 @@ else
 fi
 
 # -----------------------------------------------------------------------
+# 6c. Generate manager's own mTLS client certificate (signed by CA)
+# -----------------------------------------------------------------------
+CLIENT_CERT="${CONFIG_DIR}/certs/client.crt"
+CLIENT_KEY="${CONFIG_DIR}/certs/client.key"
+
+if [[ ! -f "${CLIENT_CERT}" ]]; then
+    info "Generating CA-signed manager client certificate (valid 365 days)..."
+    # Ensure certs directory exists
+    mkdir -p "${CONFIG_DIR}/certs"
+
+    # Generate ECDSA P-256 private key for manager client cert
+    openssl ecparam -genkey -name prime256v1 -noout -out "${CLIENT_KEY}"
+
+    # Generate CSR
+    CLIENT_CSR="${CONFIG_DIR}/certs/client.csr"
+    openssl req -new -key "${CLIENT_KEY}" -out "${CLIENT_CSR}" \
+        -subj "/CN=patch-manager-client/O=Patch Manager"
+
+    # Sign with the internal CA, with extendedKeyUsage=clientAuth
+    openssl x509 -req -in "${CLIENT_CSR}" -CA "${CA_CERT}" -CAkey "${CA_KEY}" \
+        -CAcreateserial -days 365 -out "${CLIENT_CERT}" \
+        -extfile <(printf "extendedKeyUsage=clientAuth")
+
+    # Clean up CSR
+    rm -f "${CLIENT_CSR}"
+
+    chown "${SERVICE_USER}:${SERVICE_GROUP}" "${CLIENT_CERT}" "${CLIENT_KEY}"
+    chmod 644 "${CLIENT_CERT}"
+    chmod 600 "${CLIENT_KEY}"
+    info "CA-signed manager client certificate generated."
+else
+    warn "Manager client certificate already exists at ${CLIENT_CERT}, skipping."
+fi
+
+# -----------------------------------------------------------------------
 # 7. Install systemd units
 # -----------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
