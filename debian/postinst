@@ -320,6 +320,47 @@ generate_tls_certs() {
 }
 
 # ---------------------------------------------------------------------------
+# 8b. Generate manager's own mTLS client certificate (signed by CA, idempotent).
+#
+# Without this, the manager has no client certificate for authenticating to
+# agent endpoints. setup.sh generates this in section 6c, but the .deb package
+# was missing it entirely — causing agents to never reach healthy status.
+# ---------------------------------------------------------------------------
+generate_client_cert() {
+    local client_cert="${CONFIG_DIR}/certs/client.crt"
+    local client_key="${CONFIG_DIR}/certs/client.key"
+    local client_csr="${CONFIG_DIR}/certs/client.csr"
+
+    if [[ ! -f "${client_cert}" ]]; then
+        info "Generating CA-signed manager client certificate (valid 365 days)..."
+        # Ensure certs directory exists
+        mkdir -p "${CONFIG_DIR}/certs"
+
+        # Generate ECDSA P-256 private key for manager client cert
+        openssl ecparam -genkey -name prime256v1 -noout -out "${client_key}"
+
+        # Generate CSR
+        openssl req -new -key "${client_key}" -out "${client_csr}" \
+            -subj "/CN=patch-manager-client/O=Patch Manager"
+
+        # Sign with the internal CA, with extendedKeyUsage=clientAuth
+        openssl x509 -req -in "${client_csr}" -CA "${CONFIG_DIR}/ca/ca.crt" -CAkey "${CONFIG_DIR}/ca/ca.key" \
+            -CAcreateserial -days 365 -out "${client_cert}" \
+            -extfile <(printf "extendedKeyUsage=clientAuth")
+
+        # Clean up CSR
+        rm -f "${client_csr}"
+
+        chown "${SERVICE_USER}:${SERVICE_USER}" "${client_cert}" "${client_key}"
+        chmod 644 "${client_cert}"
+        chmod 600 "${client_key}"
+        info "CA-signed manager client certificate generated."
+    else
+        info "Manager client certificate already exists, skipping."
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # 9. Enable and start services
 # ---------------------------------------------------------------------------
 enable_and_start_services() {
@@ -397,6 +438,7 @@ case "$1" in
         write_config
         generate_jwt_keys
         generate_tls_certs
+        generate_client_cert
         enable_and_start_services
         report_service_status
         install_backup_cron
