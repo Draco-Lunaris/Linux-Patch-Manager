@@ -5,9 +5,9 @@
 | Field | Value |
 |-------|-------|
 | Title | Linux_Patch_Manager — Specification Document |
-| Version | 0.0.2 |
-| Status | Draft |
-| Last Updated | 2026-04-23 |
+| Version | 1.1.19 |
+| Status | Current |
+| Last Updated | 2026-06-12 |
 | Related Docs | `REQUIREMENTS.md`, `ARCHITECTURE.md`, `README.md` |
 
 ### Revision History
@@ -16,14 +16,15 @@
 |---------|------|---------|
 | 0.0.1 | 2026-04-21 | Initial draft |
 | 0.0.2 | 2026-04-23 | Aligned with SDD v0.0.3: portable ASCII diagram, hardware-host encryption at rest, Argon2id / EdDSA / TLS 1.3 called out, Settings page scope expanded (Azure SSO, SMTP, web-UI TLS), IP whitelist enforcement |
+| 1.1.19 | 2026-06-12 | Updated version to match release; updated all Gitea references to GitHub |
 
 ---
 
 ## Project Overview
 **Title:** Linux_Patch_Manager
 **Description:** Enterprise-class, secure, web-based management interface for controlling patching and updates on Linux servers and workstations
-**Version:** 0.0.2
-**Status:** Draft
+**Version:** 1.1.19
+**Status:** Current
 
 ## Scope
 
@@ -117,7 +118,7 @@ Management plane web application communicating with Linux Patch API agents on ea
 
 ## API Integration
 
-**Upstream Dependency:** [Linux Patch API](https://gitea.moon-dragon.us/echo/linux_patch_api)
+**Upstream Dependency:** [Linux Patch API](https://github.com/Draco-Lunaris/Linux-Patch-API)
 - All managed device access uses the Linux Patch API
 - mTLS certificate-based authentication to agents (TLS 1.3 only)
 - Hybrid sync/async operation model (sync for queries, async jobs for patch operations)

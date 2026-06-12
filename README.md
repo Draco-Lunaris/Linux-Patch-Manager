@@ -4,7 +4,7 @@
 
 ## Overview
 
-Linux Patch Manager provides a centralized web interface to manage patching and software updates across a fleet of Linux servers and workstations. It communicates with managed devices through the [Linux Patch API](https://gitea.moon-dragon.us/echo/linux_patch_api), leveraging mTLS-secured RESTful endpoints for all operations.
+Linux Patch Manager provides a centralized web interface to manage patching and software updates across a fleet of Linux servers and workstations. It communicates with managed devices through the [Linux Patch API](https://github.com/Draco-Lunaris/Linux-Patch-API), leveraging mTLS-secured RESTful endpoints for all operations.
 
 ## Key Features
 
@@ -56,7 +56,7 @@ Linux Patch Manager is a web application that acts as a management plane, commun
 | **Database** | PostgreSQL 16 |
 | **Memory** | 2 GB RAM minimum, 4 GB recommended |
 | **Storage** | 1 GB for application + database space |
-| **Network** | HTTPS access (port 443 recommended) |
+| **Network** | HTTPS access (port 443) + mTLS agent connections (port 12443 inbound) |
 
 ## Installation
 
@@ -169,7 +169,7 @@ journalctl -u patch-manager-worker -f
 
 ## Initial Access
 
-1. Open a web browser and navigate to: `https://your-server-ip:8080`
+1. Open a web browser and navigate to: `https://your-server-ip`
 
 2. Default admin credentials (change immediately!):
    - **Username:** `admin`
@@ -219,7 +219,7 @@ The `.deb` package will be created in the project root directory.
 
 ## Related Projects
 
-- **[Linux Patch API](https://gitea-lxc.moon-dragon.us/echo/linux_patch_api)** — The API agent that runs on each managed host
+- **[Linux Patch API](https://github.com/Draco-Lunaris/Linux-Patch-API)** — The API agent that runs on each managed host
 
 ## Troubleshooting
 
@@ -233,7 +233,7 @@ sudo patch-manager-web --validate-config
 sudo -u postgres psql -h localhost -U patch_manager patch_manager -c "SELECT 1"
 
 # Check port availability
-sudo ss -tlnp | grep 8080
+sudo ss -tlnp | grep 443
 ```
 
 ### Database Migration Issues
