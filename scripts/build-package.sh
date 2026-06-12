@@ -22,7 +22,7 @@ warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION="1.1.18"
+VERSION="1.1.19"
 RELEASE="1"
 PKG_NAME="linux-patch-manager"
 DEB_NAME="${PKG_NAME}_${VERSION}-${RELEASE}_amd64.deb"
@@ -51,6 +51,9 @@ for bin in pm-web pm-worker; do
     strip "${PROJECT_ROOT}/target/release/${bin}" 2>/dev/null || warn "strip failed for ${bin} (may already be stripped)"
 done
 info "Binaries stripped."
+
+# Sync frontend version with package version (before build so __APP_VERSION__ is correct)
+sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${VERSION}\"/" "${PROJECT_ROOT}/frontend/package.json"
 
 # ---------------------------------------------------------------------------
 # 2. Build frontend
