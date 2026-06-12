@@ -16,6 +16,20 @@ Linux Patch Manager provides a centralized web interface to manage patching and 
 - **Self-Enrollment** — Automated agent enrollment with PKI provisioning and admin approval workflow
 - **Reporting** — Compliance reporting and patch status dashboards
 
+## Screenshots
+
+| [📊 Dashboard](docs/screenshots/LPM0.png) | [🖥️ Fleet Hosts](docs/screenshots/LPM1.png) |
+|:---:|:---:|
+| Starting dashboard view | Fleet host view |
+
+| [📦 Deploy](docs/screenshots/LPM2.png) | [👥 Users](docs/screenshots/LPM3.png) |
+|:---:|:---:|
+| Patches missing per device | User management — roles, MFA, status |
+
+| [🔐 Certificates](docs/screenshots/LPM4.png) | [⚙️ Settings](docs/screenshots/LPM5.png) |
+|:---:|:---:|
+| Certificate management | SSO/OIDC configuration |
+
 ## Architecture
 
 Linux Patch Manager is a web application that acts as a management plane, communicating with the Linux Patch API agent running on each managed host.
@@ -48,10 +62,10 @@ Linux Patch Manager is a web application that acts as a management plane, commun
 
 ### 1. Download the Package
 
-Download the latest `.deb` package from the [Gitea Releases](https://gitea-lxc.moon-dragon.us/echo/linux_patch_manager/releases) page:
+Download the latest `.deb` package from the [GitHub Releases](https://github.com/Draco-Lunaris/Linux-Patch-Manager/releases) page:
 
 ```bash
-wget https://gitea-lxc.moon-dragon.us/echo/linux_patch_manager/releases/download/v0.1.7/linux-patch-manager_0.1.7-1_amd64.deb
+wget https://github.com/Draco-Lunaris/Linux-Patch-Manager/releases/latest/download/linux-patch-manager_1.1.19-1_amd64.deb
 ```
 
 ### 2. Install Dependencies
@@ -64,13 +78,13 @@ sudo apt install -y postgresql-16 libssl3
 ### 3. Install the Package
 
 ```bash
-sudo dpkg -i linux-patch-manager_0.1.7-1_amd64.deb
+sudo dpkg -i linux-patch-manager_1.1.19-1_amd64.deb
 ```
 
 Or with automatic dependency resolution:
 
 ```bash
-sudo apt install ./linux-patch-manager_0.1.7-1_amd64.deb
+sudo apt install ./linux-patch-manager_1.1.19-1_amd64.deb
 ```
 
 ## Configuration
@@ -240,6 +254,6 @@ Copyright 2025-2026 Draco Lunaris
 
 ---
 
-**Version:** 1.0.0-1  
-**Release:** v0.0.2  
-**Build Date:** 2026-04-28
+**Version:** 1.1.19  
+**Release:** v1.1.19  
+**Build Date:** 2026-06-12
