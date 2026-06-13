@@ -62,6 +62,10 @@ pub enum AuditAction {
     CrlStatusChanged,
     CrlStaleDetected,
     CrlInvalid,
+    // Self-upgrade management events (Issues #89, #90)
+    UpgradeTriggered,
+    BatchUpgradeTriggered,
+    UpgradeVersionRefreshed,
 }
 
 impl AuditAction {
@@ -110,6 +114,10 @@ impl AuditAction {
             Self::CrlStatusChanged => "crl_status_changed",
             Self::CrlStaleDetected => "crl_stale_detected",
             Self::CrlInvalid => "crl_invalid",
+            // Self-upgrade management events
+            Self::UpgradeTriggered => "upgrade_triggered",
+            Self::BatchUpgradeTriggered => "batch_upgrade_triggered",
+            Self::UpgradeVersionRefreshed => "upgrade_version_refreshed",
         }
     }
 }

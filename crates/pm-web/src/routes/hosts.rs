@@ -9,6 +9,9 @@
 //! POST   /api/v1/hosts/{id}/groups — assign host to group
 //! DELETE /api/v1/hosts/{id}/groups/{group_id} — remove host from group
 //! POST   /api/v1/hosts/{id}/refresh           — queue on-demand refresh (write access)
+//! POST   /api/v1/hosts/{id}/upgrade            — trigger self-upgrade on host (admin/operator)
+//! POST   /api/v1/hosts/batch-upgrade            — trigger batch upgrade on hosts (admin)
+//! GET    /api/v1/hosts/{id}/upgrade-status      — get upgrade status for host
 
 use axum::{
     extract::{Path, Query, State},
@@ -38,6 +41,9 @@ pub fn router() -> Router<AppState> {
         )
         .route("/{id}/groups/{group_id}", delete(remove_host_from_group))
         .route("/{id}/refresh", post(refresh_host))
+        .route("/{id}/upgrade", post(trigger_upgrade))
+        .route("/{id}/upgrade-status", get(get_upgrade_status))
+        .route("/batch-upgrade", post(batch_upgrade))
 }
 
 // ── Query params ─────────────────────────────────────────────────────────────
@@ -678,4 +684,321 @@ async fn refresh_host(
         StatusCode::ACCEPTED,
         Json(json!({ "message": "Refresh queued" })),
     ))
+}
+
+// ── Request types for upgrade routes ─────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct TriggerUpgradeRequest {
+    pub upgrade_url: String,
+    pub upgrade_checksum: Option<String>,
+    pub upgrade_version: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BatchUpgradeRequest {
+    pub host_ids: Vec<Uuid>,
+    pub upgrade_url: String,
+    pub upgrade_checksum: Option<String>,
+    pub upgrade_version: String,
+}
+
+// ── POST /api/v1/hosts/{id}/upgrade ───────────────────────────────────────────
+
+/// Trigger a self-upgrade job on a single host.
+/// Requires admin or operator role.
+async fn trigger_upgrade(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+    Json(req): Json<TriggerUpgradeRequest>,
+) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
+    if !auth.role.can_write() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": { "code": "forbidden", "message": "Write access required" } })),
+        ));
+    }
+
+    // Verify the host exists.
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM hosts WHERE id = $1)")
+        .bind(id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, %id, "trigger_upgrade: db error checking host existence");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+            )
+        })?;
+
+    if !exists {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": { "code": "not_found", "message": "Host not found" } })),
+        ));
+    }
+
+    // Create the self_upgrade job.
+    let job_id: Uuid = sqlx::query_scalar(
+        r#"
+        INSERT INTO patch_jobs
+            (kind, status, created_by_user_id, immediate, patch_selection, notes)
+        VALUES
+            ('self_upgrade'::job_kind, 'queued'::job_status, $1, TRUE, '[]'::jsonb, $2)
+        RETURNING id
+        "#,
+    )
+    .bind(auth.user_id)
+    .bind(format!("Self-upgrade to v{}", req.upgrade_version))
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, "trigger_upgrade: insert patch_jobs failed");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+        )
+    })?;
+
+    // Insert the patch_job_hosts row with upgrade fields.
+    sqlx::query(
+        r#"
+        INSERT INTO patch_job_hosts
+            (job_id, host_id, status, upgrade_url, upgrade_checksum, upgrade_version)
+        VALUES
+            ($1, $2, 'queued'::job_status, $3, $4, $5)
+        ON CONFLICT (job_id, host_id) DO NOTHING
+        "#,
+    )
+    .bind(job_id)
+    .bind(id)
+    .bind(&req.upgrade_url)
+    .bind(&req.upgrade_checksum)
+    .bind(&req.upgrade_version)
+    .execute(&state.db)
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, %job_id, %id, "trigger_upgrade: insert patch_job_hosts failed");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+        )
+    })?;
+
+    log_event(
+        &state.db,
+        AuditAction::UpgradeTriggered,
+        Some(auth.user_id),
+        Some(&auth.username),
+        Some("host"),
+        Some(&id.to_string()),
+        json!({
+            "job_id": job_id,
+            "upgrade_url": req.upgrade_url,
+            "upgrade_version": req.upgrade_version,
+        }),
+        None,
+        None,
+    )
+    .await;
+
+    tracing::info!(
+        job_id = %job_id,
+        host_id = %id,
+        upgrade_version = %req.upgrade_version,
+        user = %auth.username,
+        "Self-upgrade job triggered"
+    );
+
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "job_id": job_id,
+            "host_id": id,
+            "status": "queued",
+            "message": "Upgrade job created"
+        })),
+    ))
+}
+
+// ── POST /api/v1/hosts/batch-upgrade ──────────────────────────────────────────
+
+/// Trigger a batch self-upgrade job on multiple hosts.
+/// Requires admin role.
+async fn batch_upgrade(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Json(req): Json<BatchUpgradeRequest>,
+) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
+    // Admin-only
+    if !auth.role.is_admin() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({ "error": { "code": "forbidden", "message": "Admin access required" } })),
+        ));
+    }
+
+    if req.host_ids.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(
+                json!({ "error": { "code": "bad_request", "message": "host_ids must not be empty" } }),
+            ),
+        ));
+    }
+
+    // Create the self_upgrade job.
+    let job_id: Uuid = sqlx::query_scalar(
+        r#"
+        INSERT INTO patch_jobs
+            (kind, status, created_by_user_id, immediate, patch_selection, notes)
+        VALUES
+            ('self_upgrade'::job_kind, 'queued'::job_status, $1, TRUE, '[]'::jsonb, $2)
+        RETURNING id
+        "#,
+    )
+    .bind(auth.user_id)
+    .bind(format!("Batch self-upgrade to v{}", req.upgrade_version))
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, "batch_upgrade: insert patch_jobs failed");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+        )
+    })?;
+
+    // Insert patch_job_hosts rows with upgrade fields.
+    for host_id in &req.host_ids {
+        sqlx::query(
+            r#"
+            INSERT INTO patch_job_hosts
+                (job_id, host_id, status, upgrade_url, upgrade_checksum, upgrade_version)
+            VALUES
+                ($1, $2, 'queued'::job_status, $3, $4, $5)
+            ON CONFLICT (job_id, host_id) DO NOTHING
+            "#,
+        )
+        .bind(job_id)
+        .bind(host_id)
+        .bind(&req.upgrade_url)
+        .bind(&req.upgrade_checksum)
+        .bind(&req.upgrade_version)
+        .execute(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(
+                error = %e, %job_id, %host_id,
+                "batch_upgrade: insert patch_job_hosts failed"
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+            )
+        })?;
+    }
+
+    log_event(
+        &state.db,
+        AuditAction::BatchUpgradeTriggered,
+        Some(auth.user_id),
+        Some(&auth.username),
+        Some("job"),
+        Some(&job_id.to_string()),
+        json!({
+            "host_count": req.host_ids.len(),
+            "upgrade_url": req.upgrade_url,
+            "upgrade_version": req.upgrade_version,
+        }),
+        None,
+        None,
+    )
+    .await;
+
+    tracing::info!(
+        job_id = %job_id,
+        host_count = req.host_ids.len(),
+        upgrade_version = %req.upgrade_version,
+        user = %auth.username,
+        "Batch self-upgrade job triggered"
+    );
+
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "job_id": job_id,
+            "host_count": req.host_ids.len(),
+            "status": "queued",
+            "message": "Batch upgrade job created"
+        })),
+    ))
+}
+
+// ── GET /api/v1/hosts/{id}/upgrade-status ─────────────────────────────────────
+
+/// Get the upgrade status for a host (latest self_upgrade job).
+async fn get_upgrade_status(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if !auth.role.is_admin() {
+        let can_access = operator_can_access_host(&state.db, auth.user_id, id)
+            .await
+            .unwrap_or(false);
+        if !can_access {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(json!({ "error": { "code": "forbidden", "message": "Access denied" } })),
+            ));
+        }
+    }
+
+    // Fetch the latest self_upgrade job for this host.
+    let row: Option<Value> = sqlx::query_scalar(
+        r#"
+        SELECT row_to_json(t) FROM (
+            SELECT
+                pj.id AS job_id,
+                pj.status::text AS job_status,
+                pj.created_at,
+                pj.started_at,
+                pj.completed_at,
+                pjh.status::text AS host_status,
+                pjh.upgrade_url,
+                pjh.upgrade_checksum,
+                pjh.upgrade_version,
+                pjh.output,
+                pjh.error_message,
+                pjh.started_at AS host_started_at,
+                pjh.completed_at AS host_completed_at
+            FROM patch_job_hosts pjh
+            JOIN patch_jobs pj ON pj.id = pjh.job_id
+            WHERE pjh.host_id = $1
+              AND pj.kind = 'self_upgrade'::job_kind
+            ORDER BY pj.created_at DESC
+            LIMIT 1
+        ) t
+        "#,
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, %id, "get_upgrade_status: query failed");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+        )
+    })?;
+
+    row.map(Json).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": { "code": "not_found", "message": "No upgrade job found for this host" } })),
+        )
+    })
 }
