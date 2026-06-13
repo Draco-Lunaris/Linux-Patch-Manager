@@ -118,15 +118,6 @@ pub struct LoggingConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SecurityConfig {
-    /// IP whitelist (CIDR or individual IPs); empty = allow all (not recommended)
-    pub ip_whitelist: Vec<String>,
-    /// IP addresses (CIDR or single IP) of trusted reverse proxies. When the
-    /// immediate TCP peer is in this list, `X-Forwarded-For` is honored;
-    /// otherwise the socket peer IP is used for allowlist enforcement.
-    /// Default: empty (do not trust `X-Forwarded-For`). See
-    /// `tasks/ip-allowlist-spec.md` §4.3 for the operational guidance.
-    #[serde(default)]
-    pub trusted_proxies: Vec<String>,
     /// JWT signing key path (Ed25519 PEM)
     pub jwt_signing_key_path: String,
     /// JWT verification key path (Ed25519 public PEM)
@@ -291,8 +282,6 @@ impl Default for AppConfig {
                 format: "json".to_string(),
             },
             security: SecurityConfig {
-                ip_whitelist: vec![],
-                trusted_proxies: vec![],
                 jwt_signing_key_path: "/etc/patch-manager/jwt/signing.pem".to_string(),
                 jwt_verify_key_path: "/etc/patch-manager/jwt/verify.pem".to_string(),
                 jwt_access_ttl_secs: 900,

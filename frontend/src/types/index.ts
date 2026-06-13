@@ -314,6 +314,7 @@ export interface SettingsResponse {
   smtp: SmtpConfig
   polling: PollingConfig
   ip_whitelist: string[]
+  trusted_proxies: string[]
   web_tls_strategy: string
   notification: NotificationConfig
 }
