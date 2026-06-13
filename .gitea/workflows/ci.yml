@@ -11,11 +11,32 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
 jobs:
-  # ─── Quality Gates (run on every push/PR/tag) ───
+  skip-duplicate:
+    name: Skip Duplicate
+    runs-on: ubuntu-24.04
+    outputs:
+      should_skip: ${{ steps.skip.outputs.should_skip }}
+    steps:
+      - id: skip
+        run: |
+          # Skip push-to-master (merge) - PR already tested the same code
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/master" ]; then
+            echo "should_skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_skip=false" >> $GITHUB_OUTPUT
+          fi
+
+  # ─── Quality Gates (run on every PR/tag, skip on merge-to-master) ───
 
   rust-format:
     name: Rust Format Check
+    needs: [skip-duplicate]
+    if: needs.skip-duplicate.outputs.should_skip != 'true'
     runs-on: ubuntu-24.04
     steps:
       - name: Install checkout dependencies
@@ -50,6 +71,8 @@ jobs:
 
   clippy:
     name: Clippy Lints
+    needs: [skip-duplicate]
+    if: needs.skip-duplicate.outputs.should_skip != 'true'
     runs-on: ubuntu-24.04
     steps:
       - name: Install system dependencies
@@ -83,6 +106,8 @@ jobs:
 
   rust-test:
     name: Rust Unit Tests
+    needs: [skip-duplicate]
+    if: needs.skip-duplicate.outputs.should_skip != 'true'
     runs-on: ubuntu-24.04
     steps:
       - name: Install system dependencies
@@ -115,6 +140,8 @@ jobs:
 
   security-audit:
     name: Security Audit
+    needs: [skip-duplicate]
+    if: needs.skip-duplicate.outputs.should_skip != 'true'
     runs-on: ubuntu-24.04
     steps:
       - name: Install checkout dependencies
@@ -152,6 +179,8 @@ jobs:
 
   frontend-lint:
     name: Frontend Lint & Type Check
+    needs: [skip-duplicate]
+    if: needs.skip-duplicate.outputs.should_skip != 'true'
     runs-on: ubuntu-24.04
     steps:
       - name: Install checkout dependencies
