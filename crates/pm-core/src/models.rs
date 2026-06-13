@@ -482,6 +482,8 @@ pub enum JobKind {
     PatchRemove,
     Reboot,
     Rollback,
+    #[sqlx(rename = "self_upgrade")]
+    SelfUpgrade,
 }
 
 /// Full `patch_jobs` row.
@@ -516,6 +518,15 @@ pub struct PatchJobHost {
     pub last_error: Option<String>,
     pub started_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
+    /// URL to download the upgrade package (self_upgrade jobs only).
+    #[serde(default)]
+    pub upgrade_url: Option<String>,
+    /// SHA-256 checksum for the upgrade package (self_upgrade jobs only).
+    #[serde(default)]
+    pub upgrade_checksum: Option<String>,
+    /// Target version for the upgrade (self_upgrade jobs only).
+    #[serde(default)]
+    pub upgrade_version: Option<String>,
 }
 
 /// Request payload for creating a patch job via `POST /api/v1/jobs`.
@@ -553,6 +564,38 @@ pub struct PatchJobSummary {
     pub created_at: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
+}
+
+// ============================================================
+// Available Versions (cached release info)
+// ============================================================
+
+/// A cached release version from GitHub or custom URL.
+/// Mirrors the `available_versions` table.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct AvailableVersion {
+    pub id: Uuid,
+    pub version: String,
+    pub download_url: String,
+    pub checksum: Option<String>,
+    pub file_name: String,
+    pub source: String,
+    pub prerelease: bool,
+    pub published_at: Option<DateTime<Utc>>,
+    pub fetched_at: DateTime<Utc>,
+}
+
+/// Request payload for creating a self-upgrade job via `POST /api/v1/hosts/{id}/upgrade`.
+#[derive(Debug, Deserialize)]
+pub struct CreateUpgradeJobRequest {
+    /// Host IDs to upgrade.
+    pub host_ids: Vec<Uuid>,
+    /// URL to download the upgrade package from.
+    pub upgrade_url: String,
+    /// Optional SHA-256 checksum for verification.
+    pub upgrade_checksum: Option<String>,
+    /// Target version string.
+    pub upgrade_version: String,
 }
 
 // ============================================================

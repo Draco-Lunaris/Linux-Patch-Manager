@@ -92,6 +92,9 @@ pub struct SystemInfoData {
     pub last_update_apply: Option<DateTime<Utc>>,
     /// Whether the system has a pending reboot.
     pub pending_reboot: bool,
+    /// Agent software version string.
+    #[serde(default)]
+    pub version: Option<String>,
 }
 
 // ============================================================
