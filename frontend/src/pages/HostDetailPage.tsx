@@ -49,8 +49,9 @@ import {
   VerifiedUser as VerifiedUserIcon,
   Security as SecurityIcon,
   WarningAmber as WarningAmberIcon,
+  SystemUpdate as SystemUpdateIcon,
 } from '@mui/icons-material'
-import { apiClient, hostsApi, maintenanceWindowsApi, healthChecksApi, certsApi } from '../api/client'
+import { apiClient, hostsApi, maintenanceWindowsApi, healthChecksApi, certsApi, upgradesApi } from '../api/client'
 import { useAuthStore } from '../store/authStore'
 import type {
   CreateHostRequest,
@@ -61,6 +62,8 @@ import type {
   HealthCheckWithResult,
   CreateHealthCheckRequest,
   UpdateHealthCheckRequest,
+  AvailableVersion,
+  UpgradeStatusResponse,
 } from '../types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -617,6 +620,17 @@ export default function HostDetailPage() {
   // Hosts list for target_host_id dropdown
   const [hosts, setHosts] = useState<{ id: string; display_name: string; fqdn: string }[]>([])
 
+  // ── Upgrade state ────────────────────────────────────────────────────────
+  const [availableVersions, setAvailableVersions] = useState<AvailableVersion[]>([])
+  const [selectedVersion, setSelectedVersion] = useState<string>('')
+  const [customUrl, setCustomUrl] = useState('')
+  const [customChecksum, setCustomChecksum] = useState('')
+  const [versionsLoading, setVersionsLoading] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const [upgrading, setUpgrading] = useState(false)
+  const [upgradeStatus, setUpgradeStatus] = useState<UpgradeStatusResponse | null>(null)
+  const [upgradePollTimer, setUpgradePollTimer] = useState<ReturnType<typeof setInterval> | null>(null)
+
   // ── Host editing state ────────────────────────────────────────────────────
   const [editing, setEditing] = useState(false)
   const [editFqdn, setEditFqdn] = useState('')
@@ -919,6 +933,97 @@ export default function HostDetailPage() {
       setTestingId(null)
     }
   }
+
+  // ── Upgrade handlers ───────────────────────────────────────────────────────
+
+  const fetchVersions = useCallback(async () => {
+    setVersionsLoading(true)
+    try {
+      const res = await upgradesApi.listVersions()
+      const versions = res.data ?? []
+      setAvailableVersions(versions)
+      // Default to newest non-prerelease version
+      const latest = versions.filter((v: AvailableVersion) => !v.prerelease)[0]
+        ?? versions[0]
+      if (latest) setSelectedVersion(latest.version)
+    } catch {
+      showSnack('Failed to fetch available versions', 'error')
+    } finally {
+      setVersionsLoading(false)
+    }
+  }, [])
+
+  const handleRefreshVersions = async () => {
+    setRefreshing(true)
+    try {
+      const res = await upgradesApi.refreshVersions()
+      showSnack(res.data?.message ?? `Refreshed ${res.data?.count ?? 0} versions`, 'success')
+      await fetchVersions()
+    } catch {
+      showSnack('Failed to refresh versions', 'error')
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  const handleUpgrade = async () => {
+    if (!id) return
+    const selected = availableVersions.find((v: AvailableVersion) => v.version === selectedVersion)
+    let upgradeUrl: string
+    let upgradeChecksum: string | undefined
+    let upgradeVersion: string
+
+    if (selectedVersion === '__custom__') {
+      upgradeUrl = customUrl.trim()
+      upgradeChecksum = customChecksum.trim() || undefined
+      upgradeVersion = upgradeUrl.split('/').pop()?.replace(/\.tar\.gz$/, '') ?? 'custom'
+      if (!upgradeUrl) { showSnack('Custom URL is required', 'error'); return }
+    } else {
+      if (!selected) { showSnack('Select a version', 'error'); return }
+      upgradeUrl = selected.download_url
+      upgradeChecksum = selected.checksum ?? undefined
+      upgradeVersion = selected.version
+    }
+
+    setUpgrading(true)
+    setUpgradeStatus(null)
+    try {
+      await upgradesApi.upgradeHost(id, {
+        upgrade_url: upgradeUrl,
+        upgrade_checksum: upgradeChecksum,
+        upgrade_version: upgradeVersion,
+      })
+      showSnack('Upgrade initiated', 'success')
+      // Start polling for status
+      const poll = setInterval(async () => {
+        try {
+          if (!id) { clearInterval(poll); setUpgradePollTimer(null); setUpgrading(false); return }
+          const statusRes = await upgradesApi.getUpgradeStatus(id)
+          setUpgradeStatus(statusRes.data)
+          if (statusRes.data.status === 'succeeded' || statusRes.data.status === 'failed' || statusRes.data.status === 'cancelled') {
+            clearInterval(poll)
+            setUpgradePollTimer(null)
+            setUpgrading(false)
+          }
+        } catch {
+          // Continue polling on transient errors
+        }
+      }, 3000)
+      setUpgradePollTimer(poll)
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { error?: { message?: string } } } })
+        ?.response?.data?.error?.message ?? 'Failed to trigger upgrade'
+      showSnack(msg, 'error')
+      setUpgrading(false)
+    }
+  }
+
+  // ── Cleanup polling timer ────────────────────────────────────────────────
+  useEffect(() => {
+    return () => {
+      if (upgradePollTimer) clearInterval(upgradePollTimer)
+    }
+  }, [upgradePollTimer])
 
   // ── Render ────────────────────────────────────────────────────────────────
   if (loading) return <Box display="flex" justifyContent="center" mt={8}><CircularProgress /></Box>
@@ -1290,6 +1395,124 @@ export default function HostDetailPage() {
               ))}
             </TableBody>
           </Table>
+        )}
+      </Paper>
+
+      {/* ── Self-Upgrade ────────────────────────────────────────────────── */}
+      <Paper sx={{ p: 3, mb: 3 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <SystemUpdateIcon color="primary" />
+            <Typography variant="h6" fontWeight={600}>Self-Upgrade</Typography>
+          </Box>
+          {canWrite && <Box sx={{ display: 'flex', gap: 1 }}>
+            <Button
+              variant="outlined"
+              size="small"
+              disabled={versionsLoading || refreshing}
+              onClick={fetchVersions}
+            >
+              {versionsLoading ? <CircularProgress size={16} /> : 'Check for Updates'}
+            </Button>
+            <Button
+              variant="outlined"
+              size="small"
+              disabled={refreshing}
+              onClick={handleRefreshVersions}
+            >
+              {refreshing ? <CircularProgress size={16} /> : 'Refresh Versions'}
+            </Button>
+          </Box>}
+        </Box>
+        <Divider sx={{ mb: 2 }} />
+
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Trigger a self-upgrade on this host. Select a version or provide a custom URL.
+        </Typography>
+
+        {availableVersions.length > 0 && (
+          <>
+            <FormControl fullWidth sx={{ mb: 2 }}>
+              <InputLabel>Version</InputLabel>
+              <Select
+                label="Version"
+                value={selectedVersion}
+                onChange={e => setSelectedVersion(e.target.value)}
+                disabled={upgrading}
+              >
+                {availableVersions.map((v: AvailableVersion) => (
+                  <MenuItem key={v.id} value={v.version}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <span>{v.version}</span>
+                      {v.prerelease && <Chip label="pre" size="small" color="warning" variant="outlined" />}
+                      <Typography variant="caption" color="text.secondary">
+                        {v.published_at ? new Date(v.published_at).toLocaleDateString() : ''}
+                      </Typography>
+                    </Box>
+                  </MenuItem>
+                ))}
+                <MenuItem value="__custom__">
+                  <em>Custom URL…</em>
+                </MenuItem>
+              </Select>
+            </FormControl>
+
+            {selectedVersion === '__custom__' && (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mb: 2 }}>
+                <TextField
+                  label="Upgrade URL"
+                  value={customUrl}
+                  onChange={e => setCustomUrl(e.target.value)}
+                  fullWidth
+                  required
+                  placeholder="https://example.com/agent-v1.2.3.tar.gz"
+                  disabled={upgrading}
+                />
+                <TextField
+                  label="Checksum (optional)"
+                  value={customChecksum}
+                  onChange={e => setCustomChecksum(e.target.value)}
+                  fullWidth
+                  placeholder="sha256:abcdef…"
+                  disabled={upgrading}
+                />
+              </Box>
+            )}
+
+            {canWrite && (
+              <Button
+                variant="contained"
+                color="warning"
+                disabled={upgrading || !selectedVersion}
+                onClick={handleUpgrade}
+                sx={{ mb: 2 }}
+              >
+                {upgrading ? <CircularProgress size={20} /> : 'Upgrade Host'}
+              </Button>
+            )}
+          </>
+        )}
+
+        {upgradeStatus && (
+          <Alert
+            severity={upgradeStatus.status === 'succeeded' ? 'success' : upgradeStatus.status === 'failed' ? 'error' : 'info'}
+            sx={{ mt: 2 }}
+          >
+            <Typography variant="subtitle2">
+              Upgrade Status: {upgradeStatus.status}
+            </Typography>
+            {upgradeStatus.upgrade_version && (
+              <Typography variant="body2">Version: {upgradeStatus.upgrade_version}</Typography>
+            )}
+            {upgradeStatus.output && (
+              <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: 12, mt: 1 }}>
+                {upgradeStatus.output}
+              </Typography>
+            )}
+            {upgradeStatus.error_message && (
+              <Typography variant="body2" color="error">{upgradeStatus.error_message}</Typography>
+            )}
+          </Alert>
         )}
       </Paper>
 
