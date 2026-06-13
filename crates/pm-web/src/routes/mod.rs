@@ -13,5 +13,6 @@ pub mod reports;
 pub mod settings;
 pub mod sso;
 pub mod status;
+pub mod upgrades;
 pub mod users;
 pub mod ws;

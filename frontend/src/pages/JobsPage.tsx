@@ -63,6 +63,7 @@ function kindLabel(kind: JobKind): string {
     patch_remove: 'Patch Remove',
     reboot: 'Reboot',
     rollback: 'Rollback',
+    self_upgrade: 'Self Upgrade',
   }
   return map[kind]
 }

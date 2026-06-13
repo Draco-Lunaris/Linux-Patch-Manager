@@ -43,6 +43,10 @@ pub use error::AgentClientError;
 
 /// Response envelope and all data types.
 pub use types::{
-    AgentEnvelope, AgentErrorBody, HealthData, Package, PackagesData, Patch, PatchesData,
-    RollbackResponse, ServiceStatusData, SystemInfoData,
+    AgentEnvelope, AgentErrorBody, HealthData, InstallFileResponse, InstallUrlRequest, Package,
+    PackagesData, Patch, PatchesData, RestartResponse, RollbackResponse, ServiceStatusData,
+    SystemInfoData,
 };
+
+/// Reconnect utility — re-exported from [`client::reconnect_with_backoff`].
+pub use client::reconnect_with_backoff;

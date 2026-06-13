@@ -18,6 +18,12 @@ import type {
   AdminResetPasswordRequest,
   UpdateUserRequest,
   CreateUserRequest,
+  AvailableVersion,
+  UpgradeRequest,
+  BatchUpgradeRequest,
+  UpgradeStatusResponse,
+  UpgradeTriggerResponse,
+  RefreshVersionsResponse,
 } from '../types'
 
 const BASE_URL = '/api/v1'
@@ -404,4 +410,27 @@ export const enrollmentApi = {
 
   deny: (id: string): Promise<void> =>
     apiClient.delete(`/admin/enrollments/${id}/deny`).then(() => {}),
+}
+
+// ── Upgrades API ──────────────────────────────────────────────────────────
+export const upgradesApi = {
+  /** List available versions from cache. Optional source filter. */
+  listVersions: (source?: string) =>
+    apiClient.get<AvailableVersion[]>('/upgrades/available-versions', { params: source ? { source } : {} }),
+
+  /** Refresh version cache from GitHub releases. Admin only. */
+  refreshVersions: () =>
+    apiClient.post<RefreshVersionsResponse>('/upgrades/refresh-versions'),
+
+  /** Trigger a self-upgrade on a single host. */
+  upgradeHost: (hostId: string, body: UpgradeRequest) =>
+    apiClient.post<UpgradeTriggerResponse>(`/hosts/${hostId}/upgrade`, body),
+
+  /** Trigger a batch upgrade on multiple hosts. Admin only. */
+  batchUpgrade: (body: BatchUpgradeRequest) =>
+    apiClient.post<UpgradeTriggerResponse>('/hosts/batch-upgrade', body),
+
+  /** Get upgrade status for a host. */
+  getUpgradeStatus: (hostId: string) =>
+    apiClient.get<UpgradeStatusResponse>(`/hosts/${hostId}/upgrade-status`),
 }

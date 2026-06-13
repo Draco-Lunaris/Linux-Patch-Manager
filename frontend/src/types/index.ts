@@ -4,7 +4,7 @@ export type UserRole = 'admin' | 'operator' | 'reporter'
 export type AuthProvider = 'local' | 'azure_sso' | 'keycloak' | 'oidc'
 export type HostHealthStatus = 'pending' | 'healthy' | 'degraded' | 'unreachable'
 export type JobStatus = 'queued' | 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled'
-export type JobKind = 'patch_apply' | 'patch_remove' | 'reboot' | 'rollback'
+export type JobKind = 'patch_apply' | 'patch_remove' | 'reboot' | 'rollback' | 'self_upgrade'
 
 export interface ApiError {
   error: {
@@ -411,4 +411,54 @@ export interface EnrollmentConflictResponse {
     existing_host: Host
     message: string
   }
+}
+
+// ── Self-Upgrade (issues #89, #90) ────────────────────────────────────────
+
+export interface AvailableVersion {
+  id: string
+  version: string
+  download_url: string
+  checksum: string | null
+  file_name: string
+  source: string
+  prerelease: boolean
+  published_at: string | null
+  fetched_at: string
+}
+
+export interface UpgradeRequest {
+  upgrade_url: string
+  upgrade_checksum?: string
+  upgrade_version: string
+}
+
+export interface BatchUpgradeRequest {
+  host_ids: string[]
+  upgrade_url: string
+  upgrade_checksum?: string
+  upgrade_version: string
+}
+
+export interface UpgradeStatusResponse {
+  job_id: string
+  status: JobStatus
+  upgrade_url: string | null
+  upgrade_version: string | null
+  output: string
+  error_message: string | null
+  started_at: string | null
+  completed_at: string | null
+}
+
+export interface UpgradeTriggerResponse {
+  job_id: string
+  status: string
+  host_count: number
+  message: string
+}
+
+export interface RefreshVersionsResponse {
+  count: number
+  message: string
 }
