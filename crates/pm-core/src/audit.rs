@@ -55,6 +55,7 @@ pub enum AuditAction {
     OidcConfigUpdated,
     SmtpConfigUpdated,
     IpWhitelistUpdated,
+    TrustedProxiesUpdated,
     OidcTestPerformed,
     OidcDiscoverPerformed,
     // CRL health aggregation events (system-initiated)
@@ -102,6 +103,7 @@ impl AuditAction {
             Self::OidcConfigUpdated => "oidc_config_updated",
             Self::SmtpConfigUpdated => "smtp_config_updated",
             Self::IpWhitelistUpdated => "ip_whitelist_updated",
+            Self::TrustedProxiesUpdated => "trusted_proxies_updated",
             Self::OidcTestPerformed => "oidc_test_performed",
             Self::OidcDiscoverPerformed => "oidc_discover_performed",
             // CRL health aggregation events

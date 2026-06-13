@@ -37,6 +37,7 @@ export default function SettingsPage() {
     health_poll_interval_secs: 300, patch_poll_interval_secs: 1800,
   })
   const [ipWhitelist, setIpWhitelist] = useState<string[]>([])
+  const [trustedProxies, setTrustedProxies] = useState<string[]>([])
   const [webTlsStrategy, setWebTlsStrategy] = useState('internal_ca')
   const [notification, setNotification] = useState<NotificationConfig>({
     email_enabled: false, email_from: 'patch-manager@localhost', recipients: [],
@@ -61,6 +62,7 @@ export default function SettingsPage() {
       setSmtp({ ...data.smtp, password: '' })
       setPolling(data.polling)
       setIpWhitelist(data.ip_whitelist)
+      setTrustedProxies(data.trusted_proxies)
       setWebTlsStrategy(data.web_tls_strategy)
       setNotification(data.notification)
     } catch {
@@ -121,6 +123,7 @@ export default function SettingsPage() {
         smtp: { ...smtp },
         polling,
         ip_whitelist: ipWhitelist,
+        trusted_proxies: trustedProxies,
         web_tls_strategy: webTlsStrategy,
         notification: {
           ...notification,
@@ -147,6 +150,7 @@ export default function SettingsPage() {
         smtp: { ...smtp },
         polling,
         ip_whitelist: ipWhitelist,
+        trusted_proxies: trustedProxies,
         web_tls_strategy: webTlsStrategy,
         notification: {
           ...notification,
@@ -178,6 +182,7 @@ export default function SettingsPage() {
         smtp: { ...smtp },
         polling,
         ip_whitelist: ipWhitelist,
+        trusted_proxies: trustedProxies,
         web_tls_strategy: webTlsStrategy,
         notification: {
           ...notification,
@@ -200,6 +205,14 @@ export default function SettingsPage() {
     const updated = [...ipWhitelist]
     updated[idx] = value
     setIpWhitelist(updated)
+  }
+
+  const addTrustedProxyEntry = () => setTrustedProxies([...trustedProxies, ''])
+  const removeTrustedProxyEntry = (idx: number) => setTrustedProxies(trustedProxies.filter((_, i) => i !== idx))
+  const updateTrustedProxyEntry = (idx: number, value: string) => {
+    const updated = [...trustedProxies]
+    updated[idx] = value
+    setTrustedProxies(updated)
   }
 
   if (loading) {
@@ -462,7 +475,26 @@ export default function SettingsPage() {
         </AccordionDetails>
       </Accordion>
 
-      {/* Section 5: Web UI TLS Certificate Strategy */}
+      {/* Section 5: Trusted Reverse Proxies */}
+      <Accordion>
+        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+          <Typography fontWeight={600}>Trusted Reverse Proxies</Typography>
+        </AccordionSummary>
+        <AccordionDetails>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            CIDR ranges or IPs of trusted reverse proxies. When the immediate TCP peer is in this list, X-Forwarded-For is honored for allowlist enforcement. Leave empty to ignore X-Forwarded-For (strict default).
+          </Typography>
+          {trustedProxies.map((entry, idx) => (
+            <Box key={idx} sx={{ display: 'flex', gap: 1, mb: 1 }}>
+              <TextField size="small" value={entry} onChange={(e) => updateTrustedProxyEntry(idx, e.target.value)} placeholder="10.0.0.0/8 or 172.16.0.0/12" sx={{ flexGrow: 1 }} />
+              <IconButton onClick={() => removeTrustedProxyEntry(idx)}><DeleteIcon /></IconButton>
+            </Box>
+          ))}
+          <Button variant="outlined" startIcon={<AddIcon />} onClick={addTrustedProxyEntry}>Add Entry</Button>
+        </AccordionDetails>
+      </Accordion>
+
+      {/* Section 6: Web UI TLS Certificate Strategy */}
       <Accordion>
         <AccordionSummary expandIcon={<ExpandMoreIcon />}>
           <Typography fontWeight={600}>Web UI TLS Certificate</Typography>

@@ -72,24 +72,15 @@ format = "json"
 # Security
 # ============================================================
 [security]
-# IP whitelist: list of CIDRs or individual IPs allowed to connect.
-# IMPORTANT: An empty list allows ALL IPs. Restrict this in production.
-# Example: ["10.0.0.0/8", "192.168.1.50"]
-ip_whitelist = []
-
-# Trusted reverse proxies: list of CIDRs or individual IPs. When the immediate
-# TCP peer is in this list, `X-Forwarded-For` is honored (leftmost untrusted
-# hop is used for allowlist enforcement). When this list is EMPTY (the
-# default), `X-Forwarded-For` is IGNORED entirely and the socket peer IP is
-# used — the strict, fail-closed default.
+# IP whitelist and trusted proxies are now managed via the Settings API
+# and stored in the database (system_config table). They are no longer
+# configured in this file. See issue #73.
 #
-# REQUIRED if you front pm-web with nginx/HAProxy/Cloudflare/etc.: add the
-# proxy's egress IP (or CIDR) here, otherwise the allowlist will evaluate
-# against the proxy's IP and deny legitimate traffic. If your proxy chain
-# has multiple hops, add each hop you control.
-# Example: ["10.0.0.0/8"]   (corporate egress)
-# Example: ["172.16.0.0/12"] (internal load balancer)
-trusted_proxies = []
+# Use the admin UI or the following API endpoints:
+#   GET/PUT /api/v1/settings/ip-whitelist
+#   GET/PUT /api/v1/settings/trusted-proxies
+#
+# Default: empty list = allow all IPs / do not trust X-Forwarded-For.
 
 # Ed25519 JWT signing key (private key, PEM format)
 # Generate: openssl genpkey -algorithm ed25519 -out /etc/patch-manager/jwt/signing.pem

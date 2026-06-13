@@ -306,6 +306,7 @@ export interface SettingsResponse {
   smtp: SmtpConfig
   polling: PollingConfig
   ip_whitelist: string[]
+  trusted_proxies: string[]
   web_tls_strategy: string
   notification: NotificationConfig
   sso_callback_url?: string
@@ -340,6 +341,8 @@ export const settingsApi = {
   testSmtp: () => apiClient.post<TestResult>('/settings/smtp/test'),
   getIpWhitelist: () => apiClient.get<{ entries: string[] }>('/settings/ip-whitelist'),
   updateIpWhitelist: (entries: string[]) => apiClient.put<{ entries: string[] }>('/settings/ip-whitelist', { entries }),
+  getTrustedProxies: () => apiClient.get<{ entries: string[] }>('/settings/trusted-proxies'),
+  updateTrustedProxies: (entries: string[]) => apiClient.put<{ entries: string[] }>('/settings/trusted-proxies', { entries }),
   auditIntegrity: () => apiClient.post<AuditIntegrityResult>('/settings/audit-integrity'),
 }
 

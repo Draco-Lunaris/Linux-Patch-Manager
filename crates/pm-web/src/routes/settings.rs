@@ -40,6 +40,7 @@ pub struct SettingsResponse {
     pub smtp: SmtpConfig,
     pub polling: PollingConfig,
     pub ip_whitelist: Vec<String>,
+    pub trusted_proxies: Vec<String>,
     pub web_tls_strategy: String,
     pub notification: NotificationConfig,
     pub sso_callback_url: String,
@@ -79,6 +80,7 @@ pub struct UpdateSettingsRequest {
     pub smtp: Option<SmtpConfigUpdate>,
     pub polling: Option<PollingConfigUpdate>,
     pub ip_whitelist: Option<Vec<String>>,
+    pub trusted_proxies: Option<Vec<String>>,
     pub web_tls_strategy: Option<String>,
     pub notification: Option<NotificationConfigUpdate>,
 }
@@ -146,6 +148,11 @@ pub struct IpWhitelistUpdate {
     pub entries: Vec<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct TrustedProxiesUpdate {
+    pub entries: Vec<String>,
+}
+
 // ============================================================
 // Router
 // ============================================================
@@ -160,6 +167,10 @@ pub fn router() -> Router<AppState> {
         .route(
             "/ip-whitelist",
             get(get_ip_whitelist).put(update_ip_whitelist),
+        )
+        .route(
+            "/trusted-proxies",
+            get(get_trusted_proxies).put(update_trusted_proxies),
         )
         .route("/audit-integrity", post(audit_integrity))
 }
@@ -243,6 +254,7 @@ fn build_settings_response(
             patch_poll_interval_secs: get("patch_poll_interval_secs").parse().unwrap_or(1800),
         },
         ip_whitelist: serde_json::from_str(&get("ip_whitelist")).unwrap_or_default(),
+        trusted_proxies: serde_json::from_str(&get("trusted_proxies")).unwrap_or_default(),
         web_tls_strategy: get("web_tls_strategy"),
         notification: NotificationConfig {
             email_enabled: get("notification_email_enabled") == "true",
@@ -594,6 +606,28 @@ async fn update_settings(
             Some(auth.user_id),
             Some(&auth.username),
             Some("ip_whitelist"),
+            Some("system_config"),
+            json!({ "entries": entries }),
+            None,
+            None,
+        )
+        .await;
+    }
+
+    // Update trusted proxies
+    if let Some(ref entries) = req.trusted_proxies {
+        let json_str = serde_json::to_string(entries).unwrap_or_else(|_| "[]".to_string());
+        update_config_key(&state.db, "trusted_proxies", &json_str).await?;
+
+        // Update in-memory AuthConfig for immediate enforcement
+        state.auth_config.update_trusted_proxies(entries.clone());
+
+        log_event(
+            &state.db,
+            AuditAction::TrustedProxiesUpdated,
+            Some(auth.user_id),
+            Some(&auth.username),
+            Some("trusted_proxies"),
             Some("system_config"),
             json!({ "entries": entries }),
             None,
@@ -1089,6 +1123,79 @@ async fn update_ip_whitelist(
         Some(auth.user_id),
         Some(&auth.username),
         Some("ip_whitelist"),
+        Some("system_config"),
+        json!({ "entries": req.entries }),
+        None,
+        None,
+    )
+    .await;
+    Ok(Json(json!({ "entries": req.entries })))
+}
+
+// ============================================================
+// GET /api/v1/settings/trusted-proxies
+// ============================================================
+
+async fn get_trusted_proxies(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    write_access_required(&auth)?;
+
+    let value: Option<String> = sqlx::query_scalar(
+        "SELECT value FROM system_config WHERE key = 'trusted_proxies'",
+    )
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, "Failed to load trusted_proxies");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+        )
+    })?;
+
+    let entries: Vec<String> = serde_json::from_str(&value.unwrap_or_default()).unwrap_or_default();
+    Ok(Json(json!({ "entries": entries })))
+}
+
+// ============================================================
+// PUT /api/v1/settings/trusted-proxies
+// ============================================================
+
+async fn update_trusted_proxies(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Json(req): Json<TrustedProxiesUpdate>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    admin_required(&auth)?;
+
+    // Validate each entry
+    for entry in &req.entries {
+        if entry.parse::<ipnet::IpNet>().is_err() && entry.parse::<std::net::IpAddr>().is_err() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(
+                    json!({ "error": { "code": "bad_request", "message": format!("Invalid CIDR or IP: {}", entry) } }),
+                ),
+            ));
+        }
+    }
+
+    let json_str = serde_json::to_string(&req.entries).unwrap_or_else(|_| "[]".to_string());
+    update_config_key(&state.db, "trusted_proxies", &json_str).await?;
+
+    // Update in-memory AuthConfig for immediate enforcement
+    state
+        .auth_config
+        .update_trusted_proxies(req.entries.clone());
+
+    log_event(
+        &state.db,
+        AuditAction::TrustedProxiesUpdated,
+        Some(auth.user_id),
+        Some(&auth.username),
+        Some("trusted_proxies"),
         Some("system_config"),
         json!({ "entries": req.entries }),
         None,
