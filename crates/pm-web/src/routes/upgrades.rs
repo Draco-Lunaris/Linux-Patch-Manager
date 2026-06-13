@@ -131,11 +131,11 @@ async fn refresh_versions(
 
     for release in &releases {
         let tag_name = release["tag_name"].as_str().unwrap_or("");
-        let prerelease = release["prerelease"].as_bool().unwrap_or(false);
-        let published_at = release["published_at"].as_str();
-
         // Strip leading 'v' from tag to get version
         let version = tag_name.strip_prefix('v').unwrap_or(tag_name);
+        // Semver pre-release identifiers contain a hyphen (e.g. "1.5.0-beta.1")
+        let prerelease = release["prerelease"].as_bool().unwrap_or(false) || version.contains('-');
+        let published_at = release["published_at"].as_str();
 
         let assets = match release["assets"].as_array() {
             Some(a) => a,
