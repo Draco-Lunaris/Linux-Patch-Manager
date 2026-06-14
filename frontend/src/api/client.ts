@@ -24,6 +24,9 @@ import type {
   UpgradeStatusResponse,
   UpgradeTriggerResponse,
   RefreshVersionsResponse,
+  OsPackageMapping,
+  CreateOsPackageMapping,
+  UpdateOsPackageMapping,
 } from '../types'
 
 const BASE_URL = '/api/v1'
@@ -438,4 +441,19 @@ export const upgradesApi = {
   /** Get upgrade status for a host. */
   getUpgradeStatus: (hostId: string) =>
     apiClient.get<UpgradeStatusResponse>(`/hosts/${hostId}/upgrade-status`),
+}
+
+// ── OS Package Mappings API ────────────────────────────────────────────────
+export const osPackageMappingsApi = {
+  list: () =>
+    apiClient.get<{ mappings: OsPackageMapping[] }>('/settings/os-package-mappings'),
+
+  create: (data: CreateOsPackageMapping) =>
+    apiClient.post<{ mapping: OsPackageMapping }>('/settings/os-package-mappings', data),
+
+  update: (id: string, data: UpdateOsPackageMapping) =>
+    apiClient.put<{ message: string }>(`/settings/os-package-mappings/${id}`, data),
+
+  delete: (id: string) =>
+    apiClient.delete<{ message: string }>(`/settings/os-package-mappings/${id}`),
 }
