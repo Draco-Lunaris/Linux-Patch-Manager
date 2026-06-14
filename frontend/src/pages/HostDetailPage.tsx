@@ -939,7 +939,7 @@ export default function HostDetailPage() {
   const fetchVersions = useCallback(async () => {
     setVersionsLoading(true)
     try {
-      const res = await upgradesApi.listVersions()
+      const res = await upgradesApi.listVersions(undefined, id)
       const versions = res.data?.versions ?? []
       setAvailableVersions(versions)
       // Default to newest non-prerelease version
@@ -951,7 +951,7 @@ export default function HostDetailPage() {
     } finally {
       setVersionsLoading(false)
     }
-  }, [])
+  }, [id])
 
   const handleRefreshVersions = async () => {
     setRefreshing(true)

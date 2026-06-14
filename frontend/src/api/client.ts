@@ -414,9 +414,14 @@ export const enrollmentApi = {
 
 // ── Upgrades API ──────────────────────────────────────────────────────────
 export const upgradesApi = {
-  /** List available versions from cache. Optional source filter. */
-  listVersions: (source?: string) =>
-    apiClient.get<AvailableVersionsResponse>('/upgrades/available-versions', { params: source ? { source } : {} }),
+  /** List available versions from cache. Optional source and host_id filters. */
+  listVersions: (source?: string, hostId?: string) =>
+    apiClient.get<AvailableVersionsResponse>('/upgrades/available-versions', {
+      params: {
+        ...(source ? { source } : {}),
+        ...(hostId ? { host_id: hostId } : {}),
+      },
+    }),
 
   /** Refresh version cache from GitHub releases. Admin only. */
   refreshVersions: () =>
