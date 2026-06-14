@@ -2062,7 +2062,7 @@ checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
 name = "migrate-secrets"
-version = "1.2.0-beta.1"
+version = "1.2.0-beta.2"
 dependencies = [
  "anyhow",
  "hex",
@@ -2592,7 +2592,7 @@ dependencies = [
 
 [[package]]
 name = "pm-agent-client"
-version = "1.2.0-beta.1"
+version = "1.2.0-beta.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2609,7 +2609,7 @@ dependencies = [
 
 [[package]]
 name = "pm-auth"
-version = "1.2.0-beta.1"
+version = "1.2.0-beta.2"
 dependencies = [
  "anyhow",
  "argon2",
@@ -2637,7 +2637,7 @@ dependencies = [
 
 [[package]]
 name = "pm-ca"
-version = "1.2.0-beta.1"
+version = "1.2.0-beta.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2661,7 +2661,7 @@ dependencies = [
 
 [[package]]
 name = "pm-core"
-version = "1.2.0-beta.1"
+version = "1.2.0-beta.2"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2685,7 +2685,7 @@ dependencies = [
 
 [[package]]
 name = "pm-reports"
-version = "1.2.0-beta.1"
+version = "1.2.0-beta.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2705,7 +2705,7 @@ dependencies = [
 
 [[package]]
 name = "pm-web"
-version = "1.2.0-beta.1"
+version = "1.2.0-beta.2"
 dependencies = [
  "anyhow",
  "axum",
@@ -2750,7 +2750,7 @@ dependencies = [
 
 [[package]]
 name = "pm-worker"
-version = "1.2.0-beta.1"
+version = "1.2.0-beta.2"
 dependencies = [
  "anyhow",
  "chrono",
