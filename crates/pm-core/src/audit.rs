@@ -66,6 +66,10 @@ pub enum AuditAction {
     UpgradeTriggered,
     BatchUpgradeTriggered,
     UpgradeVersionRefreshed,
+    // OS package mapping CRUD (Issue #91)
+    OsPackageMappingCreated,
+    OsPackageMappingUpdated,
+    OsPackageMappingDeleted,
 }
 
 impl AuditAction {
@@ -118,6 +122,9 @@ impl AuditAction {
             Self::UpgradeTriggered => "upgrade_triggered",
             Self::BatchUpgradeTriggered => "batch_upgrade_triggered",
             Self::UpgradeVersionRefreshed => "upgrade_version_refreshed",
+            Self::OsPackageMappingCreated => "os_package_mapping_created",
+            Self::OsPackageMappingUpdated => "os_package_mapping_updated",
+            Self::OsPackageMappingDeleted => "os_package_mapping_deleted",
         }
     }
 }

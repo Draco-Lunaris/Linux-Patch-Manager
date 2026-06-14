@@ -471,3 +471,28 @@ export interface RefreshVersionsResponse {
   upserted: number
   message: string
 }
+
+// ── OS Package Mappings ────────────────────────────────────────────────────
+
+export interface OsPackageMapping {
+  id: string
+  os_name: string
+  os_version: string
+  package_pattern: string
+  display_name: string
+  is_default: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface CreateOsPackageMapping {
+  os_name: string
+  os_version: string
+  package_pattern: string
+  display_name: string
+}
+
+export interface UpdateOsPackageMapping {
+  package_pattern?: string
+  display_name?: string
+}

@@ -1,22 +1,24 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Accordion, AccordionDetails, AccordionSummary, Alert, Box, Button,
-  CircularProgress, Container, FormControl, FormControlLabel, Grid,
-  IconButton, InputLabel, MenuItem, Select, Snackbar, Switch, TextField,
-  Toolbar, Typography,
+  Chip, CircularProgress, Container, Dialog, DialogActions, DialogContent,
+  DialogTitle, FormControl, FormControlLabel, Grid, IconButton, InputLabel,
+  MenuItem, Select, Snackbar, Switch, Table, TableBody, TableCell,
+  TableHead, TableRow, TextField, Toolbar, Tooltip, Typography,
 } from '@mui/material'
 import type { AxiosError } from 'axios'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import SaveIcon from '@mui/icons-material/Save'
 import DeleteIcon from '@mui/icons-material/Delete'
 import AddIcon from '@mui/icons-material/Add'
+import EditIcon from '@mui/icons-material/Edit'
 import CloudIcon from '@mui/icons-material/Cloud'
 import EmailIcon from '@mui/icons-material/Email'
 import VpnKeyIcon from '@mui/icons-material/VpnKey'
 import ExploreIcon from '@mui/icons-material/Explore'
-import { settingsApi } from '../api/client'
+import { settingsApi, osPackageMappingsApi } from '../api/client'
 import { useAuthStore } from '../store/authStore'
-import type { OidcConfigResponse, OidcDiscoveryResult, SmtpConfig, PollingConfig, NotificationConfig } from '../types'
+import type { OidcConfigResponse, OidcDiscoveryResult, SmtpConfig, PollingConfig, NotificationConfig, OsPackageMapping, CreateOsPackageMapping } from '../types'
 
 type OidcForm = OidcConfigResponse & { client_secret?: string }
 type SmtpForm = SmtpConfig & { password?: string }
@@ -53,6 +55,17 @@ export default function SettingsPage() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+
+  // ── OS Package Mappings state ────────────────────────────────────────────
+  const [mappings, setMappings] = useState<OsPackageMapping[]>([])
+  const [mappingLoading, setMappingLoading] = useState(false)
+  const [mappingDialogOpen, setMappingDialogOpen] = useState(false)
+  const [editingMapping, setEditingMapping] = useState<OsPackageMapping | null>(null)
+  const [mappingForm, setMappingForm] = useState<CreateOsPackageMapping>({
+    os_name: '', os_version: '', package_pattern: '', display_name: '',
+  })
+  const [mappingSaving, setMappingSaving] = useState(false)
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
 
   const loadSettings = useCallback(async () => {
     try {
@@ -214,6 +227,72 @@ export default function SettingsPage() {
     updated[idx] = value
     setTrustedProxies(updated)
   }
+
+  // ── OS Package Mappings handlers ──────────────────────────────────────
+  const loadMappings = useCallback(async () => {
+    try {
+      setMappingLoading(true)
+      const { data } = await osPackageMappingsApi.list()
+      setMappings(data.mappings.sort((a, b) => a.os_name.localeCompare(b.os_name) || a.os_version.localeCompare(b.os_version)))
+    } catch {
+      setError('Failed to load OS package mappings')
+    } finally {
+      setMappingLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { loadMappings() }, [loadMappings])
+
+  const openAddMapping = () => {
+    setEditingMapping(null)
+    setMappingForm({ os_name: '', os_version: '', package_pattern: '', display_name: '' })
+    setMappingDialogOpen(true)
+  }
+
+  const openEditMapping = (m: OsPackageMapping) => {
+    setEditingMapping(m)
+    setMappingForm({ os_name: m.os_name, os_version: m.os_version, package_pattern: m.package_pattern, display_name: m.display_name })
+    setMappingDialogOpen(true)
+  }
+
+  const saveMapping = async () => {
+    setMappingSaving(true)
+    setError(null)
+    setSuccess(null)
+    try {
+      if (editingMapping) {
+        await osPackageMappingsApi.update(editingMapping.id, {
+          package_pattern: mappingForm.package_pattern,
+          display_name: mappingForm.display_name,
+        })
+        setSuccess('OS package mapping updated')
+      } else {
+        await osPackageMappingsApi.create(mappingForm)
+        setSuccess('OS package mapping created')
+      }
+      setMappingDialogOpen(false)
+      loadMappings()
+    } catch (err: unknown) {
+      const axiosErr = err as AxiosError<{ error?: { message?: string } }>
+      const msg = axiosErr.response?.data?.error?.message ?? (err instanceof Error ? err.message : 'Failed to save mapping')
+      setError(msg)
+    } finally {
+      setMappingSaving(false)
+    }
+  }
+
+  const deleteMapping = async (id: string) => {
+    try {
+      await osPackageMappingsApi.delete(id)
+      setSuccess('OS package mapping deleted')
+      setDeleteConfirmId(null)
+      loadMappings()
+    } catch (err: unknown) {
+      const axiosErr = err as AxiosError<{ error?: { message?: string } }>
+      const msg = axiosErr.response?.data?.error?.message ?? (err instanceof Error ? err.message : 'Failed to delete mapping')
+      setError(msg)
+    }
+   }
 
   if (loading) {
     return (
@@ -514,6 +593,136 @@ export default function SettingsPage() {
           </Typography>
         </AccordionDetails>
       </Accordion>
+
+      {/* Section 7: OS Package Mappings */}
+      <Accordion>
+        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+          <Typography fontWeight={600}>OS Package Mappings</Typography>
+        </AccordionSummary>
+        <AccordionDetails>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Configure how OS names and versions map to package manager patterns and display names.
+          </Typography>
+
+          {canWrite && (
+            <Button variant="outlined" startIcon={<AddIcon />} onClick={openAddMapping} sx={{ mb: 2 }}>
+              Add Mapping
+            </Button>
+          )}
+
+          {mappingLoading ? (
+            <Box sx={{ textAlign: 'center', py: 2 }}><CircularProgress size={24} /></Box>
+          ) : mappings.length === 0 ? (
+            <Typography variant="body2" color="text.secondary">No OS package mappings configured.</Typography>
+          ) : (
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>OS Name</TableCell>
+                  <TableCell>OS Version</TableCell>
+                  <TableCell>Package Pattern</TableCell>
+                  <TableCell>Display Name</TableCell>
+                  <TableCell>Default</TableCell>
+                  {canWrite && <TableCell align="right">Actions</TableCell>}
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {mappings.map((m) => (
+                  <TableRow key={m.id} sx={{ '&:nth-of-type(odd)': { backgroundColor: 'action.hover' } }}>
+                    <TableCell>{m.os_name}</TableCell>
+                    <TableCell>{m.os_version}</TableCell>
+                    <TableCell sx={{ fontFamily: 'monospace' }}>{m.package_pattern}</TableCell>
+                    <TableCell>{m.display_name}</TableCell>
+                    <TableCell>
+                      {m.is_default ? <Chip label="Default" size="small" color="primary" variant="outlined" /> : '—'}
+                    </TableCell>
+                    {canWrite && (
+                      <TableCell align="right">
+                        <IconButton size="small" onClick={() => openEditMapping(m)}><EditIcon fontSize="small" /></IconButton>
+                        {m.is_default ? (
+                          <Tooltip title="Default mappings cannot be deleted">
+                            <span>
+                              <IconButton size="small" disabled><DeleteIcon fontSize="small" /></IconButton>
+                            </span>
+                          </Tooltip>
+                        ) : (
+                          <IconButton size="small" onClick={() => setDeleteConfirmId(m.id)}><DeleteIcon fontSize="small" /></IconButton>
+                        )}
+                      </TableCell>
+                    )}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </AccordionDetails>
+      </Accordion>
+
+      {/* Add/Edit OS Package Mapping Dialog */}
+      <Dialog open={mappingDialogOpen} onClose={() => setMappingDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>{editingMapping ? 'Edit OS Package Mapping' : 'Add OS Package Mapping'}</DialogTitle>
+        <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
+          <TextField
+            fullWidth
+            label="OS Name"
+            value={mappingForm.os_name}
+            onChange={(e) => setMappingForm({ ...mappingForm, os_name: e.target.value })}
+            placeholder="e.g. ubuntu"
+            disabled={!!editingMapping}
+            helperText={editingMapping ? 'OS name cannot be changed after creation' : undefined}
+            required
+          />
+          <TextField
+            fullWidth
+            label="OS Version"
+            value={mappingForm.os_version}
+            onChange={(e) => setMappingForm({ ...mappingForm, os_version: e.target.value })}
+            placeholder="e.g. 22.04"
+            disabled={!!editingMapping}
+            helperText={editingMapping ? 'OS version cannot be changed after creation' : undefined}
+            required
+          />
+          <TextField
+            fullWidth
+            label="Package Pattern"
+            value={mappingForm.package_pattern}
+            onChange={(e) => setMappingForm({ ...mappingForm, package_pattern: e.target.value })}
+            placeholder="e.g. apt"
+            required
+          />
+          <TextField
+            fullWidth
+            label="Display Name"
+            value={mappingForm.display_name}
+            onChange={(e) => setMappingForm({ ...mappingForm, display_name: e.target.value })}
+            placeholder="e.g. Ubuntu 22.04 (Jammy)"
+            required
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setMappingDialogOpen(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={saveMapping}
+            disabled={mappingSaving || !mappingForm.os_name || !mappingForm.os_version || !mappingForm.package_pattern || !mappingForm.display_name}
+            startIcon={mappingSaving ? <CircularProgress size={20} /> : undefined}
+          >
+            {editingMapping ? 'Save' : 'Create'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={!!deleteConfirmId} onClose={() => setDeleteConfirmId(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>Delete Mapping?</DialogTitle>
+        <DialogContent>
+          <Typography>Are you sure you want to delete this OS package mapping? This action cannot be undone.</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteConfirmId(null)}>Cancel</Button>
+          <Button variant="contained" color="error" onClick={() => { if (deleteConfirmId) deleteMapping(deleteConfirmId) }}>Delete</Button>
+        </DialogActions>
+      </Dialog>
 
       <Snackbar
         open={!!success}

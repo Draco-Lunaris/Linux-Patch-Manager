@@ -24,6 +24,9 @@ import type {
   UpgradeStatusResponse,
   UpgradeTriggerResponse,
   RefreshVersionsResponse,
+  OsPackageMapping,
+  CreateOsPackageMapping,
+  UpdateOsPackageMapping,
 } from '../types'
 
 const BASE_URL = '/api/v1'
@@ -414,9 +417,14 @@ export const enrollmentApi = {
 
 // ── Upgrades API ──────────────────────────────────────────────────────────
 export const upgradesApi = {
-  /** List available versions from cache. Optional source filter. */
-  listVersions: (source?: string) =>
-    apiClient.get<AvailableVersionsResponse>('/upgrades/available-versions', { params: source ? { source } : {} }),
+  /** List available versions from cache. Optional source and host_id filters. */
+  listVersions: (source?: string, hostId?: string) =>
+    apiClient.get<AvailableVersionsResponse>('/upgrades/available-versions', {
+      params: {
+        ...(source ? { source } : {}),
+        ...(hostId ? { host_id: hostId } : {}),
+      },
+    }),
 
   /** Refresh version cache from GitHub releases. Admin only. */
   refreshVersions: () =>
@@ -433,4 +441,19 @@ export const upgradesApi = {
   /** Get upgrade status for a host. */
   getUpgradeStatus: (hostId: string) =>
     apiClient.get<UpgradeStatusResponse>(`/hosts/${hostId}/upgrade-status`),
+}
+
+// ── OS Package Mappings API ────────────────────────────────────────────────
+export const osPackageMappingsApi = {
+  list: () =>
+    apiClient.get<{ mappings: OsPackageMapping[] }>('/settings/os-package-mappings'),
+
+  create: (data: CreateOsPackageMapping) =>
+    apiClient.post<{ mapping: OsPackageMapping }>('/settings/os-package-mappings', data),
+
+  update: (id: string, data: UpdateOsPackageMapping) =>
+    apiClient.put<{ message: string }>(`/settings/os-package-mappings/${id}`, data),
+
+  delete: (id: string) =>
+    apiClient.delete<{ message: string }>(`/settings/os-package-mappings/${id}`),
 }

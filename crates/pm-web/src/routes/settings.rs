@@ -24,6 +24,7 @@ use lettre::{
 };
 use pm_auth::rbac::AuthUser;
 use pm_core::audit::{log_event, verify_integrity, AuditAction};
+use pm_core::models::OsPackageMapping;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -44,6 +45,7 @@ pub struct SettingsResponse {
     pub web_tls_strategy: String,
     pub notification: NotificationConfig,
     pub sso_callback_url: String,
+    pub os_package_mappings: Vec<OsPackageMapping>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -233,6 +235,7 @@ async fn load_system_config(
 fn build_settings_response(
     cfg: &HashMap<String, String>,
     oidc: OidcConfigResponse,
+    os_package_mappings: Vec<OsPackageMapping>,
 ) -> SettingsResponse {
     let get = |key: &str| -> String { cfg.get(key).cloned().unwrap_or_default() };
 
@@ -262,6 +265,7 @@ fn build_settings_response(
             recipients,
         },
         sso_callback_url: get("sso_callback_url"),
+        os_package_mappings,
     }
 }
 
@@ -351,6 +355,23 @@ async fn fetch_oidc_config(
     })
 }
 
+async fn fetch_os_package_mappings(
+    pool: &sqlx::PgPool,
+) -> Result<Vec<OsPackageMapping>, (StatusCode, Json<Value>)> {
+    sqlx::query_as::<_, OsPackageMapping>(
+        "SELECT id, os_name, os_version, package_pattern, display_name, is_default, created_at, updated_at FROM os_package_mappings ORDER BY os_name, os_version",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, "Failed to load os_package_mappings");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+        )
+    })
+}
+
 // ============================================================
 // GET /api/v1/settings
 // ============================================================
@@ -368,7 +389,12 @@ async fn get_settings(
         state.config.security.sso_callback_url.clone(),
     );
     let oidc = fetch_oidc_config(&state.db).await?;
-    Ok(Json(build_settings_response(&cfg, oidc)))
+    let os_package_mappings = fetch_os_package_mappings(&state.db).await?;
+    Ok(Json(build_settings_response(
+        &cfg,
+        oidc,
+        os_package_mappings,
+    )))
 }
 
 // ============================================================
@@ -690,7 +716,12 @@ async fn update_settings(
         state.config.security.sso_callback_url.clone(),
     );
     let oidc = fetch_oidc_config(&state.db).await?;
-    Ok(Json(build_settings_response(&cfg, oidc)))
+    let os_package_mappings = fetch_os_package_mappings(&state.db).await?;
+    Ok(Json(build_settings_response(
+        &cfg,
+        oidc,
+        os_package_mappings,
+    )))
 }
 
 // ============================================================

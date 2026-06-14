@@ -15,10 +15,11 @@ pub use crypto::{
 pub use error::{AppError, ErrorResponse};
 pub use models::{
     AdminResetPasswordRequest, AuthProvider, ChangePasswordRequest, CreateGroupRequest,
-    CreateHealthCheckRequest, CreateHostRequest, CreateUserRequest, DiscoveryCidrRequest,
-    DiscoveryResult, Group, HealthCheck, HealthCheckResult, HealthCheckWithResult, Host,
-    HostHealthStatus, HostSummary, RegisterDiscoveredRequest, UpdateGroupRequest,
-    UpdateHealthCheckRequest, UpdateUserRequest, User, UserRole as DbUserRole,
+    CreateHealthCheckRequest, CreateHostRequest, CreateOsPackageMapping, CreateUserRequest,
+    DiscoveryCidrRequest, DiscoveryResult, Group, HealthCheck, HealthCheckResult,
+    HealthCheckWithResult, Host, HostHealthStatus, HostSummary, OsPackageMapping,
+    RegisterDiscoveredRequest, UpdateGroupRequest, UpdateHealthCheckRequest,
+    UpdateOsPackageMapping, UpdateUserRequest, User, UserRole as DbUserRole,
 };
 
 // Re-export audit integrity types

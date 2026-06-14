@@ -13,8 +13,10 @@ use axum::{
 use pm_auth::rbac::AuthUser;
 use pm_core::audit::{log_event, AuditAction};
 use pm_core::models::AvailableVersion;
+use regex::Regex;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use uuid::Uuid;
 
 use crate::AppState;
 
@@ -33,6 +35,7 @@ pub fn router() -> Router<AppState> {
 #[derive(Debug, Deserialize)]
 pub struct AvailableVersionsQuery {
     pub source: Option<String>,
+    pub host_id: Option<Uuid>,
 }
 
 // ── GET /api/v1/upgrades/available-versions ────────────────────────────────────
@@ -41,7 +44,7 @@ async fn list_available_versions(
     State(state): State<AppState>,
     Query(q): Query<AvailableVersionsQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let versions: Vec<AvailableVersion> = if let Some(source) = &q.source {
+    let mut versions: Vec<AvailableVersion> = if let Some(source) = &q.source {
         sqlx::query_as(
             r#"
             SELECT id, version, download_url, checksum, file_name,
@@ -74,7 +77,89 @@ async fn list_available_versions(
         )
     })?;
 
+    // If host_id is provided, filter versions by OS package mapping
+    if let Some(host_id) = q.host_id {
+        if let Some(pattern) = lookup_package_pattern(&state, host_id).await? {
+            match Regex::new(&pattern) {
+                Ok(re) => {
+                    versions.retain(|v| re.is_match(&v.file_name));
+                },
+                Err(e) => {
+                    tracing::warn!(pattern = %pattern, error = %e, "Invalid regex in OS package mapping, skipping filter");
+                },
+            }
+        }
+        // If no mapping found, return all versions (fallback)
+    }
+
     Ok(Json(json!({ "versions": versions })))
+}
+
+/// Look up the package pattern for a host's OS.
+///
+/// Parses the host's `os_name` (e.g. "Ubuntu 24.04") into name and version,
+/// then finds the matching `os_package_mapping` entry.
+async fn lookup_package_pattern(
+    state: &AppState,
+    host_id: Uuid,
+) -> Result<Option<String>, (StatusCode, Json<Value>)> {
+    // Look up the host's os_name
+    let os_name: Option<String> = sqlx::query_scalar("SELECT os_name FROM hosts WHERE id = $1")
+        .bind(host_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, host_id = %host_id, "Failed to query host OS");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+            )
+        })?
+        .flatten();
+
+    let os_name = match os_name {
+        Some(name) => name,
+        None => {
+            tracing::debug!(host_id = %host_id, "Host has no os_name, skipping OS filter");
+            return Ok(None);
+        },
+    };
+
+    // Parse os_name into (name, version), e.g. "Ubuntu 24.04" -> ("Ubuntu", "24.04")
+    let (parsed_name, parsed_version) = match os_name.split_once(' ') {
+        Some((n, v)) => (n.to_string(), v.to_string()),
+        None => {
+            // os_name is a single word (e.g. "Alpine"), use it as-is with wildcard version
+            tracing::debug!(os_name = %os_name, "os_name has no version part, using as name only");
+            (os_name, String::from("*"))
+        },
+    };
+
+    // Find matching OS package mapping:
+    // - os_name must match exactly
+    // - os_version must match exactly OR be '*'
+    let pattern: Option<String> = sqlx::query_scalar(
+        r#"
+        SELECT package_pattern FROM os_package_mappings
+        WHERE os_name = $1 AND (os_version = $2 OR os_version = '*')
+        ORDER BY os_version = $2 DESC, os_version = '*' DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(&parsed_name)
+    .bind(&parsed_version)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, "Failed to query OS package mapping");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+        )
+    })?
+    .flatten();
+
+    Ok(pattern)
 }
 
 // ── POST /api/v1/upgrades/refresh-versions ─────────────────────────────────────

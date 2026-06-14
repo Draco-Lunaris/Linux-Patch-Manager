@@ -69,6 +69,7 @@ config = { version = "0.15" }
 # Misc
 bytes = { version = "1" }
 futures = { version = "0.3" }
+regex = { version = "1" }
 
 # Authentication & Security
 argon2 = { version = "0.5", features = ["std"] }
