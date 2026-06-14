@@ -414,9 +414,9 @@ export const enrollmentApi = {
 
 // ── Upgrades API ──────────────────────────────────────────────────────────
 export const upgradesApi = {
-  /** List available versions from cache. Optional source filter. */
-  listVersions: (source?: string) =>
-    apiClient.get<AvailableVersionsResponse>('/upgrades/available-versions', { params: source ? { source } : {} }),
+  /** List available versions from cache. */
+  listVersions: () =>
+    apiClient.get<AvailableVersionsResponse>('/upgrades/available-versions'),
 
   /** Refresh version cache from GitHub releases. Admin only. */
   refreshVersions: () =>

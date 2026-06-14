@@ -68,15 +68,29 @@ import type {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Map a host OS name to the upgrade package source filter. */
-function getSourceForOsName(osName: string | undefined | null): string | undefined {
-  if (!osName) return undefined
-  const lower = osName.toLowerCase()
-  if (lower.includes('ubuntu') || lower.includes('debian')) return 'github-deb'
-  if (lower.includes('fedora') || lower.includes('rhel') || lower.includes('almalinux') || lower.includes('centos')) return 'github-rpm'
-  if (lower.includes('alpine')) return 'github-apk'
-  if (lower.includes('arch')) return 'github-tar.zst'
-  return undefined
+/** Map a host OS to a regex pattern matching compatible package filenames. */
+function getCompatiblePackagePattern(osName?: string): RegExp | null {
+  if (!osName) return null
+  const name = osName.toLowerCase()
+  // Extract version from strings like "Ubuntu 22.04" or "Debian 12 (Bookworm)"
+  const versionMatch = name.match(/(\d+[\.\d]*)/)
+  const ver = versionMatch ? versionMatch[1] : ''
+
+  if (name.includes('ubuntu')) {
+    if (ver.startsWith('24.04')) return /_u2404_/
+    if (ver.startsWith('22.04')) return /_u2204_/
+    return /_u\d{4}_/
+  }
+  if (name.includes('debian')) {
+    if (ver.startsWith('12') || name.includes('bookworm')) return /_u2204_/
+    if (ver.startsWith('13') || name.includes('trixie')) return /_u2404_/
+    return /_u\d{4}_/
+  }
+  if (name.includes('fedora')) return /\.fc\d+\./
+  if (name.includes('rhel') || name.includes('centos') || name.includes('almalinux')) return /\.el\d+\./
+  if (name.includes('alpine')) return /-r\d+\.apk$/
+  if (name.includes('arch')) return /\.pkg\.tar\.zst$/
+  return null
 }
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -950,9 +964,11 @@ export default function HostDetailPage() {
   const fetchVersions = useCallback(async () => {
     setVersionsLoading(true)
     try {
-      const source = getSourceForOsName(host?.os_name as string | undefined)
-      const res = await upgradesApi.listVersions(source)
-      const versions = res.data?.versions ?? []
+      const res = await upgradesApi.listVersions()
+      const pattern = getCompatiblePackagePattern(host?.os_name as string | undefined)
+      const versions = pattern
+        ? (res.data?.versions ?? []).filter((v: AvailableVersion) => pattern.test(v.file_name))
+        : (res.data?.versions ?? [])
       setAvailableVersions(versions)
       // Default to newest non-prerelease version
       const latest = versions.filter((v: AvailableVersion) => !v.prerelease)[0]
