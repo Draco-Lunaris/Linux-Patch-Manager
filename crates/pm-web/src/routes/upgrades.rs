@@ -125,14 +125,84 @@ async fn lookup_package_pattern(
         },
     };
 
-    // Parse os_name into (name, version), e.g. "Ubuntu 24.04" -> ("Ubuntu", "24.04")
-    let (parsed_name, parsed_version) = match os_name.split_once(' ') {
-        Some((n, v)) => (n.to_string(), v.to_string()),
-        None => {
-            // os_name is a single word (e.g. "Alpine"), use it as-is with wildcard version
-            tracing::debug!(os_name = %os_name, "os_name has no version part, using as name only");
-            (os_name, String::from("*"))
-        },
+    // Parse os_name into (name, version) using OS-family-aware extraction.
+    // Complex OS names like "Debian GNU/Linux 12 (bookworm)" or
+    // "Fedora Linux 43 (Container Image) 43" require smarter parsing
+    // than a simple space-split.
+    let (parsed_name, parsed_version) = {
+        // Step 1: Extract OS family name from known prefixes
+        let name: &str = if os_name.starts_with("Ubuntu") {
+            "Ubuntu"
+        } else if os_name.starts_with("Debian") {
+            "Debian"
+        } else if os_name.starts_with("Fedora") {
+            "Fedora"
+        } else if os_name.starts_with("AlmaLinux") {
+            "AlmaLinux"
+        } else if os_name.starts_with("Alpine") {
+            "Alpine"
+        } else if os_name.starts_with("Arch") {
+            "Arch"
+        } else {
+            // Fallback: take first word as name
+            os_name.split_whitespace().next().unwrap_or(&os_name)
+        };
+
+        // Step 2: Extract version using OS-family-specific patterns
+        let version = if name == "Alpine" || name == "Arch" {
+            // Rolling/irrelevant versions → wildcard
+            "*".to_string()
+        } else if name == "Ubuntu" {
+            // Extract first major.minor, e.g. "24.04" from "24.04.4 LTS"
+            Regex::new(r"(\d+\.\d+)")
+                .ok()
+                .and_then(|re| re.captures(&os_name))
+                .and_then(|caps| caps.get(1))
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_else(|| "*".to_string())
+        } else if name == "Debian" {
+            // Extract version after "GNU/Linux", e.g. "12" from "GNU/Linux 12"
+            Regex::new(r"GNU/Linux\s+(\d+)")
+                .ok()
+                .and_then(|re| re.captures(&os_name))
+                .and_then(|caps| caps.get(1))
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_else(|| "*".to_string())
+        } else if name == "Fedora" {
+            // Extract version after "Fedora", e.g. "43" from "Fedora Linux 43"
+            Regex::new(r"Fedora\s+(?:Linux\s+)?(\d+)")
+                .ok()
+                .and_then(|re| re.captures(&os_name))
+                .and_then(|caps| caps.get(1))
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_else(|| "*".to_string())
+        } else if name == "AlmaLinux" {
+            // Extract major version, e.g. "10" from "AlmaLinux 10.2"
+            let rest = os_name[name.len()..].trim_start();
+            Regex::new(r"(\d+)")
+                .ok()
+                .and_then(|re| re.captures(rest))
+                .and_then(|caps| caps.get(1))
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_else(|| "*".to_string())
+        } else {
+            // Fallback: extract first version-like pattern from the string
+            Regex::new(r"(\d+(?:\.\d+)?)")
+                .ok()
+                .and_then(|re| re.captures(&os_name))
+                .and_then(|caps| caps.get(1))
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_else(|| "*".to_string())
+        };
+
+        tracing::debug!(
+            os_name = %os_name,
+            parsed_name = %name,
+            parsed_version = %version,
+            "Parsed OS name and version"
+        );
+
+        (name.to_string(), version)
     };
 
     // Find matching OS package mapping:
