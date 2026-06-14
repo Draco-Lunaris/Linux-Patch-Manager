@@ -440,25 +440,34 @@ export interface BatchUpgradeRequest {
   upgrade_version: string
 }
 
+export interface AvailableVersionsResponse {
+  versions: AvailableVersion[]
+}
+
 export interface UpgradeStatusResponse {
   job_id: string
-  status: JobStatus
+  job_status: string
+  host_status: string
   upgrade_url: string | null
+  upgrade_checksum: string | null
   upgrade_version: string | null
   output: string
   error_message: string | null
+  created_at: string | null
   started_at: string | null
   completed_at: string | null
+  host_started_at: string | null
+  host_completed_at: string | null
 }
 
 export interface UpgradeTriggerResponse {
   job_id: string
+  host_id: string
   status: string
-  host_count: number
   message: string
 }
 
 export interface RefreshVersionsResponse {
-  count: number
+  upserted: number
   message: string
 }
