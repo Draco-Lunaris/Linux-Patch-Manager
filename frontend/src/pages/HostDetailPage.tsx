@@ -68,6 +68,17 @@ import type {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/** Map a host OS name to the upgrade package source filter. */
+function getSourceForOsName(osName: string | undefined | null): string | undefined {
+  if (!osName) return undefined
+  const lower = osName.toLowerCase()
+  if (lower.includes('ubuntu') || lower.includes('debian')) return 'github-deb'
+  if (lower.includes('fedora') || lower.includes('rhel') || lower.includes('almalinux') || lower.includes('centos')) return 'github-rpm'
+  if (lower.includes('alpine')) return 'github-apk'
+  if (lower.includes('arch')) return 'github-tar.zst'
+  return undefined
+}
+
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 
 function recurrenceLabel(r: WindowRecurrence): string {
@@ -939,7 +950,8 @@ export default function HostDetailPage() {
   const fetchVersions = useCallback(async () => {
     setVersionsLoading(true)
     try {
-      const res = await upgradesApi.listVersions()
+      const source = getSourceForOsName(host?.os_name as string | undefined)
+      const res = await upgradesApi.listVersions(source)
       const versions = res.data?.versions ?? []
       setAvailableVersions(versions)
       // Default to newest non-prerelease version
@@ -951,7 +963,7 @@ export default function HostDetailPage() {
     } finally {
       setVersionsLoading(false)
     }
-  }, [])
+  }, [host])
 
   const handleRefreshVersions = async () => {
     setRefreshing(true)
