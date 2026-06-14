@@ -676,3 +676,33 @@ pub struct UpdateMaintenanceWindowRequest {
     pub enabled: Option<bool>,
     pub auto_apply: Option<bool>,
 }
+
+// ============================================================
+// OsPackageMapping
+// ============================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct OsPackageMapping {
+    pub id: Uuid,
+    pub os_name: String,
+    pub os_version: String,
+    pub package_pattern: String,
+    pub display_name: String,
+    pub is_default: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateOsPackageMapping {
+    pub os_name: String,
+    pub os_version: String,
+    pub package_pattern: String,
+    pub display_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateOsPackageMapping {
+    pub package_pattern: Option<String>,
+    pub display_name: Option<String>,
+}
