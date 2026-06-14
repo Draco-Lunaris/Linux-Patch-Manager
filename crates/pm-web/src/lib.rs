@@ -219,6 +219,10 @@ pub fn build_router(state: AppState) -> Router {
             routes::health_checks::router(),
         )
         .nest("/settings", routes::settings::router())
+        .nest(
+            "/settings/os-package-mappings",
+            routes::os_package_mappings::router(),
+        )
         .nest("/upgrades", routes::upgrades::router())
         .nest("/admin", routes::enrollment::admin_router())
         .layer(GovernorLayer::new(api_governor))
