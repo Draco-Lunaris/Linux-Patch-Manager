@@ -18,7 +18,7 @@ import type {
   AdminResetPasswordRequest,
   UpdateUserRequest,
   CreateUserRequest,
-  AvailableVersion,
+  AvailableVersionsResponse,
   UpgradeRequest,
   BatchUpgradeRequest,
   UpgradeStatusResponse,
@@ -416,7 +416,7 @@ export const enrollmentApi = {
 export const upgradesApi = {
   /** List available versions from cache. Optional source filter. */
   listVersions: (source?: string) =>
-    apiClient.get<AvailableVersion[]>('/upgrades/available-versions', { params: source ? { source } : {} }),
+    apiClient.get<AvailableVersionsResponse>('/upgrades/available-versions', { params: source ? { source } : {} }),
 
   /** Refresh version cache from GitHub releases. Admin only. */
   refreshVersions: () =>

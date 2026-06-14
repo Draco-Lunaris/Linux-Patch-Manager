@@ -940,7 +940,7 @@ export default function HostDetailPage() {
     setVersionsLoading(true)
     try {
       const res = await upgradesApi.listVersions()
-      const versions = res.data ?? []
+      const versions = res.data?.versions ?? []
       setAvailableVersions(versions)
       // Default to newest non-prerelease version
       const latest = versions.filter((v: AvailableVersion) => !v.prerelease)[0]
@@ -957,7 +957,7 @@ export default function HostDetailPage() {
     setRefreshing(true)
     try {
       const res = await upgradesApi.refreshVersions()
-      showSnack(res.data?.message ?? `Refreshed ${res.data?.count ?? 0} versions`, 'success')
+      showSnack(res.data?.message ?? `Refreshed ${res.data?.upserted ?? 0} versions`, 'success')
       await fetchVersions()
     } catch {
       showSnack('Failed to refresh versions', 'error')
@@ -1000,7 +1000,7 @@ export default function HostDetailPage() {
           if (!id) { clearInterval(poll); setUpgradePollTimer(null); setUpgrading(false); return }
           const statusRes = await upgradesApi.getUpgradeStatus(id)
           setUpgradeStatus(statusRes.data)
-          if (statusRes.data.status === 'succeeded' || statusRes.data.status === 'failed' || statusRes.data.status === 'cancelled') {
+          if (statusRes.data.host_status === 'succeeded' || statusRes.data.host_status === 'failed' || statusRes.data.host_status === 'cancelled') {
             clearInterval(poll)
             setUpgradePollTimer(null)
             setUpgrading(false)
@@ -1495,11 +1495,11 @@ export default function HostDetailPage() {
 
         {upgradeStatus && (
           <Alert
-            severity={upgradeStatus.status === 'succeeded' ? 'success' : upgradeStatus.status === 'failed' ? 'error' : 'info'}
+            severity={upgradeStatus.host_status === 'succeeded' ? 'success' : upgradeStatus.host_status === 'failed' ? 'error' : 'info'}
             sx={{ mt: 2 }}
           >
             <Typography variant="subtitle2">
-              Upgrade Status: {upgradeStatus.status}
+              Upgrade Status: {upgradeStatus.host_status}
             </Typography>
             {upgradeStatus.upgrade_version && (
               <Typography variant="body2">Version: {upgradeStatus.upgrade_version}</Typography>
