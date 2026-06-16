@@ -42,11 +42,10 @@ async fn main() -> anyhow::Result<()> {
             String::new()
         });
 
-    // Initialize AuthConfig with empty lists; populated from DB below after pool init.
     let auth_config = Arc::new(AuthConfig::new(
         verify_key_pem,
-        &[], // ip_whitelist loaded from DB below
-        &[], // trusted_proxies loaded from DB below
+        &config.security.ip_whitelist,
+        &config.security.trusted_proxies,
     ));
 
     let pool = db::init_pool(&config.database).await?;
@@ -54,36 +53,6 @@ async fn main() -> anyhow::Result<()> {
 
     // Bootstrap admin password if the seed admin still has the placeholder hash.
     bootstrap_admin_password(&pool).await;
-
-    // Sync ip_whitelist and trusted_proxies from DB (the sole source of truth)
-    // into the in-memory AuthConfig. If no DB rows exist yet, the lists stay
-    // empty, which means "allow all" — the safe default.
-    {
-        let rows: Vec<(String, String)> = sqlx::query_as(
-            "SELECT key, value FROM system_config WHERE key IN ('ip_whitelist', 'trusted_proxies')",
-        )
-        .fetch_all(&pool)
-        .await
-        .unwrap_or_default();
-        let cfg_map: std::collections::HashMap<String, String> = rows.into_iter().collect();
-        if let Some(ip_val) = cfg_map.get("ip_whitelist") {
-            let entries: Vec<String> = serde_json::from_str(ip_val).unwrap_or_default();
-            if !entries.is_empty() {
-                tracing::info!(count = entries.len(), "Loaded ip_whitelist from database");
-                auth_config.update_ip_whitelist(entries);
-            }
-        }
-        if let Some(tp_val) = cfg_map.get("trusted_proxies") {
-            let entries: Vec<String> = serde_json::from_str(tp_val).unwrap_or_default();
-            if !entries.is_empty() {
-                tracing::info!(
-                    count = entries.len(),
-                    "Loaded trusted_proxies from database"
-                );
-                auth_config.update_trusted_proxies(entries);
-            }
-        }
-    }
 
     // Initialise the internal CA using the configured certificate paths.
     let ca_base = std::path::Path::new(&config.security.ca_cert_path)

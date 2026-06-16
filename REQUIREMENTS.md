@@ -5,9 +5,9 @@
 | Field | Value |
 |-------|-------|
 | Title | Linux_Patch_Manager — Requirements Document |
-| Version | 1.1.19 |
-| Status | Current |
-| Last Updated | 2026-06-12 |
+| Version | 0.0.2 |
+| Status | Draft |
+| Last Updated | 2026-04-23 |
 | Related Docs | `SPEC.md`, `ARCHITECTURE.md`, `README.md` |
 
 ### Revision History
@@ -16,15 +16,14 @@
 |---------|------|---------|
 | 0.0.1 | 2026-04-21 | Initial draft |
 | 0.0.2 | 2026-04-23 | Aligned with SDD v0.0.3: hardware-host encryption at rest (no OS-level LUKS), Argon2id, EdDSA JWTs, Azure SSO configuration GUI, web-UI TLS cert strategy, SMTP runtime configurability |
-| 1.1.19 | 2026-06-12 | Updated version to match release; added port 12443 inbound requirement; updated all Gitea references to GitHub |
 
 ---
 
 ## Project Overview
 **Title:** Linux_Patch_Manager
 **Description:** Enterprise-class, secure, web-based management interface for controlling patching and updates on Linux servers and workstations
-**Version:** 1.1.19
-**Status:** Current
+**Version:** 0.0.2
+**Status:** Draft
 
 ## Functional Requirements
 

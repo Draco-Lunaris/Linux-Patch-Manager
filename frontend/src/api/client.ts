@@ -18,15 +18,6 @@ import type {
   AdminResetPasswordRequest,
   UpdateUserRequest,
   CreateUserRequest,
-  AvailableVersionsResponse,
-  UpgradeRequest,
-  BatchUpgradeRequest,
-  UpgradeStatusResponse,
-  UpgradeTriggerResponse,
-  RefreshVersionsResponse,
-  OsPackageMapping,
-  CreateOsPackageMapping,
-  UpdateOsPackageMapping,
 } from '../types'
 
 const BASE_URL = '/api/v1'
@@ -315,7 +306,6 @@ export interface SettingsResponse {
   smtp: SmtpConfig
   polling: PollingConfig
   ip_whitelist: string[]
-  trusted_proxies: string[]
   web_tls_strategy: string
   notification: NotificationConfig
   sso_callback_url?: string
@@ -350,8 +340,6 @@ export const settingsApi = {
   testSmtp: () => apiClient.post<TestResult>('/settings/smtp/test'),
   getIpWhitelist: () => apiClient.get<{ entries: string[] }>('/settings/ip-whitelist'),
   updateIpWhitelist: (entries: string[]) => apiClient.put<{ entries: string[] }>('/settings/ip-whitelist', { entries }),
-  getTrustedProxies: () => apiClient.get<{ entries: string[] }>('/settings/trusted-proxies'),
-  updateTrustedProxies: (entries: string[]) => apiClient.put<{ entries: string[] }>('/settings/trusted-proxies', { entries }),
   auditIntegrity: () => apiClient.post<AuditIntegrityResult>('/settings/audit-integrity'),
 }
 
@@ -413,47 +401,4 @@ export const enrollmentApi = {
 
   deny: (id: string): Promise<void> =>
     apiClient.delete(`/admin/enrollments/${id}/deny`).then(() => {}),
-}
-
-// ── Upgrades API ──────────────────────────────────────────────────────────
-export const upgradesApi = {
-  /** List available versions from cache. Optional source and host_id filters. */
-  listVersions: (source?: string, hostId?: string) =>
-    apiClient.get<AvailableVersionsResponse>('/upgrades/available-versions', {
-      params: {
-        ...(source ? { source } : {}),
-        ...(hostId ? { host_id: hostId } : {}),
-      },
-    }),
-
-  /** Refresh version cache from GitHub releases. Admin only. */
-  refreshVersions: () =>
-    apiClient.post<RefreshVersionsResponse>('/upgrades/refresh-versions'),
-
-  /** Trigger a self-upgrade on a single host. */
-  upgradeHost: (hostId: string, body: UpgradeRequest) =>
-    apiClient.post<UpgradeTriggerResponse>(`/hosts/${hostId}/upgrade`, body),
-
-  /** Trigger a batch upgrade on multiple hosts. Admin only. */
-  batchUpgrade: (body: BatchUpgradeRequest) =>
-    apiClient.post<UpgradeTriggerResponse>('/hosts/batch-upgrade', body),
-
-  /** Get upgrade status for a host. */
-  getUpgradeStatus: (hostId: string) =>
-    apiClient.get<UpgradeStatusResponse>(`/hosts/${hostId}/upgrade-status`),
-}
-
-// ── OS Package Mappings API ────────────────────────────────────────────────
-export const osPackageMappingsApi = {
-  list: () =>
-    apiClient.get<{ mappings: OsPackageMapping[] }>('/settings/os-package-mappings'),
-
-  create: (data: CreateOsPackageMapping) =>
-    apiClient.post<{ mapping: OsPackageMapping }>('/settings/os-package-mappings', data),
-
-  update: (id: string, data: UpdateOsPackageMapping) =>
-    apiClient.put<{ message: string }>(`/settings/os-package-mappings/${id}`, data),
-
-  delete: (id: string) =>
-    apiClient.delete<{ message: string }>(`/settings/os-package-mappings/${id}`),
 }

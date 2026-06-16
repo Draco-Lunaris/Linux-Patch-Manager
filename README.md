@@ -4,7 +4,7 @@
 
 ## Overview
 
-Linux Patch Manager provides a centralized web interface to manage patching and software updates across a fleet of Linux servers and workstations. It communicates with managed devices through the [Linux Patch API](https://github.com/Draco-Lunaris/Linux-Patch-API), leveraging mTLS-secured RESTful endpoints for all operations.
+Linux Patch Manager provides a centralized web interface to manage patching and software updates across a fleet of Linux servers and workstations. It communicates with managed devices through the [Linux Patch API](https://gitea.moon-dragon.us/echo/linux_patch_api), leveraging mTLS-secured RESTful endpoints for all operations.
 
 ## Key Features
 
@@ -15,20 +15,6 @@ Linux Patch Manager provides a centralized web interface to manage patching and 
 - **Scheduling** — Plan and schedule patch windows with approval workflows
 - **Self-Enrollment** — Automated agent enrollment with PKI provisioning and admin approval workflow
 - **Reporting** — Compliance reporting and patch status dashboards
-
-## Screenshots
-
-| [📊 Dashboard](docs/screenshots/LPM0.png) | [🖥️ Fleet Hosts](docs/screenshots/LPM1.png) |
-|:---:|:---:|
-| Starting dashboard view | Fleet host view |
-
-| [📦 Deploy](docs/screenshots/LPM2.png) | [👥 Users](docs/screenshots/LPM3.png) |
-|:---:|:---:|
-| Patches missing per device | User management — roles, MFA, status |
-
-| [🔐 Certificates](docs/screenshots/LPM4.png) | [⚙️ Settings](docs/screenshots/LPM5.png) |
-|:---:|:---:|
-| Certificate management | SSO/OIDC configuration |
 
 ## Architecture
 
@@ -56,16 +42,16 @@ Linux Patch Manager is a web application that acts as a management plane, commun
 | **Database** | PostgreSQL 16 |
 | **Memory** | 2 GB RAM minimum, 4 GB recommended |
 | **Storage** | 1 GB for application + database space |
-| **Network** | HTTPS access (port 443) + mTLS agent connections (port 12443 inbound) |
+| **Network** | HTTPS access (port 443 recommended) |
 
 ## Installation
 
 ### 1. Download the Package
 
-Download the latest `.deb` package from the [GitHub Releases](https://github.com/Draco-Lunaris/Linux-Patch-Manager/releases) page:
+Download the latest `.deb` package from the [Gitea Releases](https://gitea-lxc.moon-dragon.us/echo/linux_patch_manager/releases) page:
 
 ```bash
-wget https://github.com/Draco-Lunaris/Linux-Patch-Manager/releases/latest/download/linux-patch-manager_1.1.19-1_amd64.deb
+wget https://gitea-lxc.moon-dragon.us/echo/linux_patch_manager/releases/download/v0.1.7/linux-patch-manager_0.1.7-1_amd64.deb
 ```
 
 ### 2. Install Dependencies
@@ -78,13 +64,13 @@ sudo apt install -y postgresql-16 libssl3
 ### 3. Install the Package
 
 ```bash
-sudo dpkg -i linux-patch-manager_1.1.19-1_amd64.deb
+sudo dpkg -i linux-patch-manager_0.1.7-1_amd64.deb
 ```
 
 Or with automatic dependency resolution:
 
 ```bash
-sudo apt install ./linux-patch-manager_1.1.19-1_amd64.deb
+sudo apt install ./linux-patch-manager_0.1.7-1_amd64.deb
 ```
 
 ## Configuration
@@ -169,7 +155,7 @@ journalctl -u patch-manager-worker -f
 
 ## Initial Access
 
-1. Open a web browser and navigate to: `https://your-server-ip`
+1. Open a web browser and navigate to: `https://your-server-ip:8080`
 
 2. Default admin credentials (change immediately!):
    - **Username:** `admin`
@@ -219,7 +205,7 @@ The `.deb` package will be created in the project root directory.
 
 ## Related Projects
 
-- **[Linux Patch API](https://github.com/Draco-Lunaris/Linux-Patch-API)** — The API agent that runs on each managed host
+- **[Linux Patch API](https://gitea-lxc.moon-dragon.us/echo/linux_patch_api)** — The API agent that runs on each managed host
 
 ## Troubleshooting
 
@@ -233,7 +219,7 @@ sudo patch-manager-web --validate-config
 sudo -u postgres psql -h localhost -U patch_manager patch_manager -c "SELECT 1"
 
 # Check port availability
-sudo ss -tlnp | grep 443
+sudo ss -tlnp | grep 8080
 ```
 
 ### Database Migration Issues
@@ -254,6 +240,6 @@ Copyright 2025-2026 Draco Lunaris
 
 ---
 
-**Version:** 1.1.19  
-**Release:** v1.1.19  
-**Build Date:** 2026-06-12
+**Version:** 1.0.0-1  
+**Release:** v0.0.2  
+**Build Date:** 2026-04-28

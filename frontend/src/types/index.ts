@@ -4,7 +4,7 @@ export type UserRole = 'admin' | 'operator' | 'reporter'
 export type AuthProvider = 'local' | 'azure_sso' | 'keycloak' | 'oidc'
 export type HostHealthStatus = 'pending' | 'healthy' | 'degraded' | 'unreachable'
 export type JobStatus = 'queued' | 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled'
-export type JobKind = 'patch_apply' | 'patch_remove' | 'reboot' | 'rollback' | 'self_upgrade'
+export type JobKind = 'patch_apply' | 'patch_remove' | 'reboot' | 'rollback'
 
 export interface ApiError {
   error: {
@@ -314,7 +314,6 @@ export interface SettingsResponse {
   smtp: SmtpConfig
   polling: PollingConfig
   ip_whitelist: string[]
-  trusted_proxies: string[]
   web_tls_strategy: string
   notification: NotificationConfig
 }
@@ -411,88 +410,4 @@ export interface EnrollmentConflictResponse {
     existing_host: Host
     message: string
   }
-}
-
-// ── Self-Upgrade (issues #89, #90) ────────────────────────────────────────
-
-export interface AvailableVersion {
-  id: string
-  version: string
-  download_url: string
-  checksum: string | null
-  file_name: string
-  source: string
-  prerelease: boolean
-  published_at: string | null
-  fetched_at: string
-}
-
-export interface UpgradeRequest {
-  upgrade_url: string
-  upgrade_checksum?: string
-  upgrade_version: string
-}
-
-export interface BatchUpgradeRequest {
-  host_ids: string[]
-  upgrade_url: string
-  upgrade_checksum?: string
-  upgrade_version: string
-}
-
-export interface AvailableVersionsResponse {
-  versions: AvailableVersion[]
-}
-
-export interface UpgradeStatusResponse {
-  job_id: string
-  job_status: string
-  host_status: string
-  upgrade_url: string | null
-  upgrade_checksum: string | null
-  upgrade_version: string | null
-  output: string
-  error_message: string | null
-  created_at: string | null
-  started_at: string | null
-  completed_at: string | null
-  host_started_at: string | null
-  host_completed_at: string | null
-}
-
-export interface UpgradeTriggerResponse {
-  job_id: string
-  host_id: string
-  status: string
-  message: string
-}
-
-export interface RefreshVersionsResponse {
-  upserted: number
-  message: string
-}
-
-// ── OS Package Mappings ────────────────────────────────────────────────────
-
-export interface OsPackageMapping {
-  id: string
-  os_name: string
-  os_version: string
-  package_pattern: string
-  display_name: string
-  is_default: boolean
-  created_at: string
-  updated_at: string
-}
-
-export interface CreateOsPackageMapping {
-  os_name: string
-  os_version: string
-  package_pattern: string
-  display_name: string
-}
-
-export interface UpdateOsPackageMapping {
-  package_pattern?: string
-  display_name?: string
 }

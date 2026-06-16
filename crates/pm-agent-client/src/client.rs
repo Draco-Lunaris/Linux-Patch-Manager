@@ -35,8 +35,7 @@ use crate::{
     error::AgentClientError,
     types::{
         AgentEnvelope, AgentJobStatus, ApplyPatchesRequest, ApplyPatchesResponse, HealthData,
-        InstallFileResponse, InstallUrlRequest, PackagesData, PatchesData, RestartResponse,
-        RollbackResponse, ServiceStatusData, SystemInfoData,
+        PackagesData, PatchesData, RollbackResponse, ServiceStatusData, SystemInfoData,
     },
 };
 
@@ -238,26 +237,6 @@ impl AgentClient {
     }
 
     // --------------------------------------------------------
-    // Package install / system restart methods
-    // --------------------------------------------------------
-
-    /// `POST /api/v1/packages/install-url` — install a package from a URL.
-    #[instrument(skip(self, req), fields(base_url = %self.base_url))]
-    pub async fn install_url(
-        &self,
-        req: &InstallUrlRequest,
-    ) -> Result<InstallFileResponse, AgentClientError> {
-        self.post("packages/install-url", req).await
-    }
-
-    /// `POST /api/v1/system/restart` — trigger a system restart on the agent.
-    #[instrument(skip(self), fields(base_url = %self.base_url))]
-    pub async fn restart_system(&self) -> Result<RestartResponse, AgentClientError> {
-        let empty: serde_json::Value = serde_json::json!({});
-        self.post("system/restart", &empty).await
-    }
-
-    // --------------------------------------------------------
     // Private POST helper
     // --------------------------------------------------------
 
@@ -297,51 +276,4 @@ impl AgentClient {
             message: "Agent response success=true but data field is absent".to_string(),
         })
     }
-}
-
-// ============================================================
-// Reconnect utility
-// ============================================================
-
-/// Wait for an agent to come back online after a restart, using exponential backoff.
-///
-/// Polls `GET /api/v1/system/info` with increasing delays (5 s, 10 s, 20 s, 40 s, …)
-/// until the agent responds or `max_wait_secs` is exceeded.
-///
-/// # Errors
-///
-/// Returns [`AgentClientError`] if the agent does not respond within the deadline.
-pub async fn reconnect_with_backoff(
-    client: &AgentClient,
-    max_wait_secs: u64,
-) -> Result<SystemInfoData, AgentClientError> {
-    let backoff_sequence: [u64; 4] = [5, 10, 20, 40];
-    let mut elapsed: u64 = 0;
-
-    for delay_secs in backoff_sequence.iter().cycle() {
-        tokio::time::sleep(Duration::from_secs(*delay_secs)).await;
-        elapsed += delay_secs;
-
-        match client.system_info().await {
-            Ok(info) => return Ok(info),
-            Err(AgentClientError::Connect(_) | AgentClientError::Timeout) => {
-                // Agent not back yet — keep retrying.
-                tracing::debug!(
-                    elapsed_secs = elapsed,
-                    next_delay_secs = delay_secs,
-                    "Agent not reachable yet, retrying…"
-                );
-            },
-            Err(other) => return Err(other),
-        }
-
-        if elapsed >= max_wait_secs {
-            break;
-        }
-    }
-
-    Err(AgentClientError::ApiError {
-        code: "RECONNECT_TIMEOUT".to_string(),
-        message: format!("Agent did not come back online within {max_wait_secs}s"),
-    })
 }

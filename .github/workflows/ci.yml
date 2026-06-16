@@ -15,30 +15,9 @@ permissions:
   contents: write
   packages: write
 
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
-
 jobs:
-  skip-duplicate:
-    name: Skip Duplicate
-    runs-on: ubuntu-latest
-    outputs:
-      should_skip: ${{ steps.skip.outputs.should_skip }}
-    steps:
-      - id: skip
-        run: |
-          # Skip push-to-master (merge) - PR already tested the same code
-          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/master" ]; then
-            echo "should_skip=true" >> $GITHUB_OUTPUT
-          else
-            echo "should_skip=false" >> $GITHUB_OUTPUT
-          fi
-
   rust-format:
     name: Rust Format
-    needs: [skip-duplicate]
-    if: needs.skip-duplicate.outputs.should_skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -50,8 +29,6 @@ jobs:
 
   clippy:
     name: Clippy
-    needs: [skip-duplicate]
-    if: needs.skip-duplicate.outputs.should_skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -65,8 +42,6 @@ jobs:
 
   rust-test:
     name: Rust Tests
-    needs: [skip-duplicate]
-    if: needs.skip-duplicate.outputs.should_skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -78,8 +53,6 @@ jobs:
 
   security-audit:
     name: Security Audit
-    needs: [skip-duplicate]
-    if: needs.skip-duplicate.outputs.should_skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -88,8 +61,6 @@ jobs:
 
   gitleaks:
     name: Secret scanning
-    needs: [skip-duplicate]
-    if: needs.skip-duplicate.outputs.should_skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -102,8 +73,6 @@ jobs:
 
   frontend-lint:
     name: Frontend Lint
-    needs: [skip-duplicate]
-    if: needs.skip-duplicate.outputs.should_skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

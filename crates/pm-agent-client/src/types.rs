@@ -92,9 +92,6 @@ pub struct SystemInfoData {
     pub last_update_apply: Option<DateTime<Utc>>,
     /// Whether the system has a pending reboot.
     pub pending_reboot: bool,
-    /// Agent software version string.
-    #[serde(default)]
-    pub version: Option<String>,
 }
 
 // ============================================================
@@ -240,45 +237,4 @@ pub struct ServiceStatusData {
 pub struct RollbackResponse {
     pub job_id: String,
     pub status: String,
-}
-
-// ============================================================
-// POST /api/v1/packages/install-url
-// ============================================================
-
-/// Request body for `POST /api/v1/packages/install-url`.
-#[derive(Debug, Clone, Serialize)]
-pub struct InstallUrlRequest {
-    /// URL of the package to install.
-    pub url: String,
-    /// Optional checksum for verification (e.g. `"sha256:abcdef…"`).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub checksum: Option<String>,
-}
-
-/// Response from `POST /api/v1/packages/install-url` (same shape as install-file).
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct InstallFileResponse {
-    /// Agent-assigned async job ID for status polling.
-    pub job_id: String,
-    /// Initial status: typically `"running"` or `"queued"`.
-    pub status: String,
-    /// Operation type (e.g. `"install-url"`).
-    pub operation: String,
-    /// Package names involved in the operation.
-    #[serde(default)]
-    pub packages: Option<Vec<String>>,
-}
-
-// ============================================================
-// POST /api/v1/system/restart
-// ============================================================
-
-/// Response from `POST /api/v1/system/restart`.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct RestartResponse {
-    /// Seconds before the agent expects to restart.
-    pub delay_seconds: u64,
-    /// Human-readable message from the agent.
-    pub message: String,
 }

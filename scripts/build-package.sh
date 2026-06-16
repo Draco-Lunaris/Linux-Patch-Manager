@@ -22,13 +22,10 @@ warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VERSION=$(grep '^version' "${PROJECT_ROOT}/Cargo.toml" | head -1 | cut -d'"' -f2)
+VERSION="1.1.19"
 RELEASE="1"
 PKG_NAME="linux-patch-manager"
-# Debian does not allow hyphens in Version; replace first hyphen with tilde
-# (tilde sorts before release, so 1.2.0~beta.2 < 1.2.0)
-DEB_VERSION=$(echo "$VERSION" | sed 's/-/~/')
-DEB_NAME="${PKG_NAME}_${DEB_VERSION}-${RELEASE}_amd64.deb"
+DEB_NAME="${PKG_NAME}_${VERSION}-${RELEASE}_amd64.deb"
 BUILD_DIR="${PROJECT_ROOT}/package-build"
 
 info "=== Linux Patch Manager — Package Build ==="
@@ -116,7 +113,7 @@ cp "${PROJECT_ROOT}/debian/postrm" "${BUILD_DIR}/DEBIAN/postrm"
 chmod 755 "${BUILD_DIR}/DEBIAN/postinst" "${BUILD_DIR}/DEBIAN/prerm" "${BUILD_DIR}/DEBIAN/postrm"
 
  # Update Version in control file to match Cargo.toml version
- sed -i "s/^Version: .*/Version: ${DEB_VERSION}-${RELEASE}/" "${BUILD_DIR}/DEBIAN/control"
+ sed -i "s/^Version: .*/Version: ${VERSION}-${RELEASE}/" "${BUILD_DIR}/DEBIAN/control"
 
 # Calculate installed size (in KB)
 INSTALLED_SIZE=$(du -sk "${BUILD_DIR}" | cut -f1)

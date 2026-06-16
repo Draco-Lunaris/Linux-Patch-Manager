@@ -55,21 +55,12 @@ pub enum AuditAction {
     OidcConfigUpdated,
     SmtpConfigUpdated,
     IpWhitelistUpdated,
-    TrustedProxiesUpdated,
     OidcTestPerformed,
     OidcDiscoverPerformed,
     // CRL health aggregation events (system-initiated)
     CrlStatusChanged,
     CrlStaleDetected,
     CrlInvalid,
-    // Self-upgrade management events (Issues #89, #90)
-    UpgradeTriggered,
-    BatchUpgradeTriggered,
-    UpgradeVersionRefreshed,
-    // OS package mapping CRUD (Issue #91)
-    OsPackageMappingCreated,
-    OsPackageMappingUpdated,
-    OsPackageMappingDeleted,
 }
 
 impl AuditAction {
@@ -111,20 +102,12 @@ impl AuditAction {
             Self::OidcConfigUpdated => "oidc_config_updated",
             Self::SmtpConfigUpdated => "smtp_config_updated",
             Self::IpWhitelistUpdated => "ip_whitelist_updated",
-            Self::TrustedProxiesUpdated => "trusted_proxies_updated",
             Self::OidcTestPerformed => "oidc_test_performed",
             Self::OidcDiscoverPerformed => "oidc_discover_performed",
             // CRL health aggregation events
             Self::CrlStatusChanged => "crl_status_changed",
             Self::CrlStaleDetected => "crl_stale_detected",
             Self::CrlInvalid => "crl_invalid",
-            // Self-upgrade management events
-            Self::UpgradeTriggered => "upgrade_triggered",
-            Self::BatchUpgradeTriggered => "batch_upgrade_triggered",
-            Self::UpgradeVersionRefreshed => "upgrade_version_refreshed",
-            Self::OsPackageMappingCreated => "os_package_mapping_created",
-            Self::OsPackageMappingUpdated => "os_package_mapping_updated",
-            Self::OsPackageMappingDeleted => "os_package_mapping_deleted",
         }
     }
 }

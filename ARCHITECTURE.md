@@ -5,11 +5,11 @@
 | Field | Value |
 |-------|-------|
 | Title | Linux_Patch_Manager — Software Design Document |
-| Version | 0.0.4 |
-| Status | Current |
+| Version | 0.0.3 |
+| Status | Draft |
 | Standard | Aligned with IEEE 1016-2009 |
 | Owner | Draco Lunaris |
-| Last Updated | 2026-06-12 |
+| Last Updated | 2026-04-23 |
 | Related Docs | `SPEC.md`, `REQUIREMENTS.md`, `README.md` |
 
 ### Revision History
@@ -19,7 +19,6 @@
 | 0.0.1 | 2026-04-23 | Initial | First draft of architecture document |
 | 0.0.2 | 2026-04-23 | Echo | SDD review pass: IEEE 1016 alignment, ASCII diagram fixes, added stakeholders, rationale, error handling, rollback flow, config/secrets, migrations, backup/DR, observability, glossary, and open issues sections |
 | 0.0.3 | 2026-04-23 | Echo | Closed OI-01 through OI-06 with concrete decisions; encryption at rest moved to hardware-host (no OS-level LUKS); committed Argon2id parameters, EdDSA JWT signing, CIDR scan tuning, PDF stack (`printpdf`+`plotters`), health-endpoint split; added AD-15 (web UI TLS cert strategy) and AD-16 (Azure SSO / SMTP config GUI); added IP whitelist enforcement |
-| 0.0.4 | 2026-06-12 | Echo | Updated network section to include port 12443 inbound for agent WebSocket connections; updated all Gitea references to GitHub; updated version and status to match release |
 
 ---
 
@@ -54,7 +53,7 @@ The design covers the management plane only: the web server, background worker, 
 - RFC 8446, *TLS 1.3*
 - HIPAA Security Rule, 45 CFR §164.312
 - PCI-DSS v4.0
-- Upstream: [Linux Patch API](https://github.com/Draco-Lunaris/Linux-Patch-API)
+- Upstream: [Linux Patch API](https://gitea.moon-dragon.us/echo/linux_patch_api)
 - Internal: `SPEC.md`, `REQUIREMENTS.md` (same repository)
 
 ### 1.6 Glossary
@@ -514,7 +513,7 @@ HTTP status codes follow standard REST semantics (`400`, `401`, `403`, `404`, `4
 - PostgreSQL runs on the same host; connections via Unix domain socket.
 - Internal CA material lives in `/etc/patch-manager/ca/` with `0600` permissions.
 - No Docker / LXC in production — bare-metal / VM deployment. Containerized **development** environments are acceptable and do not affect production design.
-- Internal network only — no public internet exposure. Ingress on the Manager's HTTPS port (443) and agent WebSocket port (12443); egress to agents on `12443` and, optionally, Azure AD / SMTP.
+- Internal network only — no public internet exposure. Ingress limited to the Manager's HTTPS port; egress to agents on `12443` and, optionally, Azure AD / SMTP.
 
 ### 10.1 Configuration
 
@@ -552,7 +551,7 @@ HTTP status codes follow standard REST semantics (`400`, `401`, `403`, `404`, `4
 
 ## 12. Integration Points
 
-**Upstream dependency:** [Linux Patch API](https://github.com/Draco-Lunaris/Linux-Patch-API)
+**Upstream dependency:** [Linux Patch API](https://gitea.moon-dragon.us/echo/linux_patch_api)
 
 | Integration | Protocol | Direction | Purpose |
 |-------------|----------|-----------|---------|

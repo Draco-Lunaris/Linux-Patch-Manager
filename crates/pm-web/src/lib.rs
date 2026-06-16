@@ -7,14 +7,7 @@
 pub mod routes;
 pub mod secret_key;
 
-use axum::{
-    extract::State,
-    http::{header, HeaderValue, Method, StatusCode},
-    middleware,
-    response::Json,
-    routing::get,
-    Router,
-};
+use axum::{extract::State, http::StatusCode, middleware, response::Json, routing::get, Router};
 use dashmap::DashMap;
 use pm_auth::{
     password::hash_password,
@@ -26,13 +19,11 @@ use routes::sso::{OidcCache, SsoHandoff, SsoSession};
 use routes::ws::WsTicket;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::Mutex;
 use tower_governor::{
     governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor, GovernorLayer,
 };
 use tower_http::{
-    cors::CorsLayer,
     services::{ServeDir, ServeFile},
     trace::TraceLayer,
 };
@@ -219,11 +210,6 @@ pub fn build_router(state: AppState) -> Router {
             routes::health_checks::router(),
         )
         .nest("/settings", routes::settings::router())
-        .nest(
-            "/settings/os-package-mappings",
-            routes::os_package_mappings::router(),
-        )
-        .nest("/upgrades", routes::upgrades::router())
         .nest("/admin", routes::enrollment::admin_router())
         .layer(GovernorLayer::new(api_governor))
         .route_layer(middleware::from_fn(move |req, next| {
@@ -231,34 +217,11 @@ pub fn build_router(state: AppState) -> Router {
             require_auth(auth_config, req, next)
         }));
 
-    let cors = CorsLayer::new()
-        .allow_origin([
-            "https://lpm.moon-dragon.us"
-                .parse::<HeaderValue>()
-                .expect("valid production origin"),
-            "http://localhost:3000"
-                .parse::<HeaderValue>()
-                .expect("valid dev origin"),
-            "http://localhost:5173"
-                .parse::<HeaderValue>()
-                .expect("valid vite dev origin"),
-        ])
-        .allow_methods([
-            Method::GET,
-            Method::POST,
-            Method::PUT,
-            Method::DELETE,
-            Method::OPTIONS,
-        ])
-        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE, header::ACCEPT])
-        .max_age(Duration::from_secs(3600));
-
     Router::new()
         .route("/status/health", get(health_handler))
         .nest("/api/v1/auth", auth_public_router)
         .nest("/api/v1", enrollment_router)
         .nest("/api/v1", routes::pki::router())
-        .nest("/api/v1/upgrades", routes::upgrades::public_router())
         .nest("/api/v1/auth/sso", sso_public_router)
         .nest("/api/v1/auth/azure", sso_azure_router)
         .nest("/api/v1", protected_api)
@@ -270,7 +233,6 @@ pub fn build_router(state: AppState) -> Router {
         )
         .layer(middleware::from_fn(request_id_middleware))
         .layer(TraceLayer::new_for_http())
-        .layer(cors)
         .with_state(state)
 }
 
