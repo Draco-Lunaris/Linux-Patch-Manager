@@ -246,7 +246,7 @@ pub struct RollbackResponse {
 /// Request body for `POST /api/v1/system/update`.
 /// The agent will upgrade itself to the specified version (or latest if None)
 /// and restart via its detached systemd unit.
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct SelfUpdateRequest {
     /// Pin to an exact package version. None = upgrade to latest available.
     #[serde(skip_serializing_if = "Option::is_none")]

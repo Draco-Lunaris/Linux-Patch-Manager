@@ -106,6 +106,14 @@ pub struct WorkerConfig {
     pub heartbeat_interval_secs: u64,
     /// WS relay HTTP polling fallback interval in seconds (default: 10)
     pub ws_relay_poll_interval_secs: u64,
+    /// Self-upgrade reconnect timeout in seconds (default: 600 = 10 min).
+    /// How long to wait for an agent to come back online after a self-upgrade.
+    #[serde(default = "default_self_upgrade_reconnect_timeout")]
+    pub self_upgrade_reconnect_timeout_secs: u64,
+    /// Self-upgrade reconnect poll interval in seconds (default: 10).
+    /// How often to poll the agent during reconnect confirmation.
+    #[serde(default = "default_self_upgrade_reconnect_poll_interval")]
+    pub self_upgrade_reconnect_poll_interval_secs: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -259,6 +267,12 @@ fn default_health_check_poll_interval() -> u64 {
 fn default_heartbeat_interval() -> u64 {
     300
 }
+fn default_self_upgrade_reconnect_timeout() -> u64 {
+    600
+}
+fn default_self_upgrade_reconnect_poll_interval() -> u64 {
+    10
+}
 
 fn default_sso_callback_url() -> String {
     "http://localhost:5173/auth/sso/callback".to_string()
@@ -285,6 +299,8 @@ impl Default for AppConfig {
                 max_concurrent_agent_calls: 64,
                 heartbeat_interval_secs: 30,
                 ws_relay_poll_interval_secs: 10,
+                self_upgrade_reconnect_timeout_secs: 600,
+                self_upgrade_reconnect_poll_interval_secs: 10,
             },
             logging: LoggingConfig {
                 level: "info".to_string(),

@@ -15,8 +15,9 @@
 use std::sync::Arc;
 
 use chrono::{Duration as ChronoDuration, Utc};
-use pm_agent_client::{types::ApplyPatchesRequest, AgentClient};
+use pm_agent_client::{types::ApplyPatchesRequest, AgentClient, AgentClientError};
 use pm_core::config::AppConfig;
+use pm_core::models::JobKind;
 use serde_json::json;
 use sqlx::{FromRow, PgPool};
 use tokio::{sync::Semaphore, time};
@@ -43,8 +44,10 @@ struct PatchJobHostRunning {
     id: Uuid,
     agent_job_id: String,
     job_id: Uuid,
+    host_id: Uuid,
     ip_address: String,
     agent_port: i32,
+    job_kind: JobKind,
 }
 
 #[derive(Debug, FromRow)]
@@ -61,7 +64,8 @@ struct HostRow {
 }
 
 #[derive(Debug, FromRow)]
-struct JobPatchSelection {
+struct JobInfo {
+    kind: JobKind,
     patch_selection: serde_json::Value,
 }
 
@@ -454,9 +458,9 @@ async fn execute_host_job(
         },
     }
 
-    // ── 2. Fetch the job's patch_selection ──────────────────────────────────
-    let patch_sel: JobPatchSelection =
-        match sqlx::query_as("SELECT patch_selection FROM patch_jobs WHERE id = $1")
+    // ── 2. Fetch the job's kind and patch_selection ──────────────────────────
+    let job_info: JobInfo =
+        match sqlx::query_as("SELECT kind, patch_selection FROM patch_jobs WHERE id = $1")
             .bind(job_id)
             .fetch_optional(&pool)
             .await
@@ -473,49 +477,6 @@ async fn execute_host_job(
                 return;
             },
         };
-
-    let mut packages: Vec<String> =
-        serde_json::from_value(patch_sel.patch_selection).unwrap_or_default();
-
-    // ── 2b. Expand empty packages to all available patches ─────────────────
-    // Per SPEC: "empty = all available patches".  The agent treats an empty
-    // list as "apply nothing", so we must expand it here.
-    if packages.is_empty() {
-        match sqlx::query_scalar::<_, serde_json::Value>(
-            r#"
-            SELECT available_patches
-            FROM   host_patch_data
-            WHERE  host_id = $1
-            ORDER  BY polled_at DESC
-            LIMIT  1
-            "#,
-        )
-        .bind(host_id)
-        .fetch_optional(&pool)
-        .await
-        {
-            Ok(Some(val)) => {
-                if let Ok(patches) = serde_json::from_value::<Vec<serde_json::Value>>(val) {
-                    for p in &patches {
-                        if let Some(name) = p.get("name").and_then(|n| n.as_str()) {
-                            packages.push(name.to_string());
-                        }
-                    }
-                    tracing::info!(
-                        %pjh_id,
-                        count = packages.len(),
-                        "execute_host_job: expanded empty packages to all available patches"
-                    );
-                }
-            },
-            Ok(None) => {
-                tracing::warn!(%pjh_id, "execute_host_job: no patch data for host, sending empty packages");
-            },
-            Err(e) => {
-                tracing::error!(%pjh_id, error = %e, "execute_host_job: failed to fetch patch data for expansion");
-            },
-        }
-    }
 
     // ── 3. Load mTLS certs ───────────────────────────────────────────────────
     let certs = match load_agent_certs(&config.security) {
@@ -559,7 +520,89 @@ async fn execute_host_job(
         tracing::error!(%pjh_id, error = %e, "execute_host_job: failed to mark pjh running");
     }
 
-    // ── 6. Submit the patch job to the agent ─────────────────────────────────
+    // ── 6. Dispatch by job kind ─────────────────────────────────────────────
+    match job_info.kind {
+        JobKind::SelfUpgrade => {
+            execute_self_upgrade_host_job(
+                pool,
+                config,
+                pjh_id,
+                host_id,
+                &client,
+                &job_info.patch_selection,
+            )
+            .await;
+        },
+        _ => {
+            // PatchApply, PatchRemove, Reboot, Rollback — all use the
+            // existing patch-apply path (agent dispatches by kind internally).
+            execute_patch_host_job(
+                pool,
+                config,
+                pjh_id,
+                host_id,
+                &client,
+                &job_info.patch_selection,
+            )
+            .await;
+        },
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// execute_patch_host_job — existing patch-apply path (all non-self-upgrade kinds)
+// ─────────────────────────────────────────────────────────────────────────────
+
+async fn execute_patch_host_job(
+    pool: PgPool,
+    _config: Arc<AppConfig>,
+    pjh_id: Uuid,
+    host_id: Uuid,
+    client: &AgentClient,
+    patch_selection: &serde_json::Value,
+) {
+    let mut packages: Vec<String> =
+        serde_json::from_value(patch_selection.clone()).unwrap_or_default();
+
+    // Per SPEC: "empty = all available patches".  The agent treats an empty
+    // list as "apply nothing", so we must expand it here.
+    if packages.is_empty() {
+        match sqlx::query_scalar::<_, serde_json::Value>(
+            r#"
+            SELECT available_patches
+            FROM   host_patch_data
+            WHERE  host_id = $1
+            ORDER  BY polled_at DESC
+            LIMIT  1
+            "#,
+        )
+        .bind(host_id)
+        .fetch_optional(&pool)
+        .await
+        {
+            Ok(Some(val)) => {
+                if let Ok(patches) = serde_json::from_value::<Vec<serde_json::Value>>(val) {
+                    for p in &patches {
+                        if let Some(name) = p.get("name").and_then(|n| n.as_str()) {
+                            packages.push(name.to_string());
+                        }
+                    }
+                    tracing::info!(
+                        %pjh_id,
+                        count = packages.len(),
+                        "execute_patch_host_job: expanded empty packages to all available patches"
+                    );
+                }
+            },
+            Ok(None) => {
+                tracing::warn!(%pjh_id, "execute_patch_host_job: no patch data for host, sending empty packages");
+            },
+            Err(e) => {
+                tracing::error!(%pjh_id, error = %e, "execute_patch_host_job: failed to fetch patch data for expansion");
+            },
+        }
+    }
+
     let req = ApplyPatchesRequest {
         packages,
         allow_reboot: true,
@@ -570,10 +613,8 @@ async fn execute_host_job(
             tracing::info!(
                 %pjh_id,
                 agent_job_id = %resp.job_id,
-                "execute_host_job: agent accepted job"
+                "execute_patch_host_job: agent accepted job"
             );
-
-            // ── 7. Store agent_job_id; status stays 'running' (agent is async) ──
             if let Err(e) =
                 sqlx::query("UPDATE patch_job_hosts SET agent_job_id = $1 WHERE id = $2")
                     .bind(&resp.job_id)
@@ -584,12 +625,79 @@ async fn execute_host_job(
                 tracing::error!(
                     %pjh_id,
                     error = %e,
-                    "execute_host_job: failed to store agent_job_id"
+                    "execute_patch_host_job: failed to store agent_job_id"
                 );
             }
         },
         Err(e) => {
-            tracing::warn!(%pjh_id, error = %e, "execute_host_job: agent rejected job");
+            tracing::warn!(%pjh_id, error = %e, "execute_patch_host_job: agent rejected job");
+            handle_host_failure(pool, pjh_id, format!("Agent error: {e}")).await;
+        },
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// execute_self_upgrade_host_job — self-upgrade dispatch
+// ─────────────────────────────────────────────────────────────────────────────
+
+async fn execute_self_upgrade_host_job(
+    pool: PgPool,
+    _config: Arc<AppConfig>,
+    pjh_id: Uuid,
+    host_id: Uuid,
+    client: &AgentClient,
+    patch_selection: &serde_json::Value,
+) {
+    let req: pm_agent_client::types::SelfUpdateRequest = match serde_json::from_value(
+        patch_selection.clone(),
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(
+                %pjh_id,
+                error = %e,
+                "execute_self_upgrade_host_job: failed to parse patch_selection as SelfUpdateRequest"
+            );
+            handle_host_failure(pool, pjh_id, format!("Invalid self-upgrade payload: {e}")).await;
+            return;
+        },
+    };
+
+    tracing::info!(
+        %pjh_id,
+        %host_id,
+        target_version = ?req.target_version,
+        "execute_self_upgrade_host_job: submitting self-upgrade to agent"
+    );
+
+    match client.self_update(&req).await {
+        Ok(resp) => {
+            tracing::info!(
+                %pjh_id,
+                agent_job_id = %resp.job_id,
+                target_version = ?resp.target_version,
+                "execute_self_upgrade_host_job: agent accepted self-upgrade"
+            );
+            if let Err(e) =
+                sqlx::query("UPDATE patch_job_hosts SET agent_job_id = $1 WHERE id = $2")
+                    .bind(&resp.job_id)
+                    .bind(pjh_id)
+                    .execute(&pool)
+                    .await
+            {
+                tracing::error!(
+                    %pjh_id,
+                    error = %e,
+                    "execute_self_upgrade_host_job: failed to store agent_job_id"
+                );
+            }
+        },
+        Err(e) => {
+            tracing::warn!(
+                %pjh_id,
+                error = %e,
+                "execute_self_upgrade_host_job: agent rejected self-upgrade"
+            );
             handle_host_failure(pool, pjh_id, format!("Agent error: {e}")).await;
         },
     }
@@ -606,10 +714,13 @@ pub async fn poll_running_jobs(pool: PgPool, config: Arc<AppConfig>) {
         SELECT pjh.id,
                pjh.agent_job_id,
                pjh.job_id,
+               pjh.host_id,
                host(h.ip_address)::text AS ip_address,
-               h.agent_port
+               h.agent_port,
+               j.kind AS job_kind
         FROM   patch_job_hosts pjh
         JOIN   hosts h ON h.id = pjh.host_id
+        JOIN   patch_jobs j ON j.id = pjh.job_id
         WHERE  pjh.status       = 'running'
           AND  pjh.agent_job_id IS NOT NULL
         "#,
@@ -633,6 +744,11 @@ pub async fn poll_running_jobs(pool: PgPool, config: Arc<AppConfig>) {
 }
 
 /// Poll one running host entry and update its status from the agent response.
+///
+/// For `SelfUpgrade` jobs, a dropped connection is the *expected* success path —
+/// the agent restarts mid-job.  Instead of treating a connection failure as an
+/// error, we enter reconnect-confirm mode: wait for the agent to come back online,
+/// then verify the new version matches the target.
 async fn poll_single_host(pool: PgPool, config: Arc<AppConfig>, row: PatchJobHostRunning) {
     let certs = match load_agent_certs(&config.security) {
         Ok(c) => c,
@@ -664,70 +780,363 @@ async fn poll_single_host(pool: PgPool, config: Arc<AppConfig>, row: PatchJobHos
         },
     };
 
-    let status = match client.job_status(&row.agent_job_id).await {
-        Ok(s) => s,
+    // ── SelfUpgrade fast-path: try job_status first ──────────────────────────
+    let status_result = client.job_status(&row.agent_job_id).await;
+
+    match row.job_kind {
+        JobKind::SelfUpgrade => {
+            poll_self_upgrade_host(&pool, &config, &row, &client, status_result).await;
+        },
+        _ => {
+            // Standard (non-self-upgrade) poll path.
+            let status = match status_result {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!(
+                        pjh_id = %row.id,
+                        agent_job_id = %row.agent_job_id,
+                        error = %e,
+                        "poll_single_host: agent status call failed"
+                    );
+                    return;
+                },
+            };
+
+            match status.status.as_str() {
+                "succeeded" | "completed" => {
+                    tracing::info!(pjh_id = %row.id, "poll_single_host: agent job succeeded");
+                    if let Err(e) = sqlx::query(
+                        r#"
+                        UPDATE patch_job_hosts
+                        SET    status       = 'succeeded',
+                               completed_at = NOW(),
+                               output       = $2
+                        WHERE  id = $1
+                        "#,
+                    )
+                    .bind(row.id)
+                    .bind(status.output.as_deref().unwrap_or(""))
+                    .execute(&pool)
+                    .await
+                    {
+                        tracing::error!(pjh_id = %row.id, error = %e, "poll_single_host: update failed");
+                    }
+                    sync_job_status(&pool, row.job_id).await;
+                },
+                "failed" => {
+                    tracing::warn!(pjh_id = %row.id, "poll_single_host: agent job failed");
+                    let err_msg = status
+                        .error
+                        .unwrap_or_else(|| "Agent reported failure (no detail)".to_string());
+                    handle_host_failure(pool, row.id, err_msg).await;
+                },
+                "running" | "queued" => {
+                    // Still in progress — nothing to update; will poll again next cycle.
+                    tracing::debug!(
+                        pjh_id = %row.id,
+                        agent_status = %status.status,
+                        "poll_single_host: job still in progress"
+                    );
+                },
+                "cancelled" => {
+                    tracing::info!(pjh_id = %row.id, "poll_single_host: agent job cancelled");
+                    let err_msg = status
+                        .error
+                        .unwrap_or_else(|| "Agent job was cancelled".to_string());
+                    handle_host_failure(pool, row.id, err_msg).await;
+                },
+                other => {
+                    tracing::warn!(
+                        pjh_id = %row.id,
+                        agent_status = %other,
+                        "poll_single_host: unexpected agent status — ignoring"
+                    );
+                },
+            }
+        },
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Self-upgrade reconciliation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Handle poll results for a `SelfUpgrade` host.
+///
+/// A dropped connection on a self-upgrade host is the **expected** success path
+/// — the agent restarts mid-job, so `job_status()` WILL fail.  Instead of
+/// marking the host failed, we enter reconnect-confirm mode:
+///
+/// 1. Wait for the agent to come back online (bounded by
+///    `config.worker.self_upgrade_reconnect_timeout_secs`).
+/// 2. Call `system_info()` to get the new `agent_version`.
+/// 3. If the version matches the target → mark `Succeeded`, update `hosts.agent_version`.
+/// 4. If the version is unchanged → mark `Failed` ("Agent restarted but version unchanged").
+/// 5. If reconnect window expires → mark `Failed` ("Agent did not reconnect within timeout").
+async fn poll_self_upgrade_host(
+    pool: &PgPool,
+    config: &Arc<AppConfig>,
+    row: &PatchJobHostRunning,
+    client: &AgentClient,
+    status_result: Result<pm_agent_client::types::AgentJobStatus, AgentClientError>,
+) {
+    match status_result {
+        Ok(status) => {
+            // Agent is still alive — check the job status.
+            match status.status.as_str() {
+                "succeeded" | "completed" => {
+                    tracing::info!(
+                        pjh_id = %row.id,
+                        "poll_self_upgrade_host: agent self-upgrade job succeeded"
+                    );
+                    // Call health() to get the new agent version.
+                    let health = match client.health().await {
+                        Ok(h) => h,
+                        Err(e) => {
+                            tracing::warn!(
+                                pjh_id = %row.id,
+                                error = %e,
+                                "poll_self_upgrade_host: job succeeded but health call failed, using output version"
+                            );
+                            // Fall back: mark succeeded without version update.
+                            if let Err(e) = sqlx::query(
+                                r#"
+                                UPDATE patch_job_hosts
+                                SET    status       = 'succeeded',
+                                       completed_at = NOW(),
+                                       output       = $2
+                                WHERE  id = $1
+                                "#,
+                            )
+                            .bind(row.id)
+                            .bind(status.output.as_deref().unwrap_or("Self-upgrade completed"))
+                            .execute(pool)
+                            .await
+                            {
+                                tracing::error!(pjh_id = %row.id, error = %e, "poll_self_upgrade_host: update failed");
+                            }
+                            sync_job_status(pool, row.job_id).await;
+                            return;
+                        },
+                    };
+                    finish_self_upgrade_success(pool, row, &health.version).await;
+                },
+                "failed" => {
+                    // Agent reported failure — but it may still be alive.
+                    // Enter reconnect-confirm to check if it restarted with the new version.
+                    tracing::info!(
+                        pjh_id = %row.id,
+                        "poll_self_upgrade_host: agent reported failure, entering reconnect-confirm"
+                    );
+                    reconnect_confirm_self_upgrade(pool, config, row, client).await;
+                },
+                "running" | "queued" => {
+                    // Still in progress — keep polling.
+                    tracing::debug!(
+                        pjh_id = %row.id,
+                        agent_status = %status.status,
+                        "poll_self_upgrade_host: job still in progress"
+                    );
+                },
+                other => {
+                    tracing::warn!(
+                        pjh_id = %row.id,
+                        agent_status = %other,
+                        "poll_self_upgrade_host: unexpected agent status — ignoring"
+                    );
+                },
+            }
+        },
         Err(e) => {
-            tracing::warn!(
+            // Connection dropped — this is the EXPECTED success path for self-upgrade.
+            // The agent is restarting after upgrade. Enter reconnect-confirm mode.
+            tracing::info!(
                 pjh_id = %row.id,
-                agent_job_id = %row.agent_job_id,
                 error = %e,
-                "poll_single_host: agent status call failed"
+                "poll_self_upgrade_host: job_status call failed (expected during self-upgrade), entering reconnect-confirm"
             );
+            reconnect_confirm_self_upgrade(pool, config, row, client).await;
+        },
+    }
+}
+
+/// Reconnect-confirm mode for self-upgrade.
+///
+/// Waits for the agent to come back online, then verifies the new version.
+async fn reconnect_confirm_self_upgrade(
+    pool: &PgPool,
+    config: &Arc<AppConfig>,
+    row: &PatchJobHostRunning,
+    client: &AgentClient,
+) {
+    let timeout_secs = config.worker.self_upgrade_reconnect_timeout_secs;
+
+    tracing::info!(
+        pjh_id = %row.id,
+        timeout_secs,
+        "reconnect_confirm_self_upgrade: waiting for agent to come back online"
+    );
+
+    // Use the existing reconnect_with_backoff helper which calls system_info()
+    // with bounded exponential backoff.
+    let sys_info = match pm_agent_client::reconnect_with_backoff(client, timeout_secs).await {
+        Ok(info) => info,
+        Err(AgentClientError::ApiError { code, message }) => {
+            tracing::error!(
+                pjh_id = %row.id,
+                code = %code,
+                message = %message,
+                "reconnect_confirm_self_upgrade: agent did not reconnect within timeout"
+            );
+            handle_host_failure(
+                pool.clone(),
+                row.id,
+                "Agent did not reconnect within self-upgrade timeout".to_string(),
+            )
+            .await;
+            return;
+        },
+        Err(e) => {
+            tracing::error!(
+                pjh_id = %row.id,
+                error = %e,
+                "reconnect_confirm_self_upgrade: unexpected error during reconnect"
+            );
+            handle_host_failure(
+                pool.clone(),
+                row.id,
+                format!("Reconnect error during self-upgrade: {e}"),
+            )
+            .await;
             return;
         },
     };
 
-    match status.status.as_str() {
-        "succeeded" | "completed" => {
-            tracing::info!(pjh_id = %row.id, "poll_single_host: agent job succeeded");
-            if let Err(e) = sqlx::query(
-                r#"
-                UPDATE patch_job_hosts
-                SET    status       = 'succeeded',
-                       completed_at = NOW(),
-                       output       = $2
-                WHERE  id = $1
-                "#,
-            )
-            .bind(row.id)
-            .bind(status.output.as_deref().unwrap_or(""))
-            .execute(&pool)
+    // Agent is back online. Verify the version change.
+    // Fetch the target version from the job's patch_selection.
+    let target_version: Option<String> = sqlx::query_scalar::<_, serde_json::Value>(
+        "SELECT patch_selection FROM patch_jobs WHERE id = $1",
+    )
+    .bind(row.job_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .and_then(|v| {
+        v.get("target_version")
+            .and_then(|t| t.as_str())
+            .map(String::from)
+    });
+
+    // Fetch the old agent_version from the hosts table.
+    let old_version: Option<String> =
+        sqlx::query_scalar::<_, String>("SELECT agent_version FROM hosts WHERE id = $1")
+            .bind(row.host_id)
+            .fetch_optional(pool)
             .await
-            {
-                tracing::error!(pjh_id = %row.id, error = %e, "poll_single_host: update failed");
-            }
-            sync_job_status(&pool, row.job_id).await;
-        },
-        "failed" => {
-            tracing::warn!(pjh_id = %row.id, "poll_single_host: agent job failed");
-            let err_msg = status
-                .error
-                .unwrap_or_else(|| "Agent reported failure (no detail)".to_string());
-            handle_host_failure(pool, row.id, err_msg).await;
-        },
-        "running" | "queued" => {
-            // Still in progress — nothing to update; will poll again next cycle.
-            tracing::debug!(
+            .ok()
+            .flatten();
+
+    // reconnect_with_backoff returns SystemInfoData which has hostname but not
+    // the agent version. Call health() to get the new version string.
+    let _ = sys_info; // Agent confirmed reachable via system_info; now get version.
+    let health = match client.health().await {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::error!(
                 pjh_id = %row.id,
-                agent_status = %status.status,
-                "poll_single_host: job still in progress"
+                error = %e,
+                "reconnect_confirm_self_upgrade: agent reconnected but health check failed"
             );
+            handle_host_failure(
+                pool.clone(),
+                row.id,
+                "Agent reconnected but health check failed after self-upgrade".to_string(),
+            )
+            .await;
+            return;
         },
-        "cancelled" => {
-            tracing::info!(pjh_id = %row.id, "poll_single_host: agent job cancelled");
-            let err_msg = status
-                .error
-                .unwrap_or_else(|| "Agent job was cancelled".to_string());
-            handle_host_failure(pool, row.id, err_msg).await;
-        },
-        other => {
-            tracing::warn!(
-                pjh_id = %row.id,
-                agent_status = %other,
-                "poll_single_host: unexpected agent status — ignoring"
-            );
-        },
+    };
+
+    let new_version = health.version;
+    tracing::info!(
+        pjh_id = %row.id,
+        new_version = %new_version,
+        old_version = ?old_version,
+        target_version = ?target_version,
+        "reconnect_confirm_self_upgrade: agent reconnected with new version"
+    );
+
+    // Determine success: if target_version is set, it must match; otherwise,
+    // the version must have changed from the old one.
+    let version_ok = match (&target_version, &old_version) {
+        (Some(target), _) => &new_version == target,
+        (None, Some(old)) => &new_version != old,
+        (None, None) => true, // No baseline to compare — assume success
+    };
+
+    if version_ok {
+        tracing::info!(
+            pjh_id = %row.id,
+            new_version = %new_version,
+            "reconnect_confirm_self_upgrade: version confirmed, marking succeeded"
+        );
+        finish_self_upgrade_success(pool, row, &new_version).await;
+    } else {
+        let reason = match target_version {
+            Some(ref t) => {
+                format!("Agent restarted but version unchanged: expected {t}, got {new_version}")
+            },
+            None => format!("Agent restarted but version unchanged: still {new_version}"),
+        };
+        tracing::warn!(
+            pjh_id = %row.id,
+            reason = %reason,
+            "reconnect_confirm_self_upgrade: version mismatch, marking failed"
+        );
+        handle_host_failure(pool.clone(), row.id, reason).await;
     }
+}
+
+/// Mark a self-upgrade host as succeeded and update `hosts.agent_version`.
+async fn finish_self_upgrade_success(pool: &PgPool, row: &PatchJobHostRunning, new_version: &str) {
+    // Update the host's agent_version.
+    if let Err(e) =
+        sqlx::query("UPDATE hosts SET agent_version = $2, updated_at = NOW() WHERE id = $1")
+            .bind(row.host_id)
+            .bind(new_version)
+            .execute(pool)
+            .await
+    {
+        tracing::error!(
+            pjh_id = %row.id,
+            host_id = %row.host_id,
+            error = %e,
+            "finish_self_upgrade_success: failed to update hosts.agent_version"
+        );
+    }
+
+    // Mark the pjh row as succeeded.
+    if let Err(e) = sqlx::query(
+        r#"
+        UPDATE patch_job_hosts
+        SET    status       = 'succeeded',
+               completed_at = NOW(),
+               output       = $2
+        WHERE  id = $1
+        "#,
+    )
+    .bind(row.id)
+    .bind(format!(
+        "Self-upgrade completed: agent version {new_version}"
+    ))
+    .execute(pool)
+    .await
+    {
+        tracing::error!(pjh_id = %row.id, error = %e, "finish_self_upgrade_success: update failed");
+    }
+
+    sync_job_status(pool, row.job_id).await;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
