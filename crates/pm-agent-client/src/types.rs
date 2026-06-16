@@ -238,3 +238,58 @@ pub struct RollbackResponse {
     pub job_id: String,
     pub status: String,
 }
+
+// ============================================================
+// POST /api/v1/system/update
+// ============================================================
+
+/// Request body for `POST /api/v1/system/update`.
+/// The agent will upgrade itself to the specified version (or latest if None)
+/// and restart via its detached systemd unit.
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct SelfUpdateRequest {
+    /// Pin to an exact package version. None = upgrade to latest available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_version: Option<String>,
+    /// Restart the service after a successful upgrade.
+    #[serde(default = "default_true")]
+    pub restart: bool,
+    /// Seconds to wait before the restart fires. Clamped by the agent.
+    #[serde(default = "default_restart_delay")]
+    pub restart_delay_seconds: u64,
+}
+
+#[allow(dead_code)]
+fn default_true() -> bool {
+    true
+}
+#[allow(dead_code)]
+fn default_restart_delay() -> u64 {
+    5
+}
+
+/// Response from `POST /api/v1/system/update`.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SelfUpdateResponse {
+    pub job_id: String,
+    pub status: String,
+    #[serde(default)]
+    pub target_version: Option<String>,
+}
+
+// ============================================================
+// GET /api/v1/system/update/status
+// ============================================================
+
+/// Status from `GET /api/v1/system/update/status` (the marker file).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SelfUpdateStatus {
+    pub previous_version: Option<String>,
+    pub new_version: Option<String>,
+    pub changed: bool,
+    pub status: String,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub at: Option<String>,
+}

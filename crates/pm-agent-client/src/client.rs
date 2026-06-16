@@ -35,7 +35,8 @@ use crate::{
     error::AgentClientError,
     types::{
         AgentEnvelope, AgentJobStatus, ApplyPatchesRequest, ApplyPatchesResponse, HealthData,
-        PackagesData, PatchesData, RollbackResponse, ServiceStatusData, SystemInfoData,
+        PackagesData, PatchesData, RollbackResponse, SelfUpdateRequest, SelfUpdateResponse,
+        SelfUpdateStatus, ServiceStatusData, SystemInfoData,
     },
 };
 
@@ -234,6 +235,25 @@ impl AgentClient {
     ) -> Result<ServiceStatusData, AgentClientError> {
         self.get(&format!("system/services/{}", service_name), &[])
             .await
+    }
+
+    // --------------------------------------------------------
+    // Self-update methods
+    // --------------------------------------------------------
+
+    /// `POST /api/v1/system/update` — trigger agent self-upgrade.
+    #[instrument(skip(self, req), fields(base_url = %self.base_url))]
+    pub async fn self_update(
+        &self,
+        req: &SelfUpdateRequest,
+    ) -> Result<SelfUpdateResponse, AgentClientError> {
+        self.post("system/update", req).await
+    }
+
+    /// `GET /api/v1/system/update/status` — read the self-update marker file.
+    #[instrument(skip(self), fields(base_url = %self.base_url))]
+    pub async fn self_update_status(&self) -> Result<SelfUpdateStatus, AgentClientError> {
+        self.get("system/update/status", &[]).await
     }
 
     // --------------------------------------------------------
