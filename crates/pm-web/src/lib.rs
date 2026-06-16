@@ -210,6 +210,11 @@ pub fn build_router(state: AppState) -> Router {
             routes::health_checks::router(),
         )
         .nest("/settings", routes::settings::router())
+        .nest(
+            "/settings/os-package-mappings",
+            routes::os_package_mappings::router(),
+        )
+        .nest("/upgrades", routes::upgrades::router())
         .nest("/admin", routes::enrollment::admin_router())
         .layer(GovernorLayer::new(api_governor))
         .route_layer(middleware::from_fn(move |req, next| {
@@ -222,6 +227,7 @@ pub fn build_router(state: AppState) -> Router {
         .nest("/api/v1/auth", auth_public_router)
         .nest("/api/v1", enrollment_router)
         .nest("/api/v1", routes::pki::router())
+        .nest("/api/v1/upgrades", routes::upgrades::public_router())
         .nest("/api/v1/auth/sso", sso_public_router)
         .nest("/api/v1/auth/azure", sso_azure_router)
         .nest("/api/v1", protected_api)

@@ -36,7 +36,7 @@ pub mod types;
 // ── Convenience re-exports ──────────────────────────────────────────────────
 
 /// Primary client — re-exported from [`client::AgentClient`].
-pub use client::{AgentClient, DEFAULT_AGENT_PORT};
+pub use client::{reconnect_with_backoff, AgentClient, DEFAULT_AGENT_PORT};
 
 /// Error type — re-exported from [`error::AgentClientError`].
 pub use error::AgentClientError;
