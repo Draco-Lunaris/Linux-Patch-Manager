@@ -858,6 +858,101 @@ async fn poll_single_host(pool: PgPool, config: Arc<AppConfig>, row: PatchJobHos
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Self-upgrade reconciliation — pure decision functions
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Decision returned by [`decide_self_upgrade_poll_action`].
+///
+/// Captures the decision logic for self-upgrade host polling, independent of
+/// database or network I/O. The caller is responsible for executing the
+/// side-effects (DB updates, health checks, reconnect confirmation).
+#[derive(Debug, PartialEq, Eq)]
+enum SelfUpgradePollAction {
+    /// Agent reported success — call `health()` to get the new version.
+    Succeeded,
+    /// Agent reported failure — enter reconnect-confirm (may have restarted).
+    FailedThenReconnectConfirm,
+    /// Job still in progress — keep polling.
+    StillInProgress,
+    /// Unexpected status string — log and ignore.
+    UnexpectedStatus,
+    /// Connection dropped (expected during self-upgrade) — enter reconnect-confirm.
+    ConnectionDropped,
+}
+
+/// Pure decision function: given the result of polling a self-upgrade host's
+/// `job_status()`, determine what action to take.
+///
+/// **Key invariant:** a dropped connection (`Err`) is NEVER mapped to a
+/// failure — it always enters reconnect-confirm mode, because the agent is
+/// expected to restart mid-job during a self-upgrade.
+fn decide_self_upgrade_poll_action(
+    status_result: Result<&str, &AgentClientError>,
+) -> SelfUpgradePollAction {
+    match status_result {
+        Ok(status) => match status {
+            "succeeded" | "completed" => SelfUpgradePollAction::Succeeded,
+            "failed" => SelfUpgradePollAction::FailedThenReconnectConfirm,
+            "running" | "queued" => SelfUpgradePollAction::StillInProgress,
+            _ => SelfUpgradePollAction::UnexpectedStatus,
+        },
+        Err(_) => SelfUpgradePollAction::ConnectionDropped,
+    }
+}
+
+/// Decision returned by [`decide_self_upgrade_reconnect_result`].
+#[derive(Debug, PartialEq, Eq)]
+enum SelfUpgradeReconnectResult {
+    /// Version matches target (or changed from old) — mark Succeeded.
+    Succeeded,
+    /// Version unchanged — mark Failed.
+    VersionUnchanged,
+}
+
+/// Pure decision function: after reconnect-confirm, determine whether the
+/// new version constitutes a successful upgrade.
+///
+/// - If `target_version` is set, the new version must match it.
+/// - If `target_version` is not set, the new version must differ from `old_version`.
+/// - If neither is available, assume success.
+fn decide_self_upgrade_reconnect_result(
+    new_version: &str,
+    target_version: Option<&str>,
+    old_version: Option<&str>,
+) -> SelfUpgradeReconnectResult {
+    let version_ok = match (target_version, old_version) {
+        (Some(target), _) => new_version == target,
+        (None, Some(old)) => new_version != old,
+        (None, None) => true,
+    };
+    if version_ok {
+        SelfUpgradeReconnectResult::Succeeded
+    } else {
+        SelfUpgradeReconnectResult::VersionUnchanged
+    }
+}
+
+/// Decision returned by [`decide_reconnect_error_action`].
+#[derive(Debug, PartialEq, Eq)]
+enum ReconnectErrorAction {
+    /// Agent did not reconnect within the timeout window.
+    Timeout,
+    /// Unexpected error during reconnect.
+    UnexpectedError,
+}
+
+/// Pure decision function: given an error from `reconnect_with_backoff`,
+/// determine what failure action to take.
+fn decide_reconnect_error_action(error: &AgentClientError) -> ReconnectErrorAction {
+    match error {
+        AgentClientError::ApiError { code, .. } if code == "RECONNECT_TIMEOUT" => {
+            ReconnectErrorAction::Timeout
+        },
+        _ => ReconnectErrorAction::UnexpectedError,
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Self-upgrade reconciliation
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -880,79 +975,78 @@ async fn poll_self_upgrade_host(
     client: &AgentClient,
     status_result: Result<pm_agent_client::types::AgentJobStatus, AgentClientError>,
 ) {
-    match status_result {
-        Ok(status) => {
-            // Agent is still alive — check the job status.
-            match status.status.as_str() {
-                "succeeded" | "completed" => {
-                    tracing::info!(
-                        pjh_id = %row.id,
-                        "poll_self_upgrade_host: agent self-upgrade job succeeded"
-                    );
-                    // Call health() to get the new agent version.
-                    let health = match client.health().await {
-                        Ok(h) => h,
-                        Err(e) => {
-                            tracing::warn!(
-                                pjh_id = %row.id,
-                                error = %e,
-                                "poll_self_upgrade_host: job succeeded but health call failed, using output version"
-                            );
-                            // Fall back: mark succeeded without version update.
-                            if let Err(e) = sqlx::query(
-                                r#"
-                                UPDATE patch_job_hosts
-                                SET    status       = 'succeeded',
-                                       completed_at = NOW(),
-                                       output       = $2
-                                WHERE  id = $1
-                                "#,
-                            )
-                            .bind(row.id)
-                            .bind(status.output.as_deref().unwrap_or("Self-upgrade completed"))
-                            .execute(pool)
-                            .await
-                            {
-                                tracing::error!(pjh_id = %row.id, error = %e, "poll_self_upgrade_host: update failed");
-                            }
-                            sync_job_status(pool, row.job_id).await;
-                            return;
-                        },
-                    };
-                    finish_self_upgrade_success(pool, row, &health.version).await;
-                },
-                "failed" => {
-                    // Agent reported failure — but it may still be alive.
-                    // Enter reconnect-confirm to check if it restarted with the new version.
-                    tracing::info!(
-                        pjh_id = %row.id,
-                        "poll_self_upgrade_host: agent reported failure, entering reconnect-confirm"
-                    );
-                    reconnect_confirm_self_upgrade(pool, config, row, client).await;
-                },
-                "running" | "queued" => {
-                    // Still in progress — keep polling.
-                    tracing::debug!(
-                        pjh_id = %row.id,
-                        agent_status = %status.status,
-                        "poll_self_upgrade_host: job still in progress"
-                    );
-                },
-                other => {
-                    tracing::warn!(
-                        pjh_id = %row.id,
-                        agent_status = %other,
-                        "poll_self_upgrade_host: unexpected agent status — ignoring"
-                    );
-                },
-            }
-        },
-        Err(e) => {
-            // Connection dropped — this is the EXPECTED success path for self-upgrade.
-            // The agent is restarting after upgrade. Enter reconnect-confirm mode.
+    let action = decide_self_upgrade_poll_action(status_result.as_ref().map(|s| s.status.as_str()));
+
+    match action {
+        SelfUpgradePollAction::Succeeded => {
             tracing::info!(
                 pjh_id = %row.id,
-                error = %e,
+                "poll_self_upgrade_host: agent self-upgrade job succeeded"
+            );
+            // Call health() to get the new agent version.
+            let health = match client.health().await {
+                Ok(h) => h,
+                Err(e) => {
+                    tracing::warn!(
+                        pjh_id = %row.id,
+                        error = %e,
+                        "poll_self_upgrade_host: job succeeded but health call failed, using output version"
+                    );
+                    // Fall back: mark succeeded without version update.
+                    let output = status_result
+                        .as_ref()
+                        .ok()
+                        .and_then(|s| s.output.clone())
+                        .unwrap_or_else(|| "Self-upgrade completed".to_string());
+                    if let Err(e) = sqlx::query(
+                        r#"
+                        UPDATE patch_job_hosts
+                        SET    status       = 'succeeded',
+                               completed_at = NOW(),
+                               output       = $2
+                        WHERE  id = $1
+                        "#,
+                    )
+                    .bind(row.id)
+                    .bind(&output)
+                    .execute(pool)
+                    .await
+                    {
+                        tracing::error!(pjh_id = %row.id, error = %e, "poll_self_upgrade_host: update failed");
+                    }
+                    sync_job_status(pool, row.job_id).await;
+                    return;
+                },
+            };
+            finish_self_upgrade_success(pool, row, &health.version).await;
+        },
+        SelfUpgradePollAction::FailedThenReconnectConfirm => {
+            tracing::info!(
+                pjh_id = %row.id,
+                "poll_self_upgrade_host: agent reported failure, entering reconnect-confirm"
+            );
+            reconnect_confirm_self_upgrade(pool, config, row, client).await;
+        },
+        SelfUpgradePollAction::StillInProgress => {
+            tracing::debug!(
+                pjh_id = %row.id,
+                "poll_self_upgrade_host: job still in progress"
+            );
+        },
+        SelfUpgradePollAction::UnexpectedStatus => {
+            let status_str = status_result
+                .as_ref()
+                .map(|s| s.status.as_str())
+                .unwrap_or("");
+            tracing::warn!(
+                pjh_id = %row.id,
+                agent_status = %status_str,
+                "poll_self_upgrade_host: unexpected agent status — ignoring"
+            );
+        },
+        SelfUpgradePollAction::ConnectionDropped => {
+            tracing::info!(
+                pjh_id = %row.id,
                 "poll_self_upgrade_host: job_status call failed (expected during self-upgrade), entering reconnect-confirm"
             );
             reconnect_confirm_self_upgrade(pool, config, row, client).await;
@@ -981,33 +1075,35 @@ async fn reconnect_confirm_self_upgrade(
     // with bounded exponential backoff.
     let sys_info = match pm_agent_client::reconnect_with_backoff(client, timeout_secs).await {
         Ok(info) => info,
-        Err(AgentClientError::ApiError { code, message }) => {
-            tracing::error!(
-                pjh_id = %row.id,
-                code = %code,
-                message = %message,
-                "reconnect_confirm_self_upgrade: agent did not reconnect within timeout"
-            );
-            handle_host_failure(
-                pool.clone(),
-                row.id,
-                "Agent did not reconnect within self-upgrade timeout".to_string(),
-            )
-            .await;
-            return;
-        },
         Err(e) => {
-            tracing::error!(
-                pjh_id = %row.id,
-                error = %e,
-                "reconnect_confirm_self_upgrade: unexpected error during reconnect"
-            );
-            handle_host_failure(
-                pool.clone(),
-                row.id,
-                format!("Reconnect error during self-upgrade: {e}"),
-            )
-            .await;
+            let action = decide_reconnect_error_action(&e);
+            match action {
+                ReconnectErrorAction::Timeout => {
+                    tracing::error!(
+                        pjh_id = %row.id,
+                        "reconnect_confirm_self_upgrade: agent did not reconnect within timeout"
+                    );
+                    handle_host_failure(
+                        pool.clone(),
+                        row.id,
+                        "Agent did not reconnect within self-upgrade timeout".to_string(),
+                    )
+                    .await;
+                },
+                ReconnectErrorAction::UnexpectedError => {
+                    tracing::error!(
+                        pjh_id = %row.id,
+                        error = %e,
+                        "reconnect_confirm_self_upgrade: unexpected error during reconnect"
+                    );
+                    handle_host_failure(
+                        pool.clone(),
+                        row.id,
+                        format!("Reconnect error during self-upgrade: {e}"),
+                    )
+                    .await;
+                },
+            }
             return;
         },
     };
@@ -1067,34 +1163,38 @@ async fn reconnect_confirm_self_upgrade(
         "reconnect_confirm_self_upgrade: agent reconnected with new version"
     );
 
-    // Determine success: if target_version is set, it must match; otherwise,
-    // the version must have changed from the old one.
-    let version_ok = match (&target_version, &old_version) {
-        (Some(target), _) => &new_version == target,
-        (None, Some(old)) => &new_version != old,
-        (None, None) => true, // No baseline to compare — assume success
-    };
+    // Determine success using the pure decision function.
+    let result = decide_self_upgrade_reconnect_result(
+        &new_version,
+        target_version.as_deref(),
+        old_version.as_deref(),
+    );
 
-    if version_ok {
-        tracing::info!(
-            pjh_id = %row.id,
-            new_version = %new_version,
-            "reconnect_confirm_self_upgrade: version confirmed, marking succeeded"
-        );
-        finish_self_upgrade_success(pool, row, &new_version).await;
-    } else {
-        let reason = match target_version {
-            Some(ref t) => {
-                format!("Agent restarted but version unchanged: expected {t}, got {new_version}")
-            },
-            None => format!("Agent restarted but version unchanged: still {new_version}"),
-        };
-        tracing::warn!(
-            pjh_id = %row.id,
-            reason = %reason,
-            "reconnect_confirm_self_upgrade: version mismatch, marking failed"
-        );
-        handle_host_failure(pool.clone(), row.id, reason).await;
+    match result {
+        SelfUpgradeReconnectResult::Succeeded => {
+            tracing::info!(
+                pjh_id = %row.id,
+                new_version = %new_version,
+                "reconnect_confirm_self_upgrade: version confirmed, marking succeeded"
+            );
+            finish_self_upgrade_success(pool, row, &new_version).await;
+        },
+        SelfUpgradeReconnectResult::VersionUnchanged => {
+            let reason = match target_version {
+                Some(ref t) => {
+                    format!(
+                        "Agent restarted but version unchanged: expected {t}, got {new_version}"
+                    )
+                },
+                None => format!("Agent restarted but version unchanged: still {new_version}"),
+            };
+            tracing::warn!(
+                pjh_id = %row.id,
+                reason = %reason,
+                "reconnect_confirm_self_upgrade: version mismatch, marking failed"
+            );
+            handle_host_failure(pool.clone(), row.id, reason).await;
+        },
     }
 }
 
@@ -1462,5 +1562,168 @@ pub async fn retry_pending_jobs(pool: PgPool, config: Arc<AppConfig>) {
         tokio::spawn(async move {
             execute_host_job(p, c, job_id, host_id, pjh_id).await;
         });
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests — self-upgrade reconciliation decision logic
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── decide_self_upgrade_poll_action tests ──────────────────────────────
+
+    /// When `job_status()` fails (connection dropped), the worker must NOT
+    /// mark the host as Failed. It should enter reconnect-confirm mode.
+    #[test]
+    fn test_self_upgrade_dropped_connection_is_not_failure() {
+        // Any AgentClientError variant triggers reconnect-confirm, not failure.
+        // Test with Tls error (easily constructible) to verify the invariant.
+        let err = AgentClientError::Tls("connection dropped".into());
+        let result = decide_self_upgrade_poll_action(Err(&err));
+        assert_eq!(result, SelfUpgradePollAction::ConnectionDropped);
+        // ConnectionDropped is NOT a failure — it triggers reconnect-confirm.
+        assert_ne!(result, SelfUpgradePollAction::UnexpectedStatus);
+    }
+
+    /// When `job_status()` fails with a timeout, still enter reconnect-confirm.
+    #[test]
+    fn test_self_upgrade_timeout_is_not_failure() {
+        let result = decide_self_upgrade_poll_action(Err(&AgentClientError::Timeout));
+        assert_eq!(result, SelfUpgradePollAction::ConnectionDropped);
+    }
+
+    /// When `job_status()` fails with a TLS error, still enter reconnect-confirm.
+    #[test]
+    fn test_self_upgrade_tls_error_is_not_failure() {
+        let result =
+            decide_self_upgrade_poll_action(Err(&AgentClientError::Tls("TLS error".into())));
+        assert_eq!(result, SelfUpgradePollAction::ConnectionDropped);
+    }
+
+    /// When `job_status()` succeeds with "succeeded", mark as Succeeded.
+    #[test]
+    fn test_self_upgrade_agent_reports_succeeded() {
+        let result = decide_self_upgrade_poll_action(Ok("succeeded"));
+        assert_eq!(result, SelfUpgradePollAction::Succeeded);
+    }
+
+    /// When `job_status()` succeeds with "completed", mark as Succeeded.
+    #[test]
+    fn test_self_upgrade_agent_reports_completed() {
+        let result = decide_self_upgrade_poll_action(Ok("completed"));
+        assert_eq!(result, SelfUpgradePollAction::Succeeded);
+    }
+
+    /// When `job_status()` succeeds with "failed", enter reconnect-confirm
+    /// (the agent may have restarted with the new version despite reporting failure).
+    #[test]
+    fn test_self_upgrade_agent_reports_failed_then_reconnect() {
+        let result = decide_self_upgrade_poll_action(Ok("failed"));
+        assert_eq!(result, SelfUpgradePollAction::FailedThenReconnectConfirm);
+    }
+
+    /// When `job_status()` returns "running", keep polling.
+    #[test]
+    fn test_self_upgrade_agent_reports_running() {
+        let result = decide_self_upgrade_poll_action(Ok("running"));
+        assert_eq!(result, SelfUpgradePollAction::StillInProgress);
+    }
+
+    /// When `job_status()` returns "queued", keep polling.
+    #[test]
+    fn test_self_upgrade_agent_reports_queued() {
+        let result = decide_self_upgrade_poll_action(Ok("queued"));
+        assert_eq!(result, SelfUpgradePollAction::StillInProgress);
+    }
+
+    /// When `job_status()` returns an unexpected status, ignore it.
+    #[test]
+    fn test_self_upgrade_agent_reports_unexpected_status() {
+        let result = decide_self_upgrade_poll_action(Ok("unknown_status"));
+        assert_eq!(result, SelfUpgradePollAction::UnexpectedStatus);
+    }
+
+    // ── decide_self_upgrade_reconnect_result tests ─────────────────────────
+
+    /// After reconnect-confirm, if the new version matches the target, mark Succeeded.
+    #[test]
+    fn test_self_upgrade_reconnect_version_match_succeeds() {
+        let result = decide_self_upgrade_reconnect_result("2.0.0", Some("2.0.0"), Some("1.0.0"));
+        assert_eq!(result, SelfUpgradeReconnectResult::Succeeded);
+    }
+
+    /// After reconnect-confirm, if the new version matches the target even
+    /// without an old version baseline, mark Succeeded.
+    #[test]
+    fn test_self_upgrade_reconnect_version_match_succeeds_no_old() {
+        let result = decide_self_upgrade_reconnect_result("2.0.0", Some("2.0.0"), None);
+        assert_eq!(result, SelfUpgradeReconnectResult::Succeeded);
+    }
+
+    /// After reconnect-confirm, if the new version does NOT match the target,
+    /// mark VersionUnchanged (failed).
+    #[test]
+    fn test_self_upgrade_reconnect_version_unchanged_fails() {
+        let result = decide_self_upgrade_reconnect_result("1.0.0", Some("2.0.0"), Some("1.0.0"));
+        assert_eq!(result, SelfUpgradeReconnectResult::VersionUnchanged);
+    }
+
+    /// After reconnect-confirm, with no target_version, if the new version
+    /// differs from the old version, mark Succeeded.
+    #[test]
+    fn test_self_upgrade_reconnect_version_changed_no_target() {
+        let result = decide_self_upgrade_reconnect_result("2.0.0", None, Some("1.0.0"));
+        assert_eq!(result, SelfUpgradeReconnectResult::Succeeded);
+    }
+
+    /// After reconnect-confirm, with no target_version, if the new version
+    /// is the same as the old version, mark VersionUnchanged (failed).
+    #[test]
+    fn test_self_upgrade_reconnect_version_same_no_target() {
+        let result = decide_self_upgrade_reconnect_result("1.0.0", None, Some("1.0.0"));
+        assert_eq!(result, SelfUpgradeReconnectResult::VersionUnchanged);
+    }
+
+    /// After reconnect-confirm, with no target_version and no old_version,
+    /// assume success (no baseline to compare).
+    #[test]
+    fn test_self_upgrade_reconnect_no_baseline_assumes_success() {
+        let result = decide_self_upgrade_reconnect_result("1.0.0", None, None);
+        assert_eq!(result, SelfUpgradeReconnectResult::Succeeded);
+    }
+
+    // ── decide_reconnect_error_action tests ─────────────────────────────────
+
+    /// If reconnect_with_backoff returns RECONNECT_TIMEOUT, mark as timeout failure.
+    #[test]
+    fn test_self_upgrade_reconnect_timeout_fails() {
+        let err = AgentClientError::ApiError {
+            code: "RECONNECT_TIMEOUT".to_string(),
+            message: "Agent did not come back online within 600s".to_string(),
+        };
+        let action = decide_reconnect_error_action(&err);
+        assert_eq!(action, ReconnectErrorAction::Timeout);
+    }
+
+    /// If reconnect_with_backoff returns a non-timeout API error, mark as unexpected.
+    #[test]
+    fn test_self_upgrade_reconnect_api_error_unexpected() {
+        let err = AgentClientError::ApiError {
+            code: "INTERNAL_ERROR".to_string(),
+            message: "Something went wrong".to_string(),
+        };
+        let action = decide_reconnect_error_action(&err);
+        assert_eq!(action, ReconnectErrorAction::UnexpectedError);
+    }
+
+    /// If reconnect_with_backoff returns a connection error, mark as unexpected.
+    #[test]
+    fn test_self_upgrade_reconnect_tls_error_unexpected() {
+        let err = AgentClientError::Tls("TLS handshake failed".into());
+        let action = decide_reconnect_error_action(&err);
+        assert_eq!(action, ReconnectErrorAction::UnexpectedError);
     }
 }
