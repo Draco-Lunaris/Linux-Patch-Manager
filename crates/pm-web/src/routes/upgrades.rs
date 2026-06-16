@@ -2,6 +2,7 @@
 //!
 //! GET  /api/v1/upgrades/available-versions  — list cached versions (no auth)
 //! POST /api/v1/upgrades/refresh-versions   — refresh version cache from GitHub (admin)
+//! POST /api/v1/upgrades/trigger             — create a self-upgrade job (operator+)
 
 use axum::{
     extract::{Query, State},
@@ -14,8 +15,9 @@ use pm_auth::rbac::AuthUser;
 use pm_core::audit::{log_event, AuditAction};
 use pm_core::models::AvailableVersion;
 use regex::Regex;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use uuid::Uuid;
 
 use crate::AppState;
@@ -25,9 +27,11 @@ pub fn public_router() -> Router<AppState> {
     Router::new().route("/available-versions", get(list_available_versions))
 }
 
-/// Protected (authenticated) routes: version refresh (admin).
+/// Protected (authenticated) routes: version refresh (admin) and trigger (operator+).
 pub fn router() -> Router<AppState> {
-    Router::new().route("/refresh-versions", post(refresh_versions))
+    Router::new()
+        .route("/refresh-versions", post(refresh_versions))
+        .route("/trigger", post(trigger_upgrade))
 }
 
 // ── Query params ──────────────────────────────────────────────────────────────
@@ -36,6 +40,30 @@ pub fn router() -> Router<AppState> {
 pub struct AvailableVersionsQuery {
     pub source: Option<String>,
     pub host_id: Option<Uuid>,
+}
+
+// ── Trigger upgrade request/response types ───────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct TriggerUpgradeRequest {
+    pub host_ids: Vec<Uuid>,
+    pub target_version: Option<String>,
+    #[serde(default)]
+    pub immediate: bool,
+    pub maintenance_window_id: Option<Uuid>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SkippedHost {
+    host_id: Uuid,
+    reason: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TriggerUpgradeResponse {
+    job_id: Uuid,
+    host_count: usize,
+    skipped: Vec<SkippedHost>,
 }
 
 // ── GET /api/v1/upgrades/available-versions ────────────────────────────────────
@@ -99,7 +127,7 @@ async fn list_available_versions(
 ///
 /// Parses the host's `os_name` (e.g. "Ubuntu 24.04") into name and version,
 /// then finds the matching `os_package_mapping` entry.
-async fn lookup_package_pattern(
+pub(crate) async fn lookup_package_pattern(
     state: &AppState,
     host_id: Uuid,
 ) -> Result<Option<String>, (StatusCode, Json<Value>)> {
@@ -375,4 +403,299 @@ async fn refresh_versions(
     Ok(Json(
         json!({ "upserted": upserted, "message": "Versions refreshed" }),
     ))
+}
+
+// ── POST /api/v1/upgrades/trigger ─────────────────────────────────────────────
+
+async fn trigger_upgrade(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Json(req): Json<TriggerUpgradeRequest>,
+) -> Result<Json<TriggerUpgradeResponse>, (StatusCode, Json<Value>)> {
+    // RBAC: Operator or Admin only (reject Reporter)
+    if !auth.role.can_write() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(
+                json!({ "error": { "code": "forbidden", "message": "Operator or Admin access required" } }),
+            ),
+        ));
+    }
+
+    if req.host_ids.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(
+                json!({ "error": { "code": "bad_request", "message": "host_ids must not be empty" } }),
+            ),
+        ));
+    }
+
+    // If target_version is specified, verify it exists in available_versions at all
+    if let Some(ref tv) = req.target_version {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM available_versions WHERE version = $1)",
+        )
+        .bind(tv)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to check version existence");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+            )
+        })?;
+
+        if !exists {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": {
+                        "code": "bad_request",
+                        "message": format!("Version '{}' not found in available versions", tv)
+                    }
+                })),
+            ));
+        }
+    }
+
+    let mut skipped: Vec<SkippedHost> = Vec::new();
+    let mut valid_hosts: Vec<(Uuid, String)> = Vec::new();
+
+    for host_id in &req.host_ids {
+        // Look up host's os_name and agent_version
+        let host_row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT os_name, agent_version FROM hosts WHERE id = $1",
+        )
+        .bind(host_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, host_id = %host_id, "Failed to query host");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+            )
+        })?;
+
+        let (_os_name, agent_version) = match host_row {
+            Some(row) => row,
+            None => {
+                skipped.push(SkippedHost {
+                    host_id: *host_id,
+                    reason: "Host not found".to_string(),
+                });
+                continue;
+            },
+        };
+
+        // Get available versions filtered by host's OS package pattern
+        let mut versions = list_host_versions(&state, *host_id).await?;
+
+        // Resolve target version
+        let resolved_version = match &req.target_version {
+            Some(tv) => {
+                // Validate that this version is available for this host's OS
+                if !versions.iter().any(|v| &v.version == tv) {
+                    skipped.push(SkippedHost {
+                        host_id: *host_id,
+                        reason: format!("Version '{}' not available for this host's OS", tv),
+                    });
+                    continue;
+                }
+                tv.clone()
+            },
+            None => {
+                // Resolve to latest non-prerelease version
+                versions.retain(|v| !v.prerelease);
+                match versions
+                    .iter()
+                    .max_by(|a, b| a.published_at.cmp(&b.published_at))
+                {
+                    Some(v) => v.version.clone(),
+                    None => {
+                        skipped.push(SkippedHost {
+                            host_id: *host_id,
+                            reason: "No non-prerelease versions available for this host's OS"
+                                .to_string(),
+                        });
+                        continue;
+                    },
+                }
+            },
+        };
+
+        // Check if host is already at the target version
+        if let Some(ref current) = agent_version {
+            if current == &resolved_version {
+                skipped.push(SkippedHost {
+                    host_id: *host_id,
+                    reason: format!("Host is already at version {}", resolved_version),
+                });
+                continue;
+            }
+        }
+
+        valid_hosts.push((*host_id, resolved_version));
+    }
+
+    // If no valid hosts remain, return early without creating a job
+    if valid_hosts.is_empty() {
+        return Ok(Json(TriggerUpgradeResponse {
+            job_id: Uuid::nil(),
+            host_count: 0,
+            skipped,
+        }));
+    }
+
+    // Group valid hosts by resolved version (different OSes may resolve to different versions)
+    let mut groups: BTreeMap<String, Vec<Uuid>> = BTreeMap::new();
+    for (host_id, version) in &valid_hosts {
+        groups.entry(version.clone()).or_default().push(*host_id);
+    }
+
+    // Create one job per version group
+    let mut first_job_id = Uuid::nil();
+    let mut total_host_count = 0usize;
+
+    for (version, host_ids) in &groups {
+        let patch_selection = json!({
+            "target_version": version,
+            "restart": true,
+            "restart_delay_seconds": 5
+        });
+
+        let job_id: Uuid = sqlx::query_scalar(
+            r#"
+            INSERT INTO patch_jobs
+                (kind, status, created_by_user_id, maintenance_window_id,
+                 immediate, patch_selection, notes)
+            VALUES
+                ('self_upgrade'::job_kind, 'queued'::job_status, $1, $2, $3, $4, $5)
+            RETURNING id
+            "#,
+        )
+        .bind(auth.user_id)
+        .bind(req.maintenance_window_id)
+        .bind(req.immediate)
+        .bind(&patch_selection)
+        .bind("")
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "trigger_upgrade: insert patch_jobs failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+            )
+        })?;
+
+        if first_job_id == Uuid::nil() {
+            first_job_id = job_id;
+        }
+
+        for host_id in host_ids {
+            sqlx::query(
+                r#"
+                INSERT INTO patch_job_hosts (job_id, host_id, status)
+                VALUES ($1, $2, 'queued'::job_status)
+                ON CONFLICT (job_id, host_id) DO NOTHING
+                "#,
+            )
+            .bind(job_id)
+            .bind(host_id)
+            .execute(&state.db)
+            .await
+            .map_err(|e| {
+                tracing::error!(
+                    error = %e, %job_id, %host_id,
+                    "trigger_upgrade: insert patch_job_hosts failed"
+                );
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+                )
+            })?;
+        }
+
+        total_host_count += host_ids.len();
+    }
+
+    // Audit logging
+    let action = if valid_hosts.len() > 1 {
+        AuditAction::BatchUpgradeTriggered
+    } else {
+        AuditAction::UpgradeTriggered
+    };
+
+    log_event(
+        &state.db,
+        action,
+        Some(auth.user_id),
+        Some(&auth.username),
+        Some("upgrade"),
+        Some(&first_job_id.to_string()),
+        json!({
+            "target_versions": groups.keys().collect::<Vec<_>>(),
+            "host_count": total_host_count,
+            "skipped_count": skipped.len(),
+            "immediate": req.immediate,
+        }),
+        None,
+        None,
+    )
+    .await;
+
+    tracing::info!(
+        job_id = %first_job_id,
+        host_count = total_host_count,
+        skipped_count = skipped.len(),
+        immediate = req.immediate,
+        user = %auth.username,
+        "Self-upgrade job triggered"
+    );
+
+    Ok(Json(TriggerUpgradeResponse {
+        job_id: first_job_id,
+        host_count: total_host_count,
+        skipped,
+    }))
+}
+
+/// Fetch available versions filtered by a host's OS package pattern.
+async fn list_host_versions(
+    state: &AppState,
+    host_id: Uuid,
+) -> Result<Vec<AvailableVersion>, (StatusCode, Json<Value>)> {
+    let mut versions: Vec<AvailableVersion> = sqlx::query_as(
+        r#"
+        SELECT id, version, download_url, checksum, file_name,
+               source, prerelease, published_at, fetched_at
+        FROM available_versions
+        ORDER BY published_at DESC
+        "#,
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, "Failed to query available versions");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+        )
+    })?;
+
+    if let Some(pattern) = lookup_package_pattern(state, host_id).await? {
+        match Regex::new(&pattern) {
+            Ok(re) => {
+                versions.retain(|v| re.is_match(&v.file_name));
+            },
+            Err(e) => {
+                tracing::warn!(pattern = %pattern, error = %e, "Invalid regex in OS package mapping, skipping filter");
+            },
+        }
+    }
+
+    Ok(versions)
 }
