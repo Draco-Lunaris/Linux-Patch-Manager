@@ -1,3 +1,9 @@
+linux-patch-manager (1.2.0~dev3-1) unstable; urgency=low
+
+  * feat: add Agent Upgrade Versions section with refresh button to SettingsPage
+
+ -- Echo <draco-lunaris-echo@moon-dragon.us>  $(date -R)
+
 linux-patch-manager (1.2.0~dev2-1) unstable; urgency=low
 
   * fix: correct API response formats (available-versions, os-package-mappings)
