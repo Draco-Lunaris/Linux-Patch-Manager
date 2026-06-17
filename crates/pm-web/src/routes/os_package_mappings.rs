@@ -72,7 +72,7 @@ async fn list_mappings(
             .await
             .map_err(|e| db_error(&e))?;
 
-    Ok(Json(json!({ "mappings": mappings })))
+    Ok(Json(serde_json::to_value(&mappings).unwrap_or(json!([]))))
 }
 
 async fn create_mapping(
@@ -116,7 +116,7 @@ async fn create_mapping(
     )
     .await;
 
-    Ok(Json(json!({ "mapping": mapping })))
+    Ok(Json(serde_json::to_value(&mapping).unwrap_or(json!({}))))
 }
 
 async fn update_mapping(
@@ -127,25 +127,24 @@ async fn update_mapping(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     admin_required(&auth)?;
 
-    let rows = sqlx::query(
-        "UPDATE os_package_mappings SET package_pattern = COALESCE($1, package_pattern), display_name = COALESCE($2, display_name), updated_at = NOW() WHERE id = $3"
+    let mapping: Option<OsPackageMapping> = sqlx::query_as(
+        "UPDATE os_package_mappings SET package_pattern = COALESCE($1, package_pattern), display_name = COALESCE($2, display_name), updated_at = NOW() WHERE id = $3 RETURNING id, os_name, os_version, package_pattern, display_name, is_default, created_at, updated_at"
     )
     .bind(&req.package_pattern)
     .bind(&req.display_name)
     .bind(id)
-    .execute(&state.db)
+    .fetch_optional(&state.db)
     .await
-    .map_err(|e| db_error(&e))?
-    .rows_affected();
+    .map_err(|e| db_error(&e))?;
 
-    if rows == 0 {
-        return Err((
+    let mapping = mapping.ok_or_else(|| {
+        (
             StatusCode::NOT_FOUND,
             Json(
                 json!({ "error": { "code": "not_found", "message": "OS package mapping not found" } }),
             ),
-        ));
-    }
+        )
+    })?;
 
     log_event(
         &state.db,
@@ -160,7 +159,7 @@ async fn update_mapping(
     )
     .await;
 
-    Ok(Json(json!({ "message": "Mapping updated" })))
+    Ok(Json(serde_json::to_value(&mapping).unwrap_or(json!({}))))
 }
 
 async fn delete_mapping(

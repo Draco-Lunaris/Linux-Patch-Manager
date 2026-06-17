@@ -120,7 +120,7 @@ async fn list_available_versions(
         // If no mapping found, return all versions (fallback)
     }
 
-    Ok(Json(json!({ "versions": versions })))
+    Ok(Json(serde_json::to_value(&versions).unwrap_or(json!([]))))
 }
 
 /// Look up the package pattern for a host's OS.
