@@ -1,3 +1,11 @@
+linux-patch-manager (1.2.0~dev2-1) unstable; urgency=low
+
+  * fix: correct API response formats (available-versions, os-package-mappings)
+  * fix: add OS package mappings settings UI to SettingsPage
+  * fix: blank /hosts page caused by response format mismatch
+
+ -- Echo <draco-lunaris-echo@moon-dragon.us>  $(date -R)
+
 linux-patch-manager (1.2.0~dev1-1) unstable; urgency=low
 
   * feat: agent self-upgrade controls (salvage & rebuild)
