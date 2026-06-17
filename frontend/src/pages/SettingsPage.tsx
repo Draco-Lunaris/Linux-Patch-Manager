@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Accordion, AccordionDetails, AccordionSummary, Alert, Box, Button,
-  CircularProgress, Container, FormControl, FormControlLabel, Grid,
-  IconButton, InputLabel, MenuItem, Select, Snackbar, Switch, TextField,
+  CircularProgress, Container, Dialog, DialogActions, DialogContent, DialogTitle,
+  FormControl, FormControlLabel, Grid, IconButton, InputLabel, MenuItem, Select,
+  Snackbar, Switch, Table, TableBody, TableCell, TableHead, TableRow, TextField,
   Toolbar, Typography,
 } from '@mui/material'
 import type { AxiosError } from 'axios'
@@ -14,9 +15,10 @@ import CloudIcon from '@mui/icons-material/Cloud'
 import EmailIcon from '@mui/icons-material/Email'
 import VpnKeyIcon from '@mui/icons-material/VpnKey'
 import ExploreIcon from '@mui/icons-material/Explore'
-import { settingsApi } from '../api/client'
+import EditIcon from '@mui/icons-material/Edit'
+import { settingsApi, osPackageMappingsApi } from '../api/client'
 import { useAuthStore } from '../store/authStore'
-import type { OidcConfigResponse, OidcDiscoveryResult, SmtpConfig, PollingConfig, NotificationConfig } from '../types'
+import type { OidcConfigResponse, OidcDiscoveryResult, SmtpConfig, PollingConfig, NotificationConfig, OsPackageMapping } from '../types'
 
 type OidcForm = OidcConfigResponse & { client_secret?: string }
 type SmtpForm = SmtpConfig & { password?: string }
@@ -53,6 +55,15 @@ export default function SettingsPage() {
   const [success, setSuccess] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
+  // OS Package Mappings state
+  const [osMappings, setOsMappings] = useState<OsPackageMapping[]>([])
+  const [mappingDialogOpen, setMappingDialogOpen] = useState(false)
+  const [editingMapping, setEditingMapping] = useState<OsPackageMapping | null>(null)
+  const [mappingForm, setMappingForm] = useState({
+    os_name: '', os_version: '', package_pattern: '', display_name: '',
+  })
+  const [mappingSaving, setMappingSaving] = useState(false)
+
   const loadSettings = useCallback(async () => {
     try {
       setLoading(true)
@@ -71,6 +82,67 @@ export default function SettingsPage() {
   }, [])
 
   useEffect(() => { loadSettings() }, [loadSettings])
+
+  const loadMappings = useCallback(async () => {
+    try {
+      const { data } = await osPackageMappingsApi.list()
+      setOsMappings(data)
+    } catch {
+      // ignore — admin-only endpoint may 403 for non-admins
+    }
+  }, [])
+
+  useEffect(() => { loadMappings() }, [loadMappings])
+
+  const handleOpenCreateMapping = () => {
+    setEditingMapping(null)
+    setMappingForm({ os_name: '', os_version: '', package_pattern: '', display_name: '' })
+    setMappingDialogOpen(true)
+  }
+
+  const handleOpenEditMapping = (m: OsPackageMapping) => {
+    setEditingMapping(m)
+    setMappingForm({ os_name: m.os_name, os_version: m.os_version, package_pattern: m.package_pattern, display_name: m.display_name })
+    setMappingDialogOpen(true)
+  }
+
+  const handleSaveMapping = async () => {
+    setMappingSaving(true)
+    try {
+      if (editingMapping) {
+        await osPackageMappingsApi.update(editingMapping.id, {
+          package_pattern: mappingForm.package_pattern,
+          display_name: mappingForm.display_name,
+        })
+      } else {
+        await osPackageMappingsApi.create({
+          os_name: mappingForm.os_name,
+          os_version: mappingForm.os_version,
+          package_pattern: mappingForm.package_pattern,
+          display_name: mappingForm.display_name,
+        })
+      }
+      setMappingDialogOpen(false)
+      await loadMappings()
+      setSuccess(editingMapping ? 'Mapping updated' : 'Mapping created')
+    } catch (err: unknown) {
+      const axiosErr = err as AxiosError<{ error?: { message?: string } }>
+      setError(axiosErr.response?.data?.error?.message ?? 'Failed to save mapping')
+    } finally {
+      setMappingSaving(false)
+    }
+  }
+
+  const handleDeleteMapping = async (id: string) => {
+    try {
+      await osPackageMappingsApi.delete(id)
+      await loadMappings()
+      setSuccess('Mapping deleted')
+    } catch (err: unknown) {
+      const axiosErr = err as AxiosError<{ error?: { message?: string } }>
+      setError(axiosErr.response?.data?.error?.message ?? 'Failed to delete mapping')
+    }
+  }
 
   const handleProviderTypeChange = (providerType: string) => {
     let discoveryUrl = oidc.discovery_url
@@ -482,6 +554,110 @@ export default function SettingsPage() {
           </Typography>
         </AccordionDetails>
       </Accordion>
+
+      {/* Section 6: OS Package Mappings (admin only) */}
+      {user?.role === 'admin' && (
+        <Accordion>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Typography fontWeight={600}>OS Package Mappings</Typography>
+          </AccordionSummary>
+          <AccordionDetails>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Maps OS name/version to package file patterns for filtering available upgrade versions by host OS.
+            </Typography>
+            {osMappings.length > 0 && (
+              <Table size="small" sx={{ mb: 2 }}>
+                <TableHead>
+                  <TableRow>
+                    <TableCell>OS Name</TableCell>
+                    <TableCell>OS Version</TableCell>
+                    <TableCell>Package Pattern</TableCell>
+                    <TableCell>Display Name</TableCell>
+                    <TableCell>Default</TableCell>
+                    <TableCell>Actions</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {osMappings.map((m) => (
+                    <TableRow key={m.id}>
+                      <TableCell>{m.os_name}</TableCell>
+                      <TableCell>{m.os_version}</TableCell>
+                      <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.85em' }}>{m.package_pattern}</TableCell>
+                      <TableCell>{m.display_name}</TableCell>
+                      <TableCell>{m.is_default ? 'Yes' : 'No'}</TableCell>
+                      <TableCell>
+                        <IconButton size="small" onClick={() => handleOpenEditMapping(m)} disabled={m.is_default}>
+                          <EditIcon fontSize="small" />
+                        </IconButton>
+                        <IconButton size="small" onClick={() => handleDeleteMapping(m.id)} disabled={m.is_default}>
+                          <DeleteIcon fontSize="small" />
+                        </IconButton>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+            <Button variant="outlined" startIcon={<AddIcon />} onClick={handleOpenCreateMapping}>
+              Add Mapping
+            </Button>
+          </AccordionDetails>
+        </Accordion>
+      )}
+
+      {/* OS Package Mapping Create/Edit Dialog */}
+      <Dialog open={mappingDialogOpen} onClose={() => setMappingDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>{editingMapping ? 'Edit OS Package Mapping' : 'New OS Package Mapping'}</DialogTitle>
+        <DialogContent>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
+            <TextField
+              fullWidth
+              label="OS Name"
+              value={mappingForm.os_name}
+              onChange={(e) => setMappingForm({ ...mappingForm, os_name: e.target.value })}
+              placeholder="e.g. Ubuntu"
+              disabled={!!editingMapping}
+              helperText={editingMapping ? 'Cannot be changed after creation' : 'OS family name'}
+            />
+            <TextField
+              fullWidth
+              label="OS Version"
+              value={mappingForm.os_version}
+              onChange={(e) => setMappingForm({ ...mappingForm, os_version: e.target.value })}
+              placeholder="e.g. 24.04 or *"
+              disabled={!!editingMapping}
+              helperText={editingMapping ? 'Cannot be changed after creation' : 'Specific version or * for wildcard'}
+            />
+            <TextField
+              fullWidth
+              label="Package Pattern"
+              value={mappingForm.package_pattern}
+              onChange={(e) => setMappingForm({ ...mappingForm, package_pattern: e.target.value })}
+              placeholder="e.g. .*ubuntu.*24\.04.*\.deb"
+              helperText="Regex pattern to match package file names"
+            />
+            <TextField
+              fullWidth
+              label="Display Name"
+              value={mappingForm.display_name}
+              onChange={(e) => setMappingForm({ ...mappingForm, display_name: e.target.value })}
+              placeholder="e.g. Ubuntu 24.04 (DEB)"
+              helperText="Human-readable label"
+            />
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setMappingDialogOpen(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={handleSaveMapping}
+            disabled={mappingSaving || !mappingForm.os_name || !mappingForm.os_version || !mappingForm.package_pattern || !mappingForm.display_name}
+            startIcon={mappingSaving ? <CircularProgress size={20} /> : <SaveIcon />}
+          >
+            {editingMapping ? 'Update' : 'Create'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Snackbar
         open={!!success}

@@ -424,7 +424,7 @@ export const osPackageMappingsApi = {
   list: () =>
     apiClient.get<OsPackageMapping[]>('/settings/os-package-mappings'),
 
-  create: (data: Omit<OsPackageMapping, 'id' | 'created_at' | 'updated_at'>) =>
+  create: (data: Omit<OsPackageMapping, 'id' | 'created_at' | 'updated_at' | 'is_default'>) =>
     apiClient.post<OsPackageMapping>('/settings/os-package-mappings', data),
 
   update: (id: string, data: Partial<OsPackageMapping>) =>
