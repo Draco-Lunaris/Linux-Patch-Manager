@@ -1,3 +1,14 @@
+linux-patch-manager (1.2.0~dev1-1) unstable; urgency=low
+
+  * feat: agent self-upgrade controls (salvage & rebuild)
+  * feat: available_versions catalog with OS package mapping
+  * feat: POST /api/v1/upgrades/trigger endpoint with RBAC
+  * feat: self-upgrade reconciliation with reconnect-confirm
+  * feat: frontend upgrade UI with canary warning
+  * ci: add gitleaks allowlist for test-only Ed25519 keys
+
+ -- Echo <draco-lunaris-echo@moon-dragon.us>  $(date -R)
+
 linux-patch-manager (1.1.19-1) unstable; urgency=low
 
   * fix(packaging): sync frontend version with Cargo.toml in build-package.sh
