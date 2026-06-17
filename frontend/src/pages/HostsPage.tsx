@@ -486,7 +486,10 @@ export default function HostsPage() {
               onChange={e => setUpgradeTargetVersion(e.target.value === '__latest__' ? null : e.target.value)}
             >
               <MenuItem value="__latest__">Latest (auto)</MenuItem>
-              {availableVersions.filter(v => !v.prerelease).map(v => (
+              {availableVersions
+                .filter(v => !v.prerelease)
+                .filter((v, i, arr) => arr.findIndex(x => x.version === v.version) === i)
+                .map(v => (
                 <MenuItem key={v.id} value={v.version}>{v.version}</MenuItem>
               ))}
             </Select>
