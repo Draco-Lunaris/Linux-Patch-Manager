@@ -3,7 +3,7 @@ import {
   Accordion, AccordionDetails, AccordionSummary, Alert, Box, Button,
   CircularProgress, Container, Dialog, DialogActions, DialogContent, DialogTitle,
   FormControl, FormControlLabel, Grid, IconButton, InputLabel, MenuItem, Select,
-  Snackbar, Switch, Table, TableBody, TableCell, TableHead, TableRow, TextField,
+  Chip, Snackbar, Switch, Table, TableBody, TableCell, TableHead, TableRow, TextField,
   Toolbar, Typography,
 } from '@mui/material'
 import type { AxiosError } from 'axios'
@@ -16,9 +16,10 @@ import EmailIcon from '@mui/icons-material/Email'
 import VpnKeyIcon from '@mui/icons-material/VpnKey'
 import ExploreIcon from '@mui/icons-material/Explore'
 import EditIcon from '@mui/icons-material/Edit'
-import { settingsApi, osPackageMappingsApi } from '../api/client'
+import RefreshIcon from '@mui/icons-material/Refresh'
+import { settingsApi, osPackageMappingsApi, upgradesApi } from '../api/client'
 import { useAuthStore } from '../store/authStore'
-import type { OidcConfigResponse, OidcDiscoveryResult, SmtpConfig, PollingConfig, NotificationConfig, OsPackageMapping } from '../types'
+import type { OidcConfigResponse, OidcDiscoveryResult, SmtpConfig, PollingConfig, NotificationConfig, OsPackageMapping, AvailableVersion } from '../types'
 
 type OidcForm = OidcConfigResponse & { client_secret?: string }
 type SmtpForm = SmtpConfig & { password?: string }
@@ -64,6 +65,11 @@ export default function SettingsPage() {
   })
   const [mappingSaving, setMappingSaving] = useState(false)
 
+  // Agent Upgrade Versions state
+  const [availableVersions, setAvailableVersions] = useState<AvailableVersion[]>([])
+  const [refreshingVersions, setRefreshingVersions] = useState(false)
+  const [versionsSnackbar, setVersionsSnackbar] = useState<{ message: string; severity: 'success' | 'error' } | null>(null)
+
   const loadSettings = useCallback(async () => {
     try {
       setLoading(true)
@@ -93,6 +99,32 @@ export default function SettingsPage() {
   }, [])
 
   useEffect(() => { loadMappings() }, [loadMappings])
+
+  const loadAvailableVersions = useCallback(async () => {
+    try {
+      const { data } = await upgradesApi.listAvailableVersions()
+      setAvailableVersions(data)
+    } catch {
+      // ignore — admin-only endpoint may 403 for non-admins
+    }
+  }, [])
+
+  useEffect(() => { loadAvailableVersions() }, [loadAvailableVersions])
+
+  const handleRefreshVersions = async () => {
+    setRefreshingVersions(true)
+    try {
+      const { data } = await upgradesApi.refreshVersions()
+      setAvailableVersions(data)
+      setVersionsSnackbar({ message: `Refreshed ${data.length} available versions`, severity: 'success' })
+    } catch (err: unknown) {
+      const axiosErr = err as AxiosError<{ error?: { message?: string } }>
+      const msg = axiosErr.response?.data?.error?.message ?? 'Failed to refresh versions'
+      setVersionsSnackbar({ message: msg, severity: 'error' })
+    } finally {
+      setRefreshingVersions(false)
+    }
+  }
 
   const handleOpenCreateMapping = () => {
     setEditingMapping(null)
@@ -605,6 +637,58 @@ export default function SettingsPage() {
         </Accordion>
       )}
 
+      {/* Section 7: Agent Upgrade Versions (admin only) */}
+      {user?.role === 'admin' && (
+        <Accordion>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Typography fontWeight={600}>Agent Upgrade Versions</Typography>
+          </AccordionSummary>
+          <AccordionDetails>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Available agent versions cached from GitHub releases. Click refresh to fetch the latest releases from the Linux-Patch-Api repository.
+            </Typography>
+            <Button
+              variant="outlined"
+              onClick={handleRefreshVersions}
+              disabled={refreshingVersions}
+              startIcon={refreshingVersions ? <CircularProgress size={20} /> : <RefreshIcon />}
+              sx={{ mb: 2 }}
+            >
+              Refresh Versions
+            </Button>
+            {availableVersions.length > 0 && (
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Version</TableCell>
+                    <TableCell>Prerelease</TableCell>
+                    <TableCell>Published At</TableCell>
+                    <TableCell>Source</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {availableVersions.map((v) => (
+                    <TableRow key={v.id}>
+                      <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.85em' }}>{v.version}</TableCell>
+                      <TableCell>
+                        <Chip
+                          label={v.prerelease ? 'Yes' : 'No'}
+                          size="small"
+                          color={v.prerelease ? 'warning' : 'success'}
+                          variant={v.prerelease ? 'filled' : 'outlined'}
+                        />
+                      </TableCell>
+                      <TableCell>{v.published_at ? new Date(v.published_at).toLocaleString() : '—'}</TableCell>
+                      <TableCell>{v.source}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </AccordionDetails>
+        </Accordion>
+      )}
+
       {/* OS Package Mapping Create/Edit Dialog */}
       <Dialog open={mappingDialogOpen} onClose={() => setMappingDialogOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>{editingMapping ? 'Edit OS Package Mapping' : 'New OS Package Mapping'}</DialogTitle>
@@ -667,6 +751,17 @@ export default function SettingsPage() {
       >
         <Alert severity="success" onClose={() => setSuccess(null)}>
           {success}
+        </Alert>
+      </Snackbar>
+
+      <Snackbar
+        open={!!versionsSnackbar}
+        autoHideDuration={4000}
+        onClose={() => setVersionsSnackbar(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert severity={versionsSnackbar?.severity} onClose={() => setVersionsSnackbar(null)}>
+          {versionsSnackbar?.message}
         </Alert>
       </Snackbar>
     </Container>
