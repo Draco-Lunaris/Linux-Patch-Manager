@@ -482,6 +482,8 @@ pub enum JobKind {
     PatchRemove,
     Reboot,
     Rollback,
+    #[sqlx(rename = "self_upgrade")]
+    SelfUpgrade,
 }
 
 /// Full `patch_jobs` row.
@@ -632,4 +634,53 @@ pub struct UpdateMaintenanceWindowRequest {
     pub recurrence_day: Option<i32>,
     pub enabled: Option<bool>,
     pub auto_apply: Option<bool>,
+}
+
+// ============================================================
+// Available Versions (cached release info)
+// ============================================================
+
+/// A cached release version from GitHub or custom URL.
+/// Mirrors the `available_versions` table.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct AvailableVersion {
+    pub id: Uuid,
+    pub version: String,
+    pub download_url: String,
+    pub checksum: Option<String>,
+    pub file_name: String,
+    pub source: String,
+    pub prerelease: bool,
+    pub published_at: Option<DateTime<Utc>>,
+    pub fetched_at: DateTime<Utc>,
+}
+
+// ============================================================
+// OsPackageMapping
+// ============================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct OsPackageMapping {
+    pub id: Uuid,
+    pub os_name: String,
+    pub os_version: String,
+    pub package_pattern: String,
+    pub display_name: String,
+    pub is_default: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateOsPackageMapping {
+    pub os_name: String,
+    pub os_version: String,
+    pub package_pattern: String,
+    pub display_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateOsPackageMapping {
+    pub package_pattern: Option<String>,
+    pub display_name: Option<String>,
 }

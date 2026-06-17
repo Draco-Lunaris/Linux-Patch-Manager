@@ -1,15 +1,16 @@
 import { useEffect, useState, useCallback } from 'react'
 import {
-  Box, Button, Chip, CircularProgress, Container, Dialog, DialogTitle,
-  DialogContent, DialogActions, IconButton, Paper, Snackbar, Alert,
+  Box, Button, Checkbox, Chip, CircularProgress, Container, Dialog, DialogTitle,
+  DialogContent, DialogActions, FormControl, IconButton, InputLabel, MenuItem, Paper,
+  Select, Snackbar, Alert,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   TablePagination, TextField, Toolbar, Tooltip, Typography,
 } from '@mui/material'
-import { Add as AddIcon, Refresh as RefreshIcon, Delete as DeleteIcon, CheckCircle as CheckCircleIcon, Cancel as CancelIcon, Remove as RemoveIcon, Pending as PendingIcon, GppMaybe as GppMaybeIcon, CheckCircleOutline as CheckCircleOutlineIcon, WarningAmber as WarningAmberIcon, VerifiedUser as VerifiedUserIcon, Security as SecurityIcon } from '@mui/icons-material'
+import { Add as AddIcon, Refresh as RefreshIcon, Delete as DeleteIcon, CheckCircle as CheckCircleIcon, Cancel as CancelIcon, Remove as RemoveIcon, Pending as PendingIcon, GppMaybe as GppMaybeIcon, CheckCircleOutline as CheckCircleOutlineIcon, WarningAmber as WarningAmberIcon, VerifiedUser as VerifiedUserIcon, Security as SecurityIcon, SystemUpdate as SystemUpdateIcon, NewReleases as NewReleasesIcon } from '@mui/icons-material'
 import { useNavigate } from 'react-router-dom'
-import { apiClient, hostsApi, enrollmentApi } from '../api/client'
+import { apiClient, hostsApi, enrollmentApi, upgradesApi } from '../api/client'
 import { useAuthStore } from '../store/authStore'
-import type { Host, HostHealthStatus, EnrollmentRequest, EnrollmentConflictResponse } from '../types'
+import type { Host, HostHealthStatus, EnrollmentRequest, EnrollmentConflictResponse, AvailableVersion, TriggerUpgradeRequest } from '../types'
 
 const statusColor = (s: HostHealthStatus) =>
   s === 'healthy' ? 'success' : s === 'degraded' ? 'warning' : s === 'unreachable' ? 'error' : 'default'
@@ -35,6 +36,15 @@ export default function HostsPage() {
   const [denyTarget, setDenyTarget] = useState<EnrollmentRequest | null>(null)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [conflictModal, setConflictModal] = useState<{ request: EnrollmentRequest; existingHost: Host } | null>(null)
+
+  // ── Upgrade state ───────────────────────────────────────────────────────
+  const [availableVersions, setAvailableVersions] = useState<AvailableVersion[]>([])
+  const [selectedHostIds, setSelectedHostIds] = useState<Set<string>>(new Set())
+  const [upgradeDialogOpen, setUpgradeDialogOpen] = useState(false)
+  const [upgradeTargetVersion, setUpgradeTargetVersion] = useState<string | null>(null)
+  const [upgradeImmediate, setUpgradeImmediate] = useState(true)
+  const [upgradeLoading, setUpgradeLoading] = useState(false)
+  const [canaryWarningOpen, setCanaryWarningOpen] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -134,7 +144,82 @@ export default function HostsPage() {
     }
   }
 
-  useEffect(() => { load(); loadPending() }, [load, loadPending])
+  // ── Upgrade handlers ────────────────────────────────────────────────────
+  const loadAvailableVersions = useCallback(async () => {
+    try {
+      const res = await upgradesApi.listAvailableVersions()
+      setAvailableVersions(res.data)
+    } catch { /* ignore */ }
+  }, [])
+
+  const handleOpenUpgradeDialog = (hostIds: string[]) => {
+    setSelectedHostIds(new Set(hostIds))
+    setUpgradeTargetVersion(null)
+    setUpgradeImmediate(true)
+    setUpgradeDialogOpen(true)
+  }
+
+  const handleTriggerUpgrade = async () => {
+    if (selectedHostIds.size === 0) return
+    // If 5+ hosts selected, show canary warning first
+    if (selectedHostIds.size >= 5 && !canaryWarningOpen) {
+      setCanaryWarningOpen(true)
+      return
+    }
+    setUpgradeLoading(true)
+    setCanaryWarningOpen(false)
+    try {
+      const req: TriggerUpgradeRequest = {
+        host_ids: Array.from(selectedHostIds),
+        target_version: upgradeTargetVersion,
+        immediate: upgradeImmediate,
+      }
+      const res = await upgradesApi.triggerUpgrade(req)
+      const data = res.data
+      const skippedInfo = data.skipped.length > 0
+        ? ` (${data.skipped.length} skipped: ${data.skipped.map(s => s.reason).join(', ')})`
+        : ''
+      setSnackbar({ open: true, message: `Upgrade job created for ${data.host_count} host(s)${skippedInfo}`, severity: 'success' })
+      setUpgradeDialogOpen(false)
+      setSelectedHostIds(new Set())
+      load()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: { message?: string } } } })
+        ?.response?.data?.error?.message ?? 'Failed to trigger upgrade'
+      setSnackbar({ open: true, message: msg, severity: 'error' })
+    } finally {
+      setUpgradeLoading(false)
+    }
+  }
+
+  const handleToggleSelect = (hostId: string) => {
+    setSelectedHostIds(prev => {
+      const next = new Set(prev)
+      if (next.has(hostId)) next.delete(hostId)
+      else next.add(hostId)
+      return next
+    })
+  }
+
+  const handleToggleSelectAll = () => {
+    if (selectedHostIds.size === filtered.length) {
+      setSelectedHostIds(new Set())
+    } else {
+      setSelectedHostIds(new Set(filtered.map(h => h.id)))
+    }
+  }
+
+  // Helper: check if a newer version is available for a host
+  const isNewerVersionAvailable = (host: Host): boolean => {
+    if (!host.agent_version) return false
+    const current = host.agent_version
+    return availableVersions.some(v => {
+      if (v.prerelease) return false
+      return v.version.localeCompare(current, undefined, { numeric: true, sensitivity: 'base' }) > 0
+    })
+  }
+
+  useEffect(() => { load(); loadPending(); loadAvailableVersions() }, [load, loadPending, loadAvailableVersions])
 
   const filtered = hosts.filter(h =>
     h.fqdn.toLowerCase().includes(search.toLowerCase()) ||
@@ -168,7 +253,18 @@ export default function HostsPage() {
         </Tooltip>
         <TextField size="small" placeholder="Search..." value={search}
           onChange={e => setSearch(e.target.value)} sx={{ mr: 2 }} />
-        <Tooltip title="Refresh"><IconButton onClick={() => { load(); loadPending() }}><RefreshIcon /></IconButton></Tooltip>
+        <Tooltip title="Refresh"><IconButton onClick={() => { load(); loadPending(); loadAvailableVersions() }}><RefreshIcon /></IconButton></Tooltip>
+        {canWrite && selectedHostIds.size > 0 && (
+          <Button
+            variant="outlined"
+            color="secondary"
+            startIcon={<SystemUpdateIcon />}
+            onClick={() => handleOpenUpgradeDialog(Array.from(selectedHostIds))}
+            sx={{ ml: 1 }}
+          >
+            Upgrade {selectedHostIds.size} Agent{selectedHostIds.size > 1 ? 's' : ''}
+          </Button>
+        )}
         {canWrite && <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/hosts/new')} sx={{ ml: 1 }}>Add Host</Button>}
       </Toolbar>
       {loading ? <Box display="flex" justifyContent="center" mt="4"><CircularProgress /></Box> : (
@@ -176,6 +272,13 @@ export default function HostsPage() {
           <Table size="small">
             <TableHead>
               <TableRow>
+                {canWrite && <TableCell padding="checkbox">
+                  <Checkbox
+                    checked={filtered.length > 0 && selectedHostIds.size === filtered.length}
+                    indeterminate={selectedHostIds.size > 0 && selectedHostIds.size < filtered.length}
+                    onChange={handleToggleSelectAll}
+                  />
+                </TableCell>}
                 <TableCell>FQDN</TableCell>
                 <TableCell>Display Name</TableCell>
                 <TableCell>IP Address</TableCell>
@@ -226,6 +329,12 @@ export default function HostsPage() {
                 filtered.map(h => (
                   <TableRow key={h.id} hover sx={{ cursor: 'pointer' }}
                     onClick={() => navigate(`/hosts/${h.id}`)}>
+                    {canWrite && <TableCell padding="checkbox" onClick={e => e.stopPropagation()}>
+                      <Checkbox
+                        checked={selectedHostIds.has(h.id)}
+                        onChange={() => handleToggleSelect(h.id)}
+                      />
+                    </TableCell>}
                     <TableCell>{h.fqdn}</TableCell>
                     <TableCell>{h.display_name}</TableCell>
                     <TableCell>{h.ip_address}</TableCell>
@@ -255,8 +364,23 @@ export default function HostsPage() {
                         <Tooltip title="CRL status not available (agent version does not support CRL)"><RemoveIcon color="disabled" fontSize="small" /></Tooltip>
                       )}
                     </TableCell>
-                    <TableCell>{h.agent_version ?? '—'}</TableCell>
+                    <TableCell>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                        {h.agent_version ?? '—'}
+                        {isNewerVersionAvailable(h) && (
+                          <Tooltip title="Upgrade available">
+                            <NewReleasesIcon color="secondary" fontSize="small" />
+                          </Tooltip>
+                        )}
+                      </Box>
+                    </TableCell>
                     {canWrite && <TableCell onClick={e => e.stopPropagation()}>
+                      <Tooltip title="Upgrade agent">
+                        <IconButton size="small" color="secondary"
+                          onClick={(e) => { e.stopPropagation(); handleOpenUpgradeDialog([h.id]) }}>
+                          <SystemUpdateIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
                       <Tooltip title="Request refresh">
                         <IconButton size="small" color="primary"
                           disabled={refreshing === h.id}
@@ -341,6 +465,89 @@ export default function HostsPage() {
             variant="contained"
           >
             Overwrite Existing Host
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* ── Upgrade Dialog ─────────────────────────────────────────────── */}
+      <Dialog open={upgradeDialogOpen} onClose={() => setUpgradeDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <SystemUpdateIcon /> Upgrade Agent{selectedHostIds.size > 1 ? 's' : ''}
+        </DialogTitle>
+        <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
+          <Typography variant="body2" color="text.secondary">
+            {selectedHostIds.size} host{selectedHostIds.size > 1 ? 's' : ''} selected for agent upgrade.
+          </Typography>
+          <FormControl fullWidth>
+            <InputLabel>Target Version</InputLabel>
+            <Select
+              value={upgradeTargetVersion ?? '__latest__'}
+              label="Target Version"
+              onChange={e => setUpgradeTargetVersion(e.target.value === '__latest__' ? null : e.target.value)}
+            >
+              <MenuItem value="__latest__">Latest (auto)</MenuItem>
+              {availableVersions.filter(v => !v.prerelease).map(v => (
+                <MenuItem key={v.id} value={v.version}>{v.version}</MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Button
+              variant={upgradeImmediate ? 'contained' : 'outlined'}
+              size="small"
+              onClick={() => setUpgradeImmediate(true)}
+            >
+              Immediate
+            </Button>
+            <Button
+              variant={!upgradeImmediate ? 'contained' : 'outlined'}
+              size="small"
+              onClick={() => setUpgradeImmediate(false)}
+            >
+              Scheduled
+            </Button>
+          </Box>
+          {!upgradeImmediate && (
+            <Typography variant="caption" color="text.secondary">
+              Scheduled upgrades will use the next available maintenance window.
+            </Typography>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setUpgradeDialogOpen(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            color="secondary"
+            onClick={handleTriggerUpgrade}
+            disabled={upgradeLoading}
+          >
+            {upgradeLoading ? <CircularProgress size={20} /> : 'Upgrade'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* ── Canary Warning Dialog ───────────────────────────────────────── */}
+      <Dialog open={canaryWarningOpen} onClose={() => setCanaryWarningOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <WarningAmberIcon color="warning" /> Fleet Safety Warning
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" gutterBottom>
+            You are about to upgrade <strong>{selectedHostIds.size}</strong> hosts at once.
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Consider upgrading a small canary group first (2–3 hosts) to verify the new agent version works correctly before rolling out to the entire fleet.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setCanaryWarningOpen(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            color="warning"
+            onClick={handleTriggerUpgrade}
+            disabled={upgradeLoading}
+          >
+            Upgrade All Anyway
           </Button>
         </DialogActions>
       </Dialog>

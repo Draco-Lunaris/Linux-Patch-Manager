@@ -1,0 +1,10 @@
+# Gitleaks allowlist for test-only keys
+# These are Ed25519 keys used exclusively in integration tests and auth module.
+# They are NOT real secrets and cannot be used for authentication.
+
+[allowlist]
+  description = "Test-only Ed25519 keys for integration tests and auth module"
+  paths = [
+    '''crates/pm-web/tests/integration/common/mod\.rs''',
+    '''crates/pm-auth/src/jwt\.rs''',
+  ]

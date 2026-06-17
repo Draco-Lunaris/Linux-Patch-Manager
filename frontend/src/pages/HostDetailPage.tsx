@@ -41,16 +41,18 @@ import {
   Delete as DeleteIcon,
   Edit as EditIcon,
   MonitorHeart as MonitorHeartIcon,
+  NewReleases as NewReleasesIcon,
   PlayArrow as PlayArrowIcon,
   Remove as RemoveIcon,
   Schedule as ScheduleIcon,
+  SystemUpdate as SystemUpdateIcon,
   VpnKey as VpnKeyIcon,
   ContentCopy as CopyIcon,
   VerifiedUser as VerifiedUserIcon,
   Security as SecurityIcon,
   WarningAmber as WarningAmberIcon,
 } from '@mui/icons-material'
-import { apiClient, hostsApi, maintenanceWindowsApi, healthChecksApi, certsApi } from '../api/client'
+import { apiClient, hostsApi, maintenanceWindowsApi, healthChecksApi, certsApi, upgradesApi } from '../api/client'
 import { useAuthStore } from '../store/authStore'
 import type {
   CreateHostRequest,
@@ -61,6 +63,8 @@ import type {
   HealthCheckWithResult,
   CreateHealthCheckRequest,
   UpdateHealthCheckRequest,
+  AvailableVersion,
+  TriggerUpgradeRequest,
 } from '../types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -624,6 +628,13 @@ export default function HostDetailPage() {
   const [editDisplayName, setEditDisplayName] = useState('')
   const [savingHost, setSavingHost] = useState(false)
 
+  // ── Upgrade state ──────────────────────────────────────────────────────────
+  const [availableVersions, setAvailableVersions] = useState<AvailableVersion[]>([])
+  const [upgradeDialogOpen, setUpgradeDialogOpen] = useState(false)
+  const [upgradeTargetVersion, setUpgradeTargetVersion] = useState<string | null>(null)
+  const [upgradeImmediate, setUpgradeImmediate] = useState(true)
+  const [upgradeLoading, setUpgradeLoading] = useState(false)
+
   const enterEdit = () => {
     setEditFqdn(String(host?.fqdn ?? ''))
     setEditIp(String(host?.ip_address ?? ''))
@@ -684,6 +695,56 @@ export default function HostDetailPage() {
       })
       .catch(() => setCertExists(false))
   }, [id])
+
+  // ── Fetch available versions for upgrade badge ────────────────────────────
+  useEffect(() => {
+    upgradesApi.listAvailableVersions()
+      .then(res => setAvailableVersions(res.data))
+      .catch(() => { /* ignore */ })
+  }, [])
+
+  // ── Helper: check if newer version available ──────────────────────────────
+  const isNewerVersionAvailable = (): boolean => {
+    if (!host?.agent_version) return false
+    const current = String(host.agent_version)
+    return availableVersions.some(v => {
+      if (v.prerelease) return false
+      return v.version.localeCompare(current, undefined, { numeric: true, sensitivity: 'base' }) > 0
+    })
+  }
+
+  // ── Helper: open upgrade dialog ───────────────────────────────────────────
+  const openUpgradeDialog = () => {
+    setUpgradeTargetVersion(null)
+    setUpgradeImmediate(true)
+    setUpgradeDialogOpen(true)
+  }
+
+  // ── Trigger upgrade handler ───────────────────────────────────────────────
+  const handleTriggerUpgrade = async () => {
+    if (!id || id === 'new') return
+    setUpgradeLoading(true)
+    try {
+      const req: TriggerUpgradeRequest = {
+        host_ids: [id],
+        target_version: upgradeTargetVersion,
+        immediate: upgradeImmediate,
+      }
+      const res = await upgradesApi.triggerUpgrade(req)
+      const data = res.data
+      const skippedInfo = data.skipped.length > 0
+        ? ` (${data.skipped.length} skipped: ${data.skipped.map(s => s.reason).join(', ')})`
+        : ''
+      showSnack(`Upgrade job created for ${data.host_count} host(s)${skippedInfo}`, 'success')
+      setUpgradeDialogOpen(false)
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: { message?: string } } } })
+        ?.response?.data?.error?.message ?? 'Failed to trigger upgrade'
+      showSnack(msg, 'error')
+    } finally {
+      setUpgradeLoading(false)
+    }
+  }
 
   // ── Fetch windows ─────────────────────────────────────────────────────────
   const fetchWindows = useCallback(async () => {
@@ -995,6 +1056,17 @@ export default function HostDetailPage() {
                 Re-issue Certificate
               </Button>
             )}
+            {!editing && canWrite && (
+              <Button
+                variant="outlined"
+                size="small"
+                color="secondary"
+                startIcon={<SystemUpdateIcon />}
+                onClick={() => { setUpgradeTargetVersion(null); setUpgradeImmediate(true); setUpgradeDialogOpen(true) }}
+              >
+                Upgrade Agent
+              </Button>
+            )}
           </Box>
         </Box>
         <Divider sx={{ mb: 2 }} />
@@ -1024,7 +1096,7 @@ export default function HostDetailPage() {
                 <Typography variant="body2">{String(host.display_name)}</Typography>
               )}
             </Grid>
-            {Object.entries(host).filter(([k]) => !['fqdn','ip_address','display_name'].includes(k)).map(([k, v]) =>
+            {Object.entries(host).filter(([k]) => !['fqdn','ip_address','display_name','agent_version'].includes(k)).map(([k, v]) =>
               v !== null && v !== '' ? (
                 <Grid size={{ xs: 12, sm: 6, md: 4 }} key={k}>
                   <Typography variant="caption" color="text.secondary" display="block">
@@ -1034,6 +1106,25 @@ export default function HostDetailPage() {
                 </Grid>
               ) : null
             )}
+            <Grid size={{ xs: 12, sm: 6, md: 4 }}>
+              <Typography variant="caption" color="text.secondary" display="block">AGENT VERSION</Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Typography variant="body2">{String(host?.agent_version ?? '—')}</Typography>
+                {isNewerVersionAvailable() && (
+                  <Tooltip title="Upgrade available">
+                    <Chip
+                      size="small"
+                      icon={<NewReleasesIcon />}
+                      label="Upgrade available"
+                      color="secondary"
+                      variant="outlined"
+                      sx={{ cursor: canWrite ? 'pointer' : 'default' }}
+                      onClick={canWrite ? () => openUpgradeDialog() : undefined}
+                    />
+                  </Tooltip>
+                )}
+              </Box>
+            </Grid>
           </>)}
         </Grid>
       </Paper>
@@ -1402,6 +1493,63 @@ export default function HostDetailPage() {
       />
 
       {/* Snackbar */}
+      {/* ── Upgrade Dialog ──────────────────────────────────────────────── */}
+      <Dialog open={upgradeDialogOpen} onClose={() => setUpgradeDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <SystemUpdateIcon /> Upgrade Agent
+        </DialogTitle>
+        <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
+          <Typography variant="body2" color="text.secondary">
+            Upgrade the agent on <strong>{String(host?.fqdn ?? '')}</strong> to a new version.
+          </Typography>
+          <FormControl fullWidth>
+            <InputLabel>Target Version</InputLabel>
+            <Select
+              value={upgradeTargetVersion ?? '__latest__'}
+              label="Target Version"
+              onChange={e => setUpgradeTargetVersion(e.target.value === '__latest__' ? null : e.target.value)}
+            >
+              <MenuItem value="__latest__">Latest (auto)</MenuItem>
+              {availableVersions.filter(v => !v.prerelease).map(v => (
+                <MenuItem key={v.id} value={v.version}>{v.version}</MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Button
+              variant={upgradeImmediate ? 'contained' : 'outlined'}
+              size="small"
+              onClick={() => setUpgradeImmediate(true)}
+            >
+              Immediate
+            </Button>
+            <Button
+              variant={!upgradeImmediate ? 'contained' : 'outlined'}
+              size="small"
+              onClick={() => setUpgradeImmediate(false)}
+            >
+              Scheduled
+            </Button>
+          </Box>
+          {!upgradeImmediate && (
+            <Typography variant="caption" color="text.secondary">
+              Scheduled upgrades will use the next available maintenance window.
+            </Typography>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setUpgradeDialogOpen(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            color="secondary"
+            onClick={handleTriggerUpgrade}
+            disabled={upgradeLoading}
+          >
+            {upgradeLoading ? <CircularProgress size={20} /> : 'Upgrade'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       <Snackbar
         open={snackbar.open}
         autoHideDuration={4000}
