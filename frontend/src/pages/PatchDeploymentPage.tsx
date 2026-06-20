@@ -19,6 +19,7 @@ import {
   TableCell,
   TableHead,
   TableRow,
+  TableSortLabel,
   TextField,
   Toolbar,
   Typography,
@@ -55,6 +56,28 @@ export default function PatchDeploymentPage() {
   const [healthFilter, setHealthFilter] = useState<HostHealthStatus | ''>('')
   const [patchesFilter, setPatchesFilter] = useState<'all' | 'missing' | 'uptodate'>('all')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+
+  // ── Sorting state ────────────────────────────────────────────────────────
+  type SortKey = 'display_name' | 'fqdn' | 'ip_address' | 'health_status' | 'health_check_status' | 'patches_missing' | 'os'
+  const [sortKey, setSortKey] = useState<SortKey | null>(null)
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+
+  const handleSortChange = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortKey(key)
+      setSortDir('asc')
+    }
+  }
+
+  const getSortValue = (h: Host, key: SortKey): string | number => {
+    switch (key) {
+      case 'os': return (h.os_name ?? h.os_family ?? '').toLowerCase()
+      case 'patches_missing': return h.patches_missing
+      default: return String(h[key as keyof Host] ?? '').toLowerCase()
+    }
+  }
 
   // Step 1 state
   const [immediate, setImmediate] = useState(true)
@@ -97,6 +120,21 @@ export default function PatchDeploymentPage() {
       (patchesFilter === 'uptodate' && h.patches_missing === 0)
     return matchesSearch && matchesHealth && matchesPatches
   })
+
+  const sortedHosts = (() => {
+    if (!sortKey) return filteredHosts
+    const arr = [...filteredHosts]
+    arr.sort((a, b) => {
+      const va = getSortValue(a, sortKey)
+      const vb = getSortValue(b, sortKey)
+      if (typeof va === 'number' && typeof vb === 'number') {
+        return sortDir === 'asc' ? va - vb : vb - va
+      }
+      const cmp = String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: 'base' })
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+    return arr
+  })()
 
   const handleToggleHost = (id: string) => {
     setSelectedIds((prev) => {
@@ -253,13 +291,27 @@ export default function PatchDeploymentPage() {
                         disabled={filteredHosts.length === 0}
                       />
                     </TableCell>
-                    <TableCell>Display Name</TableCell>
-                    <TableCell>FQDN</TableCell>
-                    <TableCell>IP Address</TableCell>
-                    <TableCell>Health</TableCell>
-                    <TableCell>Checks</TableCell>
-                    <TableCell>Patches</TableCell>
-                    <TableCell>OS</TableCell>
+                    <TableCell>
+                      <TableSortLabel active={sortKey === 'display_name'} direction={sortKey === 'display_name' ? sortDir : 'asc'} onClick={() => handleSortChange('display_name')}>Display Name</TableSortLabel>
+                    </TableCell>
+                    <TableCell>
+                      <TableSortLabel active={sortKey === 'fqdn'} direction={sortKey === 'fqdn' ? sortDir : 'asc'} onClick={() => handleSortChange('fqdn')}>FQDN</TableSortLabel>
+                    </TableCell>
+                    <TableCell>
+                      <TableSortLabel active={sortKey === 'ip_address'} direction={sortKey === 'ip_address' ? sortDir : 'asc'} onClick={() => handleSortChange('ip_address')}>IP Address</TableSortLabel>
+                    </TableCell>
+                    <TableCell>
+                      <TableSortLabel active={sortKey === 'health_status'} direction={sortKey === 'health_status' ? sortDir : 'asc'} onClick={() => handleSortChange('health_status')}>Health</TableSortLabel>
+                    </TableCell>
+                    <TableCell>
+                      <TableSortLabel active={sortKey === 'health_check_status'} direction={sortKey === 'health_check_status' ? sortDir : 'asc'} onClick={() => handleSortChange('health_check_status')}>Checks</TableSortLabel>
+                    </TableCell>
+                    <TableCell>
+                      <TableSortLabel active={sortKey === 'patches_missing'} direction={sortKey === 'patches_missing' ? sortDir : 'asc'} onClick={() => handleSortChange('patches_missing')}>Patches</TableSortLabel>
+                    </TableCell>
+                    <TableCell>
+                      <TableSortLabel active={sortKey === 'os'} direction={sortKey === 'os' ? sortDir : 'asc'} onClick={() => handleSortChange('os')}>OS</TableSortLabel>
+                    </TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -272,7 +324,7 @@ export default function PatchDeploymentPage() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    filteredHosts.map((host) => (
+                    sortedHosts.map((host) => (
                       <TableRow
                         key={host.id}
                         hover

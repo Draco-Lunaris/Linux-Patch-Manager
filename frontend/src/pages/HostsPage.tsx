@@ -4,7 +4,7 @@ import {
   DialogContent, DialogActions, FormControl, IconButton, InputLabel, MenuItem, Paper,
   Select, Snackbar, Alert,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  TablePagination, TextField, Toolbar, Tooltip, Typography,
+  TablePagination, TableSortLabel, TextField, Toolbar, Tooltip, Typography,
 } from '@mui/material'
 import { Add as AddIcon, Refresh as RefreshIcon, Delete as DeleteIcon, CheckCircle as CheckCircleIcon, Cancel as CancelIcon, Remove as RemoveIcon, Pending as PendingIcon, GppMaybe as GppMaybeIcon, CheckCircleOutline as CheckCircleOutlineIcon, WarningAmber as WarningAmberIcon, VerifiedUser as VerifiedUserIcon, Security as SecurityIcon, SystemUpdate as SystemUpdateIcon, NewReleases as NewReleasesIcon } from '@mui/icons-material'
 import { useNavigate } from 'react-router-dom'
@@ -45,6 +45,29 @@ export default function HostsPage() {
   const [upgradeImmediate, setUpgradeImmediate] = useState(true)
   const [upgradeLoading, setUpgradeLoading] = useState(false)
   const [canaryWarningOpen, setCanaryWarningOpen] = useState(false)
+
+  // ── Sorting state ────────────────────────────────────────────────────────
+  type SortKey = 'fqdn' | 'display_name' | 'ip_address' | 'os' | 'health_status' | 'health_check_status' | 'crl_status' | 'agent_version'
+  const [sortKey, setSortKey] = useState<SortKey | null>(null)
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+
+  const handleSortChange = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortKey(key)
+      setSortDir('asc')
+    }
+  }
+
+  const getSortValue = (h: Host, key: SortKey): string => {
+    switch (key) {
+      case 'os': return (h.os_name ?? h.os_family ?? '').toLowerCase()
+      default: return String(h[key] ?? '').toLowerCase()
+    }
+  }
+
+
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -226,6 +249,18 @@ export default function HostsPage() {
     h.display_name.toLowerCase().includes(search.toLowerCase())
   )
 
+  const sortedHosts = (() => {
+    if (!sortKey) return filtered
+    const arr = [...filtered]
+    arr.sort((a, b) => {
+      const va = getSortValue(a, sortKey)
+      const vb = getSortValue(b, sortKey)
+      const cmp = va.localeCompare(vb, undefined, { numeric: true, sensitivity: 'base' })
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+    return arr
+  })()
+
   const handleChangePage = (_event: React.MouseEvent<HTMLButtonElement> | null, newPage: number) => {
     setPage(newPage)
   }
@@ -279,14 +314,30 @@ export default function HostsPage() {
                     onChange={handleToggleSelectAll}
                   />
                 </TableCell>}
-                <TableCell>FQDN</TableCell>
-                <TableCell>Display Name</TableCell>
-                <TableCell>IP Address</TableCell>
-                <TableCell>OS</TableCell>
-                <TableCell>Health</TableCell>
-                <TableCell>Checks</TableCell>
-                <TableCell>CRL</TableCell>
-                <TableCell>Agent</TableCell>
+                <TableCell>
+                  <TableSortLabel active={sortKey === 'fqdn'} direction={sortKey === 'fqdn' ? sortDir : 'asc'} onClick={() => handleSortChange('fqdn')}>FQDN</TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel active={sortKey === 'display_name'} direction={sortKey === 'display_name' ? sortDir : 'asc'} onClick={() => handleSortChange('display_name')}>Display Name</TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel active={sortKey === 'ip_address'} direction={sortKey === 'ip_address' ? sortDir : 'asc'} onClick={() => handleSortChange('ip_address')}>IP Address</TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel active={sortKey === 'os'} direction={sortKey === 'os' ? sortDir : 'asc'} onClick={() => handleSortChange('os')}>OS</TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel active={sortKey === 'health_status'} direction={sortKey === 'health_status' ? sortDir : 'asc'} onClick={() => handleSortChange('health_status')}>Health</TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel active={sortKey === 'health_check_status'} direction={sortKey === 'health_check_status' ? sortDir : 'asc'} onClick={() => handleSortChange('health_check_status')}>Checks</TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel active={sortKey === 'crl_status'} direction={sortKey === 'crl_status' ? sortDir : 'asc'} onClick={() => handleSortChange('crl_status')}>CRL</TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel active={sortKey === 'agent_version'} direction={sortKey === 'agent_version' ? sortDir : 'asc'} onClick={() => handleSortChange('agent_version')}>Agent</TableSortLabel>
+                </TableCell>
                 {canWrite && <TableCell>Actions</TableCell>}
               </TableRow>
             </TableHead>
@@ -326,7 +377,7 @@ export default function HostsPage() {
                   </TableRow>
                 ))
               ) : (
-                filtered.map(h => (
+                sortedHosts.map(h => (
                   <TableRow key={h.id} hover sx={{ cursor: 'pointer' }}
                     onClick={() => navigate(`/hosts/${h.id}`)}>
                     {canWrite && <TableCell padding="checkbox" onClick={e => e.stopPropagation()}>
