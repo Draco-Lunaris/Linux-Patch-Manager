@@ -1,3 +1,9 @@
+linux-patch-manager (1.2.0-1) unstable; urgency=low
+
+  * Release v1.2.0
+
+ -- git-echo <git-echo@moon-dragon.us>  Fri, 19 Jun 2026 19:48:37 -0500
+
 linux-patch-manager (1.2.0~dev4-1) unstable; urgency=low
 
   * fix: deduplicate version entries in upgrade dialog dropdown
