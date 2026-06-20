@@ -1,3 +1,9 @@
+linux-patch-manager (1.2.0~dev4-1) unstable; urgency=low
+
+  * fix: deduplicate version entries in upgrade dialog dropdown
+
+ -- Echo <draco-lunaris-echo@moon-dragon.us>  $(date -R)
+
 linux-patch-manager (1.2.0~dev3-1) unstable; urgency=low
 
   * feat: add Agent Upgrade Versions section with refresh button to SettingsPage

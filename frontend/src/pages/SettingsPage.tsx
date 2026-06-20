@@ -115,8 +115,9 @@ export default function SettingsPage() {
     setRefreshingVersions(true)
     try {
       const { data } = await upgradesApi.refreshVersions()
-      setAvailableVersions(data)
-      setVersionsSnackbar({ message: `Refreshed ${data.length} available versions`, severity: 'success' })
+      const upserted = (data as { upserted?: number })?.upserted ?? 0
+      await loadAvailableVersions()
+      setVersionsSnackbar({ message: `Refreshed versions (${upserted} upserted)`, severity: 'success' })
     } catch (err: unknown) {
       const axiosErr = err as AxiosError<{ error?: { message?: string } }>
       const msg = axiosErr.response?.data?.error?.message ?? 'Failed to refresh versions'
@@ -656,35 +657,39 @@ export default function SettingsPage() {
             >
               Refresh Versions
             </Button>
-            {availableVersions.length > 0 && (
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Version</TableCell>
-                    <TableCell>Prerelease</TableCell>
-                    <TableCell>Published At</TableCell>
-                    <TableCell>Source</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {availableVersions.map((v) => (
-                    <TableRow key={v.id}>
-                      <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.85em' }}>{v.version}</TableCell>
-                      <TableCell>
-                        <Chip
-                          label={v.prerelease ? 'Yes' : 'No'}
-                          size="small"
-                          color={v.prerelease ? 'warning' : 'success'}
-                          variant={v.prerelease ? 'filled' : 'outlined'}
-                        />
-                      </TableCell>
-                      <TableCell>{v.published_at ? new Date(v.published_at).toLocaleString() : '—'}</TableCell>
-                      <TableCell>{v.source}</TableCell>
+            {(() => {
+              // Deduplicate by version — backend stores one row per package type (deb, rpm, etc.)
+              const unique = availableVersions.filter((v, i, arr) =>
+                arr.findIndex(x => x.version === v.version) === i
+              )
+              return unique.length > 0 ? (
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Version</TableCell>
+                      <TableCell>Prerelease</TableCell>
+                      <TableCell>Published At</TableCell>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
+                  </TableHead>
+                  <TableBody>
+                    {unique.map((v) => (
+                      <TableRow key={v.id}>
+                        <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.85em' }}>{v.version}</TableCell>
+                        <TableCell>
+                          <Chip
+                            label={v.prerelease ? 'Yes' : 'No'}
+                            size="small"
+                            color={v.prerelease ? 'warning' : 'success'}
+                            variant={v.prerelease ? 'filled' : 'outlined'}
+                          />
+                        </TableCell>
+                        <TableCell>{v.published_at ? new Date(v.published_at).toLocaleString() : '—'}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              ) : null
+            })()}
           </AccordionDetails>
         </Accordion>
       )}
