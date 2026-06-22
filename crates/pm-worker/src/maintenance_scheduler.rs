@@ -176,25 +176,28 @@ async fn auto_create_patch_jobs(pool: PgPool, _config: Arc<AppConfig>) {
             continue;
         };
 
-        // Check if there's already a queued/running patch_apply job for this host
-        // that was created during this window cycle (within the window's time range).
-        // We use a simpler check: any non-completed patch_apply job for this host
-        // that references this maintenance window, OR any non-immediate job without
-        // a window that was created since the window opened.
+        // Check if there's already a patch_apply job for this host+window created
+        // during the current window cycle. This checks for ANY job regardless of
+        // status (including succeeded/failed), preventing duplicate auto-creation
+        // when a job completes quickly and the window is still open.
+        //
+        // The cycle start is computed from the window's recurrence type:
+        //   - 'once': cycle starts at start_at
+        //   - recurring (daily/weekly/monthly): cycle starts at today's start_at time
         let existing_job: bool = match sqlx::query_scalar(
             r#"
             SELECT EXISTS(
                 SELECT 1 FROM patch_jobs pj
                 JOIN   patch_job_hosts pjh ON pj.id = pjh.job_id
                 WHERE  pjh.host_id = $1
-                  AND  pj.status IN ('queued', 'running', 'pending')
                   AND  pj.kind = 'patch_apply'
-                  AND (
-                    pj.maintenance_window_id = $2
-                    OR
-                    (pj.immediate = FALSE AND pj.created_at >=
-                        (SELECT start_at - INTERVAL '5 minutes' FROM maintenance_windows WHERE id = $2)
-                    )
+                  AND  pj.maintenance_window_id = $2
+                  AND  pj.created_at >= (
+                    SELECT CASE
+                      WHEN mw.recurrence = 'once' THEN mw.start_at
+                      ELSE date_trunc('day', NOW()) + (mw.start_at)::time
+                    END
+                    FROM maintenance_windows mw WHERE mw.id = $2
                   )
             )
             "#,
@@ -212,7 +215,7 @@ async fn auto_create_patch_jobs(pool: PgPool, _config: Arc<AppConfig>) {
                     "auto_create: existing job check failed"
                 );
                 continue;
-            }
+            },
         };
 
         if existing_job {
@@ -229,10 +232,11 @@ async fn auto_create_patch_jobs(pool: PgPool, _config: Arc<AppConfig>) {
             r#"
             WITH new_job AS (
                 INSERT INTO patch_jobs
-                    (kind, status, maintenance_window_id, immediate, patch_selection, notes)
+                    (kind, status, maintenance_window_id, immediate,
+                     patch_selection, notes, auto_host_id)
                 VALUES
                     ('patch_apply', 'queued', $1, FALSE, '[]'::jsonb,
-                     'Auto-created by maintenance window scheduler')
+                     'Auto-created by maintenance window scheduler', $2)
                 RETURNING id AS job_id
             )
             INSERT INTO patch_job_hosts (job_id, host_id, status)
