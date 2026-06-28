@@ -1163,6 +1163,42 @@ async fn reconnect_confirm_self_upgrade(
         "reconnect_confirm_self_upgrade: agent reconnected with new version"
     );
 
+    // M8: Check if agent has repo_config / GPG key configured.
+    // Agents enrolled before v2.0.0 won't have repo_config — log for migration tracking.
+    // The agent handles fallback to GET /pki/repo-config on its side; this is
+    // informational for the manager to track migration status.
+    match &health.gpg_key_status {
+        Some(status) if status == "valid" => {
+            tracing::info!(
+                pjh_id = %row.id,
+                host_id = %row.host_id,
+                "reconnect_confirm_self_upgrade: agent has valid GPG key — repo_config present"
+            );
+        },
+        Some(status) if status == "missing" => {
+            tracing::warn!(
+                pjh_id = %row.id,
+                host_id = %row.host_id,
+                "reconnect_confirm_self_upgrade: agent reports GPG key missing — repo_config not provisioned, agent should use GET /pki/repo-config fallback"
+            );
+        },
+        Some(status) => {
+            tracing::warn!(
+                pjh_id = %row.id,
+                host_id = %row.host_id,
+                gpg_key_status = %status,
+                "reconnect_confirm_self_upgrade: agent GPG key status requires attention"
+            );
+        },
+        None => {
+            tracing::debug!(
+                pjh_id = %row.id,
+                host_id = %row.host_id,
+                "reconnect_confirm_self_upgrade: agent did not report GPG key status (pre-v2.0.0 or older agent)"
+            );
+        },
+    }
+
     // Determine success using the pure decision function.
     let result = decide_self_upgrade_reconnect_result(
         &new_version,
