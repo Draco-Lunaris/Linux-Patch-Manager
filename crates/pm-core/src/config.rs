@@ -66,6 +66,51 @@ pub struct AppConfig {
     pub security: SecurityConfig,
     #[serde(default)]
     pub rate_limit: RateLimitConfig,
+    /// Manager-hosted package repository configuration for agent self-update.
+    ///
+    /// When present, the manager serves a GPG-signed package repo on port 80
+    /// and distributes repo config to agents during enrollment.
+    ///
+    /// Added for issue #116 (self-update v2.0.0).
+    #[serde(default)]
+    pub repo: RepoServerConfig,
+}
+
+/// Configuration for the manager-hosted package repository.
+///
+/// Controls GPG-signed package repo serving on port 80 and repo config
+/// distribution to agents during enrollment.
+///
+/// Added for issue #116 (self-update v2.0.0).
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct RepoServerConfig {
+    /// Base directory for package repo files (default: /var/www/lpa-repo).
+    /// Subdirectories: apt/, dnf/, apk/, pacman/.
+    #[serde(default = "default_repo_dir")]
+    pub dir: String,
+    /// Path to the GPG public key file (ASCII-armored) for repo signing.
+    #[serde(default = "default_gpg_key_path")]
+    pub gpg_public_key_path: String,
+    /// Base URL for the repo as seen by agents (e.g., http://lpm.moon-dragon.us).
+    /// Used to generate distro-specific sources_config strings.
+    #[serde(default = "default_repo_url_base")]
+    pub url_base: String,
+    /// HTTP port for the repo server (default: 80).
+    #[serde(default = "default_repo_http_port")]
+    pub http_port: u16,
+}
+
+fn default_repo_dir() -> String {
+    "/var/www/lpa-repo".to_string()
+}
+fn default_gpg_key_path() -> String {
+    "/var/www/lpa-repo/lpa-repo-public-key.asc".to_string()
+}
+fn default_repo_url_base() -> String {
+    "http://lpm.moon-dragon.us".to_string()
+}
+fn default_repo_http_port() -> u16 {
+    80
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -322,6 +367,7 @@ impl Default for AppConfig {
                 allowed_origins: derive_allowed_origins(&default_sso_callback_url()),
             },
             rate_limit: RateLimitConfig::default(),
+            repo: RepoServerConfig::default(),
         }
     }
 }
