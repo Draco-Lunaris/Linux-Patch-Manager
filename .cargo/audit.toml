@@ -1,6 +1,4 @@
-[cargo-audit]
-# Ignored advisories with justification
-
-[[ignore]]
-name = "RUSTSEC-2026-0187"
-reason = "lopdf stack overflow via deeply nested PDF objects. pm-reports generates PDFs from controlled internal data (patch reports, health summaries), not from untrusted user input. printpdf 0.7.0 pins lopdf ^0.31.0 and printpdf 0.9.1 pins lopdf ^0.39.0 — no printpdf version supports lopdf >=0.42.0. Will upgrade when printpdf releases a version with lopdf >=0.42.0."
+[advisories]
+ignore = [
+  "RUSTSEC-2026-0187",
+]
