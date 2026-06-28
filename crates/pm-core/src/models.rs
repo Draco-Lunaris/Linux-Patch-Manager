@@ -187,6 +187,34 @@ pub enum EnrollmentStatusResponse {
     NotFound,
 }
 
+/// Configuration for the manager-hosted package repository.
+///
+/// Delivered to agents during enrollment so they can self-update from a
+/// GPG-signed package repo hosted by the manager. The agent provisions the
+/// GPG public key and distro-specific sources config to the correct
+/// filesystem paths for its package manager (apt/dnf/apk/pacman).
+///
+/// Added for manager-hosted repo support (issue #116 / self-update v2.0.0).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RepoConfig {
+    /// ASCII-armored GPG public key used to sign packages in the repo.
+    /// The agent writes this to the distro-specific keyring path.
+    pub gpg_public_key: String,
+    /// Distro-specific sources configuration string.
+    /// For apt: a `deb [signed-by=...] ...` line.
+    /// For dnf: a .repo file content.
+    /// For apk: a repository URL line.
+    /// For pacman: an include file content.
+    pub sources_config: String,
+    /// Detected distribution identifier (e.g., `ubuntu-24.04`, `debian-12`,
+    /// `fedora-40`, `alpine-3.21`, `arch`).
+    pub distro_id: String,
+    /// Filesystem path where the GPG public key should be installed
+    /// (e.g., `/etc/apt/keyrings/lpa-repo.gpg` for apt,
+    /// `/etc/pki/rpm-gpg/lpa-repo.gpg` for dnf).
+    pub keyring_path: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PkiBundle {
     /// PEM-encoded CA certificate (leaf-most cert in the chain).
@@ -216,6 +244,16 @@ pub struct PkiBundle {
     /// Added for CRL support (issue #7).
     #[serde(default)]
     pub crl_pem: String,
+    /// Manager-hosted package repository configuration for agent self-update.
+    ///
+    /// When present, the agent provisions the GPG key and sources config
+    /// to enable self-updates from the manager-hosted repo. When absent
+    /// (agents enrolled before v2.0.0 or when repo is not configured),
+    /// the agent falls back to `GET /api/v1/pki/repo-config`.
+    ///
+    /// Added for manager-hosted repo support (issue #116).
+    #[serde(default)]
+    pub repo_config: Option<RepoConfig>,
 }
 
 /// Time-to-live for approved enrollment PKI bundles (10 minutes).

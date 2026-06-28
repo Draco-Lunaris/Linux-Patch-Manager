@@ -316,6 +316,10 @@ async fn approve_enrollment(
         server_crt: issued.server_cert_pem,
         server_key: issued.server_key_pem,
         crl_pem,
+        // repo_config is populated in M6 (enrollment handler distro detection +
+        // sources_config generation). Set to None for now — agents enrolled
+        // with this bundle will fall back to GET /api/v1/pki/repo-config (M2).
+        repo_config: None,
     };
     state.approved_enrollments.insert(
         enrollment_request.polling_token.clone(),
