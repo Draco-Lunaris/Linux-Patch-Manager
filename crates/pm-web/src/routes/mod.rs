@@ -10,6 +10,7 @@ pub mod jobs;
 pub mod maintenance_windows;
 pub mod os_package_mappings;
 pub mod pki;
+pub mod repo_admin;
 pub mod reports;
 pub mod settings;
 pub mod sso;

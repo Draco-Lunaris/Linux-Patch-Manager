@@ -216,6 +216,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         .nest("/upgrades", routes::upgrades::router())
         .nest("/admin", routes::enrollment::admin_router())
+        .nest("/admin", routes::repo_admin::router())
         .layer(GovernorLayer::new(api_governor))
         .route_layer(middleware::from_fn(move |req, next| {
             let auth_config = auth_config.clone();
