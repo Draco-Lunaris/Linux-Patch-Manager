@@ -16,6 +16,7 @@ import {
   VerifiedUser as CertsIcon,
   Assessment as ReportsIcon,
   Settings as SettingsIcon,
+  Store as RepoIcon,
   Menu as MenuIcon,
   Logout as LogoutIcon,
   Person as PersonIcon,
