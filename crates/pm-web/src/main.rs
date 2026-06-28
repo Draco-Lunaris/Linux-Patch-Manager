@@ -5,7 +5,7 @@ use pm_auth::{jwt, rbac::AuthConfig};
 use pm_core::{config::AppConfig, db, models::ApprovedEntry};
 use pm_web::routes::sso::{OidcCache, SsoHandoff, SsoSession};
 use pm_web::routes::ws::WsTicket;
-use pm_web::{bootstrap_admin_password, build_router, AppState};
+use pm_web::{bootstrap_admin_password, build_router, build_repo_router, AppState};
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 
@@ -156,7 +156,35 @@ async fn main() -> anyhow::Result<()> {
         oidc_cache,
     };
 
-    let app = build_router(state);
+    let app = build_router(state.clone());
+
+    // Spawn the package repository HTTP server on port 80 (M16).
+    // This serves GPG-signed package repos at /apt/, /dnf/, /apk/, /pacman/.
+    // Plain HTTP — internal network, read-only, GPG provides integrity.
+    let repo_app = build_repo_router(&state);
+    let repo_port = config.repo.http_port;
+    let repo_addr: SocketAddr = format!("0.0.0.0:{repo_port}")
+        .parse()
+        .expect("Invalid repo bind address");
+    tracing::info!(addr = %repo_addr, "Listening (HTTP — package repo)");
+    tokio::spawn(async move {
+        let listener = tokio::net::TcpListener::bind(repo_addr).await;
+        match listener {
+            Ok(listener) => {
+                if let Err(e) = axum::serve(
+                    listener,
+                    repo_app.into_make_service(),
+                )
+                .await
+                {
+                    tracing::error!(error = %e, "Package repo server failed");
+                }
+            }
+            Err(e) => {
+                tracing::error!(error = %e, port = repo_port, "Failed to bind package repo port");
+            }
+        }
+    });
 
     let addr: SocketAddr = format!("{}:{}", config.server.host, config.server.port)
         .parse()
