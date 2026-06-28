@@ -159,6 +159,43 @@ pub struct WorkerConfig {
     /// How often to poll the agent during reconnect confirmation.
     #[serde(default = "default_self_upgrade_reconnect_poll_interval")]
     pub self_upgrade_reconnect_poll_interval_secs: u64,
+    /// Package sync configuration for manager-hosted repo (issue #116).
+    #[serde(default)]
+    pub package_sync: PackageSyncConfig,
+}
+
+/// Configuration for the package sync worker (M13).
+///
+/// Controls background syncing of packages from GitHub Releases
+/// to the manager-hosted package repository.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct PackageSyncConfig {
+    /// Enable the package sync worker (default: false).
+    #[serde(default)]
+    pub enabled: bool,
+    /// Sync interval in seconds (default: 3600 = 1 hour).
+    #[serde(default = "default_sync_interval")]
+    pub interval_secs: u64,
+    /// GitHub API token for authenticated requests (5000/hr vs 60/hr unauthenticated).
+    /// If empty, unauthenticated requests are used.
+    #[serde(default)]
+    pub github_token: String,
+    /// GitHub repository to sync from (e.g., "Draco-Lunaris/Linux-Patch-Api").
+    #[serde(default = "default_sync_repo")]
+    pub github_repo: String,
+    /// Maximum number of recent releases to sync (default: 3 — last 3 versions).
+    #[serde(default = "default_sync_max_releases")]
+    pub max_releases: u32,
+}
+
+fn default_sync_interval() -> u64 {
+    3600
+}
+fn default_sync_repo() -> String {
+    "Draco-Lunaris/Linux-Patch-Api".to_string()
+}
+fn default_sync_max_releases() -> u32 {
+    3
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -346,6 +383,7 @@ impl Default for AppConfig {
                 ws_relay_poll_interval_secs: 10,
                 self_upgrade_reconnect_timeout_secs: 600,
                 self_upgrade_reconnect_poll_interval_secs: 10,
+                package_sync: PackageSyncConfig::default(),
             },
             logging: LoggingConfig {
                 level: "info".to_string(),

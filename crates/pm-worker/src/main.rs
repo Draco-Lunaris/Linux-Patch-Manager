@@ -10,6 +10,7 @@ mod health_check_poller;
 mod health_poller;
 mod job_executor;
 mod maintenance_scheduler;
+mod package_sync_worker;
 mod patch_poller;
 mod refresh_listener;
 mod secret_key;
@@ -26,6 +27,7 @@ use health_check_poller::run_health_check_poller;
 use health_poller::run_health_poller;
 use job_executor::run_job_executor;
 use maintenance_scheduler::run_maintenance_scheduler;
+use package_sync_worker::run_package_sync_worker;
 use patch_poller::run_patch_poller;
 use refresh_listener::run_refresh_listener;
 use ws_relay::run_ws_relay;
@@ -80,6 +82,9 @@ async fn main() -> anyhow::Result<()> {
     let health_handle = tokio::spawn(run_health_poller(pool.clone(), config.clone()));
     let patch_handle = tokio::spawn(run_patch_poller(pool.clone(), config.clone()));
     let refresh_handle = tokio::spawn(run_refresh_listener(pool.clone(), config.clone()));
+
+    // M13: package sync worker (pulls from GitHub Releases to manager repo)
+    let _sync_handle = tokio::spawn(run_package_sync_worker(pool.clone(), config.clone()));
 
     // M5: job execution engine
     let job_exec_handle = tokio::spawn(run_job_executor(pool.clone(), config.clone()));
