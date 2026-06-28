@@ -181,68 +181,66 @@ async fn poll_host_health(
             )
         },
         Ok(client) => {
-            let (status, payload, version, crl_status, crl_age, crl_next, gpg_status, gpg_expires) = match client
-                .health()
-                .await
-            {
-                Ok(data) => {
-                    let payload = serde_json::to_value(&data).unwrap_or_default();
-                    let crl_status = data.crl_status.clone();
-                    let crl_age = data.crl_age_seconds;
-                    let crl_next = data.crl_next_update.clone();
-                    let gpg_status = data.gpg_key_status.clone();
-                    let gpg_expires = data.gpg_key_expires_at.clone();
-                    (
-                        HostHealthStatus::Healthy,
-                        payload,
-                        Some(data.version),
-                        crl_status,
-                        crl_age,
-                        crl_next,
-                        gpg_status,
-                        gpg_expires,
-                    )
-                },
-                Err(AgentClientError::Timeout) => {
-                    tracing::warn!(host_id = %host.id, "Health poller: agent timed out");
-                    (
-                        HostHealthStatus::Unreachable,
-                        serde_json::Value::Object(Default::default()),
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                    )
-                },
-                Err(AgentClientError::Connect(_)) => {
-                    tracing::warn!(host_id = %host.id, "Health poller: agent connection refused");
-                    (
-                        HostHealthStatus::Unreachable,
-                        serde_json::Value::Object(Default::default()),
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                    )
-                },
-                Err(e) => {
-                    tracing::warn!(host_id = %host.id, error = %e, "Health poller: agent error");
-                    (
-                        HostHealthStatus::Degraded,
-                        serde_json::Value::Object(Default::default()),
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                    )
-                },
-            };
+            let (status, payload, version, crl_status, crl_age, crl_next, gpg_status, gpg_expires) =
+                match client.health().await {
+                    Ok(data) => {
+                        let payload = serde_json::to_value(&data).unwrap_or_default();
+                        let crl_status = data.crl_status.clone();
+                        let crl_age = data.crl_age_seconds;
+                        let crl_next = data.crl_next_update.clone();
+                        let gpg_status = data.gpg_key_status.clone();
+                        let gpg_expires = data.gpg_key_expires_at.clone();
+                        (
+                            HostHealthStatus::Healthy,
+                            payload,
+                            Some(data.version),
+                            crl_status,
+                            crl_age,
+                            crl_next,
+                            gpg_status,
+                            gpg_expires,
+                        )
+                    },
+                    Err(AgentClientError::Timeout) => {
+                        tracing::warn!(host_id = %host.id, "Health poller: agent timed out");
+                        (
+                            HostHealthStatus::Unreachable,
+                            serde_json::Value::Object(Default::default()),
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                    },
+                    Err(AgentClientError::Connect(_)) => {
+                        tracing::warn!(host_id = %host.id, "Health poller: agent connection refused");
+                        (
+                            HostHealthStatus::Unreachable,
+                            serde_json::Value::Object(Default::default()),
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                    },
+                    Err(e) => {
+                        tracing::warn!(host_id = %host.id, error = %e, "Health poller: agent error");
+                        (
+                            HostHealthStatus::Degraded,
+                            serde_json::Value::Object(Default::default()),
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                    },
+                };
 
             // Try to fetch system info for OS/arch details (best-effort).
             let sys_info = if status != HostHealthStatus::Unreachable {
@@ -262,7 +260,15 @@ async fn poll_host_health(
             };
 
             (
-                status, payload, version, sys_info, crl_status, crl_age, crl_next, gpg_status, gpg_expires,
+                status,
+                payload,
+                version,
+                sys_info,
+                crl_status,
+                crl_age,
+                crl_next,
+                gpg_status,
+                gpg_expires,
             )
         },
     };

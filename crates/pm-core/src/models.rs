@@ -256,9 +256,7 @@ pub fn detect_distro_id(os_family: Option<&str>, os_name: Option<&str>) -> Optio
 pub fn generate_distro_config(distro_id: &str, repo_url_base: &str) -> Option<(String, String)> {
     let base = repo_url_base.trim_end_matches('/');
     if distro_id.starts_with("ubuntu-") || distro_id.starts_with("debian-") {
-        let sources = format!(
-            "deb [signed-by=/etc/apt/keyrings/lpa-repo.gpg] {base}/apt/ ./"
-        );
+        let sources = format!("deb [signed-by=/etc/apt/keyrings/lpa-repo.gpg] {base}/apt/ ./");
         let keyring = "/etc/apt/keyrings/lpa-repo.gpg".to_string();
         Some((sources, keyring))
     } else if distro_id.starts_with("fedora-") || distro_id.starts_with("almalinux-") {

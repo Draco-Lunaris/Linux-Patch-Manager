@@ -5,7 +5,7 @@ use pm_auth::{jwt, rbac::AuthConfig};
 use pm_core::{config::AppConfig, db, models::ApprovedEntry};
 use pm_web::routes::sso::{OidcCache, SsoHandoff, SsoSession};
 use pm_web::routes::ws::WsTicket;
-use pm_web::{bootstrap_admin_password, build_router, build_repo_router, AppState};
+use pm_web::{bootstrap_admin_password, build_repo_router, build_router, AppState};
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 
@@ -171,18 +171,13 @@ async fn main() -> anyhow::Result<()> {
         let listener = tokio::net::TcpListener::bind(repo_addr).await;
         match listener {
             Ok(listener) => {
-                if let Err(e) = axum::serve(
-                    listener,
-                    repo_app.into_make_service(),
-                )
-                .await
-                {
+                if let Err(e) = axum::serve(listener, repo_app.into_make_service()).await {
                     tracing::error!(error = %e, "Package repo server failed");
                 }
-            }
+            },
             Err(e) => {
                 tracing::error!(error = %e, port = repo_port, "Failed to bind package repo port");
-            }
+            },
         }
     });
 

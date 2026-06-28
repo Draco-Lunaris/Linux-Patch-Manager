@@ -114,11 +114,14 @@ async fn get_repo_config(
                 })),
             )
                 .into_response();
-        }
+        },
     };
 
     // Generate distro-specific sources_config and keyring_path.
-    let (sources_config, keyring_path) = match pm_core::models::generate_distro_config(&distro_id, &repo_config.url_base) {
+    let (sources_config, keyring_path) = match pm_core::models::generate_distro_config(
+        &distro_id,
+        &repo_config.url_base,
+    ) {
         Some(config) => config,
         None => {
             return (
@@ -128,7 +131,7 @@ async fn get_repo_config(
                 })),
             )
                 .into_response();
-        }
+        },
     };
 
     let repo_config_response = pm_core::models::RepoConfig {

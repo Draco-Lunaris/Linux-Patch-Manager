@@ -82,7 +82,7 @@ async fn run_sync_cycle(pool: &PgPool, config: &Arc<AppConfig>) -> Result<(), an
             tracing::error!(error = %e, "Failed to fetch GitHub releases");
             mark_sync_failed(pool, sync_log_id, &format!("GitHub API error: {e}")).await;
             return Err(e);
-        }
+        },
     };
 
     let mut packages_synced = 0i32;
@@ -108,11 +108,17 @@ async fn run_sync_cycle(pool: &PgPool, config: &Arc<AppConfig>) -> Result<(), an
             let codename = detect_codename_from_filename(&asset.name, &distro);
 
             // Download the asset.
-            let download_path = format!("{repo_dir}/tmp/{asset_name}", repo_dir = repo_dir, asset_name = asset.name);
+            let download_path = format!(
+                "{repo_dir}/tmp/{asset_name}",
+                repo_dir = repo_dir,
+                asset_name = asset.name
+            );
             match download_asset(&asset.browser_download_url, &download_path, sync_config).await {
                 Ok(()) => {
                     // Import into repo.
-                    if let Err(e) = import_to_repo(&download_path, &distro, codename.as_deref(), repo_dir).await {
+                    if let Err(e) =
+                        import_to_repo(&download_path, &distro, codename.as_deref(), repo_dir).await
+                    {
                         errors.push(format!("Import failed for {}: {e}", asset.name));
                         packages_skipped += 1;
                     } else {
@@ -136,18 +142,26 @@ async fn run_sync_cycle(pool: &PgPool, config: &Arc<AppConfig>) -> Result<(), an
 
                     // Clean up temp file.
                     let _ = tokio::fs::remove_file(&download_path).await;
-                }
+                },
                 Err(e) => {
                     errors.push(format!("Download failed for {}: {e}", asset.name));
                     packages_skipped += 1;
-                }
+                },
             }
         }
     }
 
     // Update sync_log with results.
-    let status = if errors.is_empty() { "success" } else { "partial" };
-    let error_msg = if errors.is_empty() { None } else { Some(errors.join("; ")) };
+    let status = if errors.is_empty() {
+        "success"
+    } else {
+        "partial"
+    };
+    let error_msg = if errors.is_empty() {
+        None
+    } else {
+        Some(errors.join("; "))
+    };
 
     sqlx::query(
         "UPDATE repo_sync_log SET status = $2, packages_synced = $3, packages_skipped = $4, error_message = $5, finished_at = NOW() WHERE id = $1",
@@ -172,7 +186,9 @@ async fn run_sync_cycle(pool: &PgPool, config: &Arc<AppConfig>) -> Result<(), an
 }
 
 /// Fetch releases from GitHub API (last N releases, excluding prereleases unless allowed).
-async fn fetch_github_releases(config: &pm_core::config::PackageSyncConfig) -> Result<Vec<GithubRelease>, anyhow::Error> {
+async fn fetch_github_releases(
+    config: &pm_core::config::PackageSyncConfig,
+) -> Result<Vec<GithubRelease>, anyhow::Error> {
     let url = format!(
         "https://api.github.com/repos/{}/releases?per_page={}",
         config.github_repo,
@@ -182,8 +198,7 @@ async fn fetch_github_releases(config: &pm_core::config::PackageSyncConfig) -> R
     let client = reqwest::Client::builder()
         .user_agent("Linux-Patch-Manager-Sync/1.0")
         .timeout(std::time::Duration::from_secs(30))
-        .build()?
-    ;
+        .build()?;
 
     let mut req = client.get(&url);
     if !config.github_token.is_empty() {
@@ -209,8 +224,12 @@ async fn fetch_github_releases(config: &pm_core::config::PackageSyncConfig) -> R
 }
 
 /// Download a GitHub asset to a local path.
-async fn download_asset(url: &str, path: &str, config: &pm_core::config::PackageSyncConfig) -> Result<(), anyhow::Error> {
- // Ensure tmp directory exists.
+async fn download_asset(
+    url: &str,
+    path: &str,
+    config: &pm_core::config::PackageSyncConfig,
+) -> Result<(), anyhow::Error> {
+    // Ensure tmp directory exists.
     if let Some(parent) = std::path::Path::new(path).parent() {
         tokio::fs::create_dir_all(parent).await.ok();
     }
@@ -218,8 +237,7 @@ async fn download_asset(url: &str, path: &str, config: &pm_core::config::Package
     let client = reqwest::Client::builder()
         .user_agent("Linux-Patch-Manager-Sync/1.0")
         .timeout(std::time::Duration::from_secs(120))
-        .build()?
-    ;
+        .build()?;
 
     let mut req = client.get(url);
     if !config.github_token.is_empty() {
@@ -239,7 +257,12 @@ async fn download_asset(url: &str, path: &str, config: &pm_core::config::Package
 }
 
 /// Import a package file into the appropriate repo format.
-async fn import_to_repo(file_path: &str, distro: &str, codename: Option<&str>, repo_dir: &str) -> Result<(), anyhow::Error> {
+async fn import_to_repo(
+    file_path: &str,
+    distro: &str,
+    codename: Option<&str>,
+    repo_dir: &str,
+) -> Result<(), anyhow::Error> {
     match distro {
         "apt" => {
             let codename = codename.unwrap_or("noble");
@@ -258,7 +281,7 @@ async fn import_to_repo(file_path: &str, distro: &str, codename: Option<&str>, r
                     String::from_utf8_lossy(&output.stderr)
                 );
             }
-        }
+        },
         "dnf" => {
             // Copy RPM to dnf repo directory and regenerate metadata.
             let dest_dir = format!("{repo_dir}/dnf/el9/Packages");
@@ -282,7 +305,7 @@ async fn import_to_repo(file_path: &str, distro: &str, codename: Option<&str>, r
                     String::from_utf8_lossy(&output.stderr)
                 );
             }
-        }
+        },
         "apk" => {
             // Copy APK to apk repo directory.
             let dest_dir = format!("{repo_dir}/apk/v3.21");
@@ -309,7 +332,7 @@ async fn import_to_repo(file_path: &str, distro: &str, codename: Option<&str>, r
                     String::from_utf8_lossy(&output.stderr)
                 );
             }
-        }
+        },
         "pacman" => {
             // Copy to pacman repo directory.
             let dest_dir = format!("{repo_dir}/pacman/x86_64");
@@ -334,10 +357,10 @@ async fn import_to_repo(file_path: &str, distro: &str, codename: Option<&str>, r
                     String::from_utf8_lossy(&output.stderr)
                 );
             }
-        }
+        },
         _ => {
             anyhow::bail!("Unsupported distro: {distro}");
-        }
+        },
     }
 
     Ok(())
@@ -380,21 +403,21 @@ fn detect_codename_from_filename(name: &str, distro: &str) -> Option<String> {
                 }
             }
             None
-        }
+        },
         "dnf" => {
             if lower.contains("el9") || lower.contains("fc") {
                 Some("el9".to_string())
             } else {
                 None
             }
-        }
+        },
         "apk" => {
             if lower.contains("v3.21") {
                 Some("v3.21".to_string())
             } else {
                 None
             }
-        }
+        },
         "pacman" => Some("x86_64".to_string()),
         _ => None,
     }
