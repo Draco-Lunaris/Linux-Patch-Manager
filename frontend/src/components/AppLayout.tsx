@@ -61,6 +61,7 @@ const navGroups: { heading: string; items: NavItem[] }[] = [
       { label: 'Certificates', path: '/certificates', icon: <CertsIcon /> },
       { label: 'Reports', path: '/reports', icon: <ReportsIcon /> },
       { label: 'Settings', path: '/settings', icon: <SettingsIcon /> },
+      { label: 'Repo Management', path: '/repo', icon: <RepoIcon />, adminOnly: true },
     ],
   },
 ]
