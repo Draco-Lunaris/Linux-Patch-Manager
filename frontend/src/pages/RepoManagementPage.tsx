@@ -2,10 +2,10 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   Box, Typography, Paper, Divider, Button, CircularProgress, Alert,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  Chip, Card, CardContent, Grid, Dialog, DialogTitle, DialogContent,
+  Chip, Card, CardContent, Grid, Dialog, DialogTitle, DialogContent, DialogActions,
 } from '@mui/material'
 import {
-  Sync as SyncIcon, Package as PackageIcon, CloudDownload as DownloadIcon,
+  Sync as SyncIcon, Store as PackageIcon, CloudDownload as DownloadIcon,
   VerifiedUser as VerifiedIcon, WarningAmber as WarningIcon,
 } from '@mui/icons-material'
 import { repoApi } from '../api/client'
@@ -56,9 +56,9 @@ export default function RepoManagementPage() {
         repoApi.listPackages(),
       ])
       setSyncStatus(statusRes.data)
-      setPackages((pkgRes.data as any).packages || [])
-    } catch (e: any) {
-      setError(e?.message || 'Failed to load repo data')
+      setPackages((pkgRes.data as { packages: RepoPackage[] }).packages || [])
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to load repo data')
     } finally {
       setLoading(false)
     }
@@ -74,8 +74,8 @@ export default function RepoManagementPage() {
     try {
       await repoApi.triggerSync()
       await fetchData()
-    } catch (e: any) {
-      setError(e?.message || 'Failed to trigger sync')
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to trigger sync')
     } finally {
       setSyncing(false)
     }
