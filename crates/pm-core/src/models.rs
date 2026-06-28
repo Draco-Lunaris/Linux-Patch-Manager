@@ -103,6 +103,12 @@ pub struct Host {
     /// When the agent's CRL expires / next update is due.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub crl_next_update: Option<DateTime<Utc>>,
+    /// GPG key status reported by the agent: valid, expired, missing, revoked, or NULL.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpg_key_status: Option<String>,
+    /// When the agent's GPG key expires (if reported).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpg_key_expires_at: Option<DateTime<Utc>>,
 }
 
 /// Payload for registering a new host.
