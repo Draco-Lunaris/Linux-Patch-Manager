@@ -118,7 +118,7 @@ async fn get_repo_config(
     };
 
     // Generate distro-specific sources_config and keyring_path.
-    let (sources_config, keyring_path) = match generate_distro_config(&distro_id, &repo_config.url_base) {
+    let (sources_config, keyring_path) = match pm_core::models::generate_distro_config(&distro_id, &repo_config.url_base) {
         Some(config) => config,
         None => {
             return (
@@ -150,49 +150,6 @@ async fn get_repo_config(
 #[derive(serde::Deserialize)]
 struct RepoConfigQuery {
     distro_id: String,
-}
-
-/// Generate distro-specific sources_config and keyring_path for a given distro_id.
-///
-/// Returns `None` if the distro is not supported.
-///
-/// Supported distro_id patterns:
-/// - `ubuntu-24.04`, `ubuntu-22.04` → apt (noble, jammy)
-/// - `debian-12`, `debian-13` → apt (bookworm, trixie)
-/// - `fedora-40`, `fedora-41`, `almalinux-9` → dnf
-/// - `alpine-3.21`, `alpine-3.20` → apk
-/// - `arch` → pacman
-fn generate_distro_config(distro_id: &str, repo_url_base: &str) -> Option<(String, String)> {
-    let base = repo_url_base.trim_end_matches('/');
-    if distro_id.starts_with("ubuntu-") || distro_id.starts_with("debian-") {
-        // apt-based
-        let sources = format!(
-            "deb [signed-by=/etc/apt/keyrings/lpa-repo.gpg] {base}/apt/ ./"
-        );
-        let keyring = "/etc/apt/keyrings/lpa-repo.gpg".to_string();
-        Some((sources, keyring))
-    } else if distro_id.starts_with("fedora-") || distro_id.starts_with("almalinux-") {
-        // dnf-based
-        let sources = format!(
-            "[lpa-repo]\nname=Linux Patch API Repo\nbaseurl={base}/dnf/\nenabled=1\ngpgcheck=1\ngpgkey=file:///etc/pki/rpm-gpg/lpa-repo.gpg\n"
-        );
-        let keyring = "/etc/pki/rpm-gpg/lpa-repo.gpg".to_string();
-        Some((sources, keyring))
-    } else if distro_id.starts_with("alpine-") {
-        // apk-based
-        let sources = format!("{base}/apk/");
-        let keyring = "/etc/apk/keys/lpa-repo.rsa.pub".to_string();
-        Some((sources, keyring))
-    } else if distro_id == "arch" {
-        // pacman-based
-        let sources = format!(
-            "[lpa-repo]\nServer = {base}/pacman/$repo\nSigLevel = Required DatabaseOptional\n"
-        );
-        let keyring = "/etc/pacman.d/gnupg/lpa-repo.gpg".to_string();
-        Some((sources, keyring))
-    } else {
-        None
-    }
 }
 
 #[cfg(test)]
