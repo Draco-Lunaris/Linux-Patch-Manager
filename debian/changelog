@@ -1,3 +1,12 @@
+linux-patch-manager (1.3.0-1) unstable; urgency=low
+
+  * Release v1.3.0 — Manager-side support for agent self-update via GPG-signed package repository (#116)
+  * RepoConfig in PkiBundle, GET /pki/repo-config, port 80 repo HTTP server
+  * Package sync worker, admin sync endpoints, RepoManagementPage UI
+  * DB migrations, GPG key health check, GPG key rotation docs
+
+ -- Draco-Lunaris-Echo <draco-lunaris-echo@moon-dragon.us>  Sat, 28 Jun 2026 15:43:00 -0500
+
 linux-patch-manager (1.2.1-1) unstable; urgency=low
 
   * Release v1.2.1
