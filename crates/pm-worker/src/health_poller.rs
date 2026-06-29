@@ -69,7 +69,7 @@ pub async fn run_health_poller(pool: PgPool, config: Arc<AppConfig>) {
 
         // Fetch all hosts with CRL status and registration time.
         let hosts: Vec<HostRow> = match sqlx::query_as(
-            "SELECT id, host(ip_address)::text AS ip_address, agent_port, crl_status, registered_at FROM hosts ORDER BY id",
+            "SELECT id, host(ip_address)::text AS ip_address, agent_port, crl_status, registered_at, agent_version FROM hosts ORDER BY id",
         )
         .fetch_all(&pool)
         .await
@@ -98,9 +98,10 @@ pub async fn run_health_poller(pool: PgPool, config: Arc<AppConfig>) {
             let key = client_key.clone();
             let ca = ca_cert.clone();
 
+            let config = config.clone();
             let handle = tokio::spawn(async move {
                 let _permit = sem.acquire().await.expect("semaphore closed");
-                poll_host_health(pool, host, &cert, &key, &ca).await
+                poll_host_health(pool, host, &config, &cert, &key, &ca).await
             });
 
             handles.push(handle);
@@ -140,6 +141,7 @@ pub async fn run_health_poller(pool: PgPool, config: Arc<AppConfig>) {
 async fn poll_host_health(
     pool: PgPool,
     host: HostRow,
+    config: &std::sync::Arc<pm_core::config::AppConfig>,
     client_cert: &[u8],
     client_key: &[u8],
     ca_cert: &[u8],
@@ -276,6 +278,17 @@ async fn poll_host_health(
     // Apply CRL health aggregation rules to determine the effective status.
     // Only apply when the agent reported a CRL status (non-NULL).
     let effective_status = apply_crl_health_rules(&natural_status, &crl_status, host.registered_at);
+    // Check minimum agent version compatibility
+    if let (Some(min_ver), Some(agent_ver)) = (&config.worker.min_agent_version, agent_version.as_ref()) {
+        if agent_ver.as_str() < min_ver.as_str() {
+            tracing::warn!(
+                host_id = %host.id,
+                agent_version = %agent_ver,
+                min_agent_version = %min_ver,
+                "Health poller: agent version below minimum required"
+            );
+        }
+    }
 
     // Insert into host_health_data with the natural (pre-aggregation) status.
     if let Err(e) = sqlx::query(

@@ -137,6 +137,11 @@ pub struct DatabaseConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WorkerConfig {
+    /// Minimum agent version required for compatibility (optional).
+    /// Agents below this version are flagged in logs and may be excluded
+    /// from self-update operations.
+    #[serde(default)]
+    pub min_agent_version: Option<String>,
     /// Health poll interval in seconds (default: 300 = 5 min)
     pub health_poll_interval_secs: u64,
     /// Patch data poll interval in seconds (default: 1800 = 30 min)
@@ -383,6 +388,7 @@ impl Default for AppConfig {
                 ws_relay_poll_interval_secs: 10,
                 self_upgrade_reconnect_timeout_secs: 600,
                 self_upgrade_reconnect_poll_interval_secs: 10,
+                min_agent_version: None,
                 package_sync: PackageSyncConfig::default(),
             },
             logging: LoggingConfig {
