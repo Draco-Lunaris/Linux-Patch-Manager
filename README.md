@@ -155,7 +155,7 @@ journalctl -u patch-manager-worker -f
 
 ## Initial Access
 
-1. Open a web browser and navigate to: `https://your-server-ip:8080`
+1. Open a web browser and navigate to: `https://your-server-ip:443`
 
 2. Default admin credentials (change immediately!):
    - **Username:** `admin`

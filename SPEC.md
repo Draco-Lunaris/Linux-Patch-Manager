@@ -22,7 +22,7 @@
 ## Project Overview
 **Title:** Linux_Patch_Manager
 **Description:** Enterprise-class, secure, web-based management interface for controlling patching and updates on Linux servers and workstations
-**Version:** 0.0.2
+**Version:** 0.0.3
 **Status:** Draft
 
 ## Scope
@@ -136,7 +136,7 @@ Management plane web application communicating with Linux Patch API agents on ea
   - **Response:** Returns a temporary `polling_token`.
 - `GET /api/v1/enroll/status/{token}`: 
   - **Pending:** HTTP 202.
-  - **Approved:** HTTP 200 containing the PKI bundle (`ca.crt`, `server.crt`, `server.key`).
+  - **Approved:** HTTP 200 containing the PKI bundle (see [INTERFACE_CONTRACT.md](INTERFACE_CONTRACT.md) §2.3 for canonical structure: `ca_crt`, `ca_chain`, `server_crt`, `server_key`, `crl_pem`, `repo_config`).
   - **Denied/Expired:** HTTP 404 or 403.
 
 **3. REST API Contract (Admin-Facing)**
@@ -154,6 +154,21 @@ Management plane web application communicating with Linux Patch API agents on ea
 - **Indicators:** Queue counter/visual badge on the interface, with pending rows highlighted.
 - **Filtering:** Dedicated filter to toggle the enrollment queue.
 - **Conflict Resolution:** Interactive "merge/overwrite" prompt if approval detects an `fqdn` or `ip_address` collision with the active `hosts` table.
+
+## Agent Self-Update (Manager Pull Model)
+
+The Manager hosts a GPG-signed package repository for agent self-updates. The agent receives repo configuration (GPG public key + distro-specific sources config) during enrollment or via fallback `GET /api/v1/pki/repo-config`.
+
+- **Repo server:** Port 80 (plain HTTP — GPG signatures provide integrity)
+- **Repo paths:** `/apt/`, `/dnf/`, `/apk/`, `/pacman/` on the manager host
+- **GPG key:** Per-manager, stored alongside CA in `/etc/patch-manager/ca/`
+- **Manager triggers:** `POST /api/v1/system/update` on the agent (optional `target_version`)
+- **Status polling:** `GET /api/v1/system/update/status` on the agent
+- **Agent execution:** Detached systemd unit with own cgroup; native package manager (apt/dnf/apk/pacman)
+- **Auto-rollback:** 60-second health check after upgrade; rolls back to previous version on failure
+- **Fallback:** `GET /api/v1/pki/repo-config` for agents enrolled before repo provisioning
+
+See [INTERFACE_CONTRACT.md](INTERFACE_CONTRACT.md) §4 for the full self-update protocol.
 
 ## Certificate Management
 
