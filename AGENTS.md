@@ -101,7 +101,7 @@ The package repository is served on port 80 (plain HTTP) for internal network ac
 ## Related Repositories
 
 - **Agent:** `Draco-Lunaris/Linux-Patch-Api` — The agent that runs on managed hosts
-- **Shared Spec:** `SPEC.md` in this repo defines the manager-agent contract
+- **Shared Contract:** `INTERFACE_CONTRACT.md` in this repo is the canonical manager-agent interface contract. `SPEC.md` covers Manager-specific product scope.
 
 ---
 

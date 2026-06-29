@@ -152,6 +152,10 @@
 - Async operations: POST/PUT/DELETE endpoints (install, update, remove, patch apply, reboot)
 - Job status tracking via `GET /api/v1/jobs/{id}` and WebSocket `/api/v1/ws/jobs`
 - Rollback via `POST /api/v1/jobs/{id}/rollback`
+- Agent self-update via `POST /api/v1/system/update` (manager-hosted GPG-signed repo, port 80)
+- Self-update status via `GET /api/v1/system/update/status`
+- Fallback repo config via `GET /api/v1/pki/repo-config` (for agents enrolled before repo provisioning)
+- See [INTERFACE_CONTRACT.md](INTERFACE_CONTRACT.md) for the full manager-agent interface contract
 
 ## Data Requirements
 
