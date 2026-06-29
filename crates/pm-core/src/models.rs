@@ -103,6 +103,12 @@ pub struct Host {
     /// When the agent's CRL expires / next update is due.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub crl_next_update: Option<DateTime<Utc>>,
+    /// GPG key status reported by the agent: valid, expired, missing, revoked, or NULL.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpg_key_status: Option<String>,
+    /// When the agent's GPG key expires (if reported).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpg_key_expires_at: Option<DateTime<Utc>>,
 }
 
 /// Payload for registering a new host.
@@ -187,6 +193,93 @@ pub enum EnrollmentStatusResponse {
     NotFound,
 }
 
+/// Configuration for the manager-hosted package repository.
+///
+/// Delivered to agents during enrollment so they can self-update from a
+/// GPG-signed package repo hosted by the manager. The agent provisions the
+/// GPG public key and distro-specific sources config to the correct
+/// filesystem paths for its package manager (apt/dnf/apk/pacman).
+///
+/// Added for manager-hosted repo support (issue #116 / self-update v2.0.0).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RepoConfig {
+    /// ASCII-armored GPG public key used to sign packages in the repo.
+    /// The agent writes this to the distro-specific keyring path.
+    pub gpg_public_key: String,
+    /// Distro-specific sources configuration string.
+    /// For apt: a `deb [signed-by=...] ...` line.
+    /// For dnf: a .repo file content.
+    /// For apk: a repository URL line.
+    /// For pacman: an include file content.
+    pub sources_config: String,
+    /// Detected distribution identifier (e.g., `ubuntu-24.04`, `debian-12`,
+    /// `fedora-40`, `alpine-3.21`, `arch`).
+    pub distro_id: String,
+    /// Filesystem path where the GPG public key should be installed
+    /// (e.g., `/etc/apt/keyrings/lpa-repo.gpg` for apt,
+    /// `/etc/pki/rpm-gpg/lpa-repo.gpg` for dnf).
+    pub keyring_path: String,
+}
+
+/// Detect distro_id from OS details fields extracted during enrollment.
+///
+/// Returns a distro_id string like `ubuntu-24.04`, `debian-12`, `fedora-40`,
+/// `alpine-3.21`, or `arch`, or `None` if the OS is unrecognized.
+pub fn detect_distro_id(os_family: Option<&str>, os_name: Option<&str>) -> Option<String> {
+    let os = os_family.unwrap_or_default().to_ascii_lowercase();
+    let name = os_name.unwrap_or_default().to_ascii_lowercase();
+    if os.contains("ubuntu") || name.contains("ubuntu") {
+        let ver = name.split_whitespace().nth(1).unwrap_or("");
+        Some(format!("ubuntu-{}", ver))
+    } else if os.contains("debian") || name.contains("debian") {
+        let ver = name.split_whitespace().nth(1).unwrap_or("");
+        Some(format!("debian-{}", ver))
+    } else if os.contains("fedora") || name.contains("fedora") {
+        let ver = name.split_whitespace().nth(1).unwrap_or("");
+        Some(format!("fedora-{}", ver))
+    } else if os.contains("alma") || name.contains("alma") {
+        let ver = name.split_whitespace().nth(1).unwrap_or("9");
+        Some(format!("almalinux-{}", ver))
+    } else if os.contains("alpine") || name.contains("alpine") {
+        let ver = name.split_whitespace().nth(1).unwrap_or("");
+        Some(format!("alpine-{}", ver))
+    } else if os.contains("arch") || name.contains("arch") {
+        Some("arch".to_string())
+    } else {
+        None
+    }
+}
+
+/// Generate distro-specific sources_config and keyring_path for a given distro_id.
+///
+/// Returns `None` if the distro is not supported.
+pub fn generate_distro_config(distro_id: &str, repo_url_base: &str) -> Option<(String, String)> {
+    let base = repo_url_base.trim_end_matches('/');
+    if distro_id.starts_with("ubuntu-") || distro_id.starts_with("debian-") {
+        let sources = format!("deb [signed-by=/etc/apt/keyrings/lpa-repo.gpg] {base}/apt/ ./");
+        let keyring = "/etc/apt/keyrings/lpa-repo.gpg".to_string();
+        Some((sources, keyring))
+    } else if distro_id.starts_with("fedora-") || distro_id.starts_with("almalinux-") {
+        let sources = format!(
+            "[lpa-repo]\\nname=Linux Patch API Repo\\nbaseurl={base}/dnf/\\nenabled=1\\ngpgcheck=1\\ngpgkey=file:///etc/pki/rpm-gpg/lpa-repo.gpg\\n"
+        );
+        let keyring = "/etc/pki/rpm-gpg/lpa-repo.gpg".to_string();
+        Some((sources, keyring))
+    } else if distro_id.starts_with("alpine-") {
+        let sources = format!("{base}/apk/");
+        let keyring = "/etc/apk/keys/lpa-repo.rsa.pub".to_string();
+        Some((sources, keyring))
+    } else if distro_id == "arch" {
+        let sources = format!(
+            "[lpa-repo]\\nServer = {base}/pacman/$repo\\nSigLevel = Required DatabaseOptional\\n"
+        );
+        let keyring = "/etc/pacman.d/gnupg/lpa-repo.gpg".to_string();
+        Some((sources, keyring))
+    } else {
+        None
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PkiBundle {
     /// PEM-encoded CA certificate (leaf-most cert in the chain).
@@ -216,6 +309,16 @@ pub struct PkiBundle {
     /// Added for CRL support (issue #7).
     #[serde(default)]
     pub crl_pem: String,
+    /// Manager-hosted package repository configuration for agent self-update.
+    ///
+    /// When present, the agent provisions the GPG key and sources config
+    /// to enable self-updates from the manager-hosted repo. When absent
+    /// (agents enrolled before v2.0.0 or when repo is not configured),
+    /// the agent falls back to `GET /api/v1/pki/repo-config`.
+    ///
+    /// Added for manager-hosted repo support (issue #116).
+    #[serde(default)]
+    pub repo_config: Option<RepoConfig>,
 }
 
 /// Time-to-live for approved enrollment PKI bundles (10 minutes).

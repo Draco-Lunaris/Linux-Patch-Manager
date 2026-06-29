@@ -1176,6 +1176,45 @@ export default function HostDetailPage() {
         )}
       </Paper>
 
+      {/* ── GPG Key Status (M7) ─────────────────────────────────────────── */}
+      <Paper sx={{ p: 3, mb: 3 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+          <VerifiedUserIcon color="primary" />
+          <Typography variant="h6" fontWeight={600}>GPG Key Status</Typography>
+        </Box>
+        <Divider sx={{ mb: 2 }} />
+        {host?.gpg_key_status === undefined || host?.gpg_key_status === null ? (
+          <Alert severity="info">
+            GPG key status not available (agent version does not support repo_config)
+          </Alert>
+        ) : (
+          <Grid container spacing={2}>
+            <Grid size={{ xs: 12, sm: 6 }}>
+              <Typography variant="caption" color="text.secondary" display="block">Status</Typography>
+              {host.gpg_key_status === 'valid' ? (
+                <Chip icon={<VerifiedUserIcon />} label="Valid" color="success" size="small" />
+              ) : host.gpg_key_status === 'expired' ? (
+                <Chip icon={<WarningAmberIcon />} label="Expired" color="warning" size="small" />
+              ) : host.gpg_key_status === 'missing' ? (
+                <Chip icon={<WarningAmberIcon />} label="Missing" color="warning" size="small" />
+              ) : host.gpg_key_status === 'revoked' ? (
+                <Chip icon={<SecurityIcon />} label="Revoked" color="error" size="small" />
+              ) : (
+                <Typography variant="body2">{String(host.gpg_key_status)}</Typography>
+              )}
+            </Grid>
+            <Grid size={{ xs: 12, sm: 6 }}>
+              <Typography variant="caption" color="text.secondary" display="block">Expires</Typography>
+              <Typography variant="body2">
+                {host.gpg_key_expires_at
+                  ? new Date(host.gpg_key_expires_at as string).toLocaleString()
+                  : '—'}
+              </Typography>
+            </Grid>
+          </Grid>
+        )}
+      </Paper>
+
       {/* ── Maintenance Windows ──────────────────────────────────────────── */}
       <Paper sx={{ p: 3, mb: 3 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>

@@ -419,6 +419,18 @@ export const upgradesApi = {
     apiClient.post<TriggerUpgradeResponse>('/upgrades/trigger', req),
 }
 
+// ── Repo Management API (M12) ───────────────────────────────────────────────
+export const repoApi = {
+  triggerSync: () =>
+    apiClient.post('/admin/repo/sync'),
+
+  getSyncStatus: () =>
+    apiClient.get('/admin/repo/sync-status'),
+
+  listPackages: () =>
+    apiClient.get('/admin/repo/packages'),
+}
+
 // ── OS Package Mappings API ───────────────────────────────────────────────────
 export const osPackageMappingsApi = {
   list: () =>

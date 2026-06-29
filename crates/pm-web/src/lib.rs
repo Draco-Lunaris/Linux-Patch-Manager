@@ -216,6 +216,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         .nest("/upgrades", routes::upgrades::router())
         .nest("/admin", routes::enrollment::admin_router())
+        .nest("/admin", routes::repo_admin::router())
         .layer(GovernorLayer::new(api_governor))
         .route_layer(middleware::from_fn(move |req, next| {
             let auth_config = auth_config.clone();
@@ -240,6 +241,29 @@ pub fn build_router(state: AppState) -> Router {
         .layer(middleware::from_fn(request_id_middleware))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
+}
+
+/// Construct the package repository router (served on plain HTTP port 80).
+///
+/// This router serves static package repo files for apt/dnf/apk/pacman
+/// repositories. It is **unauthenticated** — package integrity is verified
+/// via GPG signatures by the client's native package manager.
+///
+/// The repo directory base is read from `config.repo.dir` (default:
+/// `/var/www/lpa-repo`). Subdirectories served:
+/// - `/apt/` → `{repo_dir}/apt/` (reprepro output)
+/// - `/dnf/` → `{repo_dir}/dnf/` (createrepo_c output)
+/// - `/apk/` → `{repo_dir}/apk/` (apk index + .apk files)
+/// - `/pacman/` → `{repo_dir}/pacman/` (repo-add output)
+///
+/// Added for issue #116 (M16).
+pub fn build_repo_router(state: &AppState) -> Router {
+    let repo_dir = state.config.repo.dir.clone();
+    Router::new()
+        .nest_service("/apt", ServeDir::new(format!("{repo_dir}/apt")))
+        .nest_service("/dnf", ServeDir::new(format!("{repo_dir}/dnf")))
+        .nest_service("/apk", ServeDir::new(format!("{repo_dir}/apk")))
+        .nest_service("/pacman", ServeDir::new(format!("{repo_dir}/pacman")))
 }
 
 pub async fn health_handler(State(state): State<AppState>) -> Result<Json<Value>, StatusCode> {

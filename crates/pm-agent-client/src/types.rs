@@ -67,6 +67,13 @@ pub struct HealthData {
     /// When the agent's CRL expires / next update is due (ISO-8601).
     #[serde(default)]
     pub crl_next_update: Option<String>,
+    /// GPG key status reported by the agent: valid, expired, missing, revoked.
+    /// None if the agent doesn't report GPG key status (pre-v2.0.0 agents).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpg_key_status: Option<String>,
+    /// When the agent's GPG key expires (ISO 8601 string), if reported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpg_key_expires_at: Option<String>,
 }
 
 // ============================================================

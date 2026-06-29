@@ -16,6 +16,7 @@ import {
   VerifiedUser as CertsIcon,
   Assessment as ReportsIcon,
   Settings as SettingsIcon,
+  Store as RepoIcon,
   Menu as MenuIcon,
   Logout as LogoutIcon,
   Person as PersonIcon,
@@ -61,6 +62,7 @@ const navGroups: { heading: string; items: NavItem[] }[] = [
       { label: 'Certificates', path: '/certificates', icon: <CertsIcon /> },
       { label: 'Reports', path: '/reports', icon: <ReportsIcon /> },
       { label: 'Settings', path: '/settings', icon: <SettingsIcon /> },
+      { label: 'Repo Management', path: '/repo', icon: <RepoIcon />, adminOnly: true },
     ],
   },
 ]

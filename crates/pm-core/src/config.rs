@@ -66,6 +66,51 @@ pub struct AppConfig {
     pub security: SecurityConfig,
     #[serde(default)]
     pub rate_limit: RateLimitConfig,
+    /// Manager-hosted package repository configuration for agent self-update.
+    ///
+    /// When present, the manager serves a GPG-signed package repo on port 80
+    /// and distributes repo config to agents during enrollment.
+    ///
+    /// Added for issue #116 (self-update v2.0.0).
+    #[serde(default)]
+    pub repo: RepoServerConfig,
+}
+
+/// Configuration for the manager-hosted package repository.
+///
+/// Controls GPG-signed package repo serving on port 80 and repo config
+/// distribution to agents during enrollment.
+///
+/// Added for issue #116 (self-update v2.0.0).
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct RepoServerConfig {
+    /// Base directory for package repo files (default: /var/www/lpa-repo).
+    /// Subdirectories: apt/, dnf/, apk/, pacman/.
+    #[serde(default = "default_repo_dir")]
+    pub dir: String,
+    /// Path to the GPG public key file (ASCII-armored) for repo signing.
+    #[serde(default = "default_gpg_key_path")]
+    pub gpg_public_key_path: String,
+    /// Base URL for the repo as seen by agents (e.g., http://lpm.moon-dragon.us).
+    /// Used to generate distro-specific sources_config strings.
+    #[serde(default = "default_repo_url_base")]
+    pub url_base: String,
+    /// HTTP port for the repo server (default: 80).
+    #[serde(default = "default_repo_http_port")]
+    pub http_port: u16,
+}
+
+fn default_repo_dir() -> String {
+    "/var/www/lpa-repo".to_string()
+}
+fn default_gpg_key_path() -> String {
+    "/var/www/lpa-repo/lpa-repo-public-key.asc".to_string()
+}
+fn default_repo_url_base() -> String {
+    "http://lpm.moon-dragon.us".to_string()
+}
+fn default_repo_http_port() -> u16 {
+    80
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -114,6 +159,43 @@ pub struct WorkerConfig {
     /// How often to poll the agent during reconnect confirmation.
     #[serde(default = "default_self_upgrade_reconnect_poll_interval")]
     pub self_upgrade_reconnect_poll_interval_secs: u64,
+    /// Package sync configuration for manager-hosted repo (issue #116).
+    #[serde(default)]
+    pub package_sync: PackageSyncConfig,
+}
+
+/// Configuration for the package sync worker (M13).
+///
+/// Controls background syncing of packages from GitHub Releases
+/// to the manager-hosted package repository.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct PackageSyncConfig {
+    /// Enable the package sync worker (default: false).
+    #[serde(default)]
+    pub enabled: bool,
+    /// Sync interval in seconds (default: 3600 = 1 hour).
+    #[serde(default = "default_sync_interval")]
+    pub interval_secs: u64,
+    /// GitHub API token for authenticated requests (5000/hr vs 60/hr unauthenticated).
+    /// If empty, unauthenticated requests are used.
+    #[serde(default)]
+    pub github_token: String,
+    /// GitHub repository to sync from (e.g., "Draco-Lunaris/Linux-Patch-Api").
+    #[serde(default = "default_sync_repo")]
+    pub github_repo: String,
+    /// Maximum number of recent releases to sync (default: 3 — last 3 versions).
+    #[serde(default = "default_sync_max_releases")]
+    pub max_releases: u32,
+}
+
+fn default_sync_interval() -> u64 {
+    3600
+}
+fn default_sync_repo() -> String {
+    "Draco-Lunaris/Linux-Patch-Api".to_string()
+}
+fn default_sync_max_releases() -> u32 {
+    3
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -301,6 +383,7 @@ impl Default for AppConfig {
                 ws_relay_poll_interval_secs: 10,
                 self_upgrade_reconnect_timeout_secs: 600,
                 self_upgrade_reconnect_poll_interval_secs: 10,
+                package_sync: PackageSyncConfig::default(),
             },
             logging: LoggingConfig {
                 level: "info".to_string(),
@@ -322,6 +405,7 @@ impl Default for AppConfig {
                 allowed_origins: derive_allowed_origins(&default_sso_callback_url()),
             },
             rate_limit: RateLimitConfig::default(),
+            repo: RepoServerConfig::default(),
         }
     }
 }

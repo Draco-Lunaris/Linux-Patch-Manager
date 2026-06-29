@@ -20,7 +20,9 @@ use axum::{
 /// the agent verifies the CRL signature against its pinned CA certificate.
 /// No client certificate or API key is required.
 pub fn router() -> Router<AppState> {
-    Router::new().route("/pki/crl.pem", get(get_crl))
+    Router::new()
+        .route("/pki/crl.pem", get(get_crl))
+        .route("/pki/repo-config", get(get_repo_config))
 }
 
 /// `GET /api/v1/pki/crl.pem`
@@ -58,6 +60,99 @@ async fn get_crl(State(state): State<AppState>) -> impl IntoResponse {
             (StatusCode::INTERNAL_SERVER_ERROR, "Failed to generate CRL").into_response()
         },
     }
+}
+
+/// `GET /api/v1/pki/repo-config?distro_id=<distro_id>`
+///
+/// Fallback endpoint for agents that enrolled before v2.0.0 and did not
+/// receive `repo_config` in their PkiBundle. Returns the GPG public key
+/// and distro-specific sources configuration so the agent can provision
+/// the manager-hosted package repo.
+///
+/// # Query parameters
+///
+/// - `distro_id` (required): The agent's distro identifier (e.g.,
+///   `ubuntu-24.04`, `debian-12`, `fedora-40`, `alpine-3.21`, `arch`).
+///
+/// # Response
+///
+/// Returns JSON with `gpg_public_key`, `sources_config`, `distro_id`,
+/// and `keyring_path` fields matching the `RepoConfig` struct.
+///
+/// Added for issue #116 (M2).
+async fn get_repo_config(
+    State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<RepoConfigQuery>,
+) -> impl IntoResponse {
+    let distro_id = params.distro_id;
+
+    if distro_id.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({
+                "error": { "code": "missing_param", "message": "distro_id query parameter is required" }
+            })),
+        )
+            .into_response();
+    }
+
+    let repo_config = &state.config.repo;
+
+    // Read GPG public key from configured path.
+    let gpg_public_key = match tokio::fs::read_to_string(&repo_config.gpg_public_key_path).await {
+        Ok(key) => key,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                path = %repo_config.gpg_public_key_path,
+                "GPG public key file not found or unreadable"
+            );
+            return (
+                StatusCode::NOT_FOUND,
+                axum::Json(serde_json::json!({
+                    "error": { "code": "repo_not_configured", "message": "GPG public key not available on this manager" }
+                })),
+            )
+                .into_response();
+        },
+    };
+
+    // Generate distro-specific sources_config and keyring_path.
+    let (sources_config, keyring_path) = match pm_core::models::generate_distro_config(
+        &distro_id,
+        &repo_config.url_base,
+    ) {
+        Some(config) => config,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                axum::Json(serde_json::json!({
+                    "error": { "code": "unsupported_distro", "message": format!("Unsupported distro_id: {}", distro_id) }
+                })),
+            )
+                .into_response();
+        },
+    };
+
+    let repo_config_response = pm_core::models::RepoConfig {
+        gpg_public_key,
+        sources_config,
+        distro_id,
+        keyring_path,
+    };
+
+    (
+        StatusCode::OK,
+        [(header::CACHE_CONTROL, "max-age=3600")],
+        axum::Json(repo_config_response),
+    )
+        .into_response()
+}
+
+/// Query parameters for GET /pki/repo-config.
+#[derive(serde::Deserialize)]
+struct RepoConfigQuery {
+    distro_id: String,
 }
 
 #[cfg(test)]

@@ -188,7 +188,7 @@ async fn approve_enrollment(
 
     // Check for FQDN/IP collision in hosts table
     if let Some(existing_host) = sqlx::query_as::<_, Host>(
-        "SELECT id, fqdn, ip_address::text, display_name, os_family, os_name, arch, agent_version, health_status, last_health_at, last_patch_at, agent_port, notes, registered_at, updated_at, crl_status, crl_age_seconds, crl_next_update FROM hosts WHERE fqdn = $1 OR ip_address = $2::inet"
+        "SELECT id, fqdn, ip_address::text, display_name, os_family, os_name, arch, agent_version, health_status, last_health_at, last_patch_at, agent_port, notes, registered_at, updated_at, crl_status, crl_age_seconds, crl_next_update, gpg_key_status, gpg_key_expires_at FROM hosts WHERE fqdn = $1 OR ip_address = $2::inet"
     )
     .bind(&enrollment_request.fqdn)
     .bind(enrollment_request.ip_address.to_string())
@@ -316,6 +316,10 @@ async fn approve_enrollment(
         server_crt: issued.server_cert_pem,
         server_key: issued.server_key_pem,
         crl_pem,
+        // repo_config is populated in M6 (enrollment handler distro detection +
+        // sources_config generation). Set to None for now — agents enrolled
+        // with this bundle will fall back to GET /api/v1/pki/repo-config (M2).
+        repo_config: None,
     };
     state.approved_enrollments.insert(
         enrollment_request.polling_token.clone(),

@@ -322,7 +322,8 @@ async fn get_host(
                    os_family, os_name, arch, agent_version, health_status,
                    last_health_at, last_patch_at, agent_port, notes,
                    registered_at, updated_at,
-                   crl_status, crl_age_seconds, crl_next_update
+                   crl_status, crl_age_seconds, crl_next_update,
+                   gpg_key_status, gpg_key_expires_at
             FROM hosts WHERE id = $1
         ) h
         "#,
@@ -434,7 +435,8 @@ async fn update_host(
             SELECT id, fqdn, host(ip_address)::text AS ip_address, display_name,
                    os_family, os_name, arch, agent_version, health_status,
                    last_health_at, last_patch_at, agent_port, notes,
-                   registered_at, updated_at, crl_status, crl_age_seconds, crl_next_update
+                   registered_at, updated_at, crl_status, crl_age_seconds, crl_next_update,
+                   gpg_key_status, gpg_key_expires_at
             FROM hosts WHERE id = (SELECT id FROM updated)
         ) h
         "#,

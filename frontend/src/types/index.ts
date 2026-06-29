@@ -30,6 +30,8 @@ export interface Host {
   crl_status?: 'valid' | 'expired' | 'missing' | 'invalid'
   crl_age_seconds?: number
   crl_next_update?: string
+  gpg_key_status?: 'valid' | 'expired' | 'missing' | 'revoked'
+  gpg_key_expires_at?: string
 }
 
 export interface CreateHostRequest {
