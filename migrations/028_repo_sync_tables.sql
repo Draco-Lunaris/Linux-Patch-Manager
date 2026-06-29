@@ -39,15 +39,15 @@ CREATE INDEX IF NOT EXISTS idx_repo_packages_version ON repo_packages (version D
 CREATE INDEX IF NOT EXISTS idx_repo_packages_synced ON repo_packages (synced_at DESC);
 
 -- Add audit actions for repo sync events
-INSERT INTO audit_action (action) VALUES
-    ('repo_sync_started'),
-    ('repo_sync_completed'),
-    ('repo_sync_failed'),
-    ('repo_package_uploaded'),
-    ('repo_package_deleted'),
-    ('repo_metadata_refreshed'),
-    ('gpg_key_rotated')
-ON CONFLICT (action) DO NOTHING;
+DO $$ BEGIN
+ALTER TYPE audit_action ADD VALUE IF NOT EXISTS 'repo_sync_started';
+ALTER TYPE audit_action ADD VALUE IF NOT EXISTS 'repo_sync_completed';
+ALTER TYPE audit_action ADD VALUE IF NOT EXISTS 'repo_sync_failed';
+ALTER TYPE audit_action ADD VALUE IF NOT EXISTS 'repo_package_uploaded';
+ALTER TYPE audit_action ADD VALUE IF NOT EXISTS 'repo_package_deleted';
+ALTER TYPE audit_action ADD VALUE IF NOT EXISTS 'repo_metadata_refreshed';
+ALTER TYPE audit_action ADD VALUE IF NOT EXISTS 'gpg_key_rotated';
+END $$;
 
 -- Add GPG key health columns to hosts table (M15)
 -- Tracks GPG key status reported by agents during health checks
