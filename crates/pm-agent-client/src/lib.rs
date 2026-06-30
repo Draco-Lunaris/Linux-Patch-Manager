@@ -44,6 +44,5 @@ pub use error::AgentClientError;
 /// Response envelope and all data types.
 pub use types::{
     AgentEnvelope, AgentErrorBody, HealthData, Package, PackagesData, Patch, PatchesData,
-    RollbackResponse, SelfUpdateRequest, SelfUpdateResponse, SelfUpdateStatus, ServiceStatusData,
-    SystemInfoData, UpdatePackageResponse,
+    RollbackResponse, ServiceStatusData, SystemInfoData, UpdatePackageResponse,
 };
