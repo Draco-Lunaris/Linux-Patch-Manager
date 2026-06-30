@@ -45,5 +45,5 @@ pub use error::AgentClientError;
 pub use types::{
     AgentEnvelope, AgentErrorBody, HealthData, Package, PackagesData, Patch, PatchesData,
     RollbackResponse, SelfUpdateRequest, SelfUpdateResponse, SelfUpdateStatus, ServiceStatusData,
-    SystemInfoData,
+    SystemInfoData, UpdatePackageResponse,
 };
