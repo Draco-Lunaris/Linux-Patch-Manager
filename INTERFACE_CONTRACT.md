@@ -138,7 +138,11 @@ This is the canonical structure. Both repos' code already matches this.
   }
 }
 ```
-**⚠ distro_id format:** The Agent expects `distro_id` WITHOUT version (e.g., `"ubuntu"`, not `"ubuntu-24.04"`). The Manager's `RepoConfig` struct comments currently show version-suffixed examples — this is a **known mismatch**. The contract specifies: **no version suffix**. Manager must strip the version when building `repo_config`.
+**⚠ distro_id format:** The canonical format is **bare distro name, no version suffix** (e.g., `"ubuntu"`, not `"ubuntu-24.04"`). The Agent's `provision_repo_config()` at `src/enroll/provision.rs:237` matches `distro_id` against exact bare strings. A version-suffixed value misses every arm and bails. The Manager's `detect_distro_id()` has been corrected to emit bare ids.
+
+**Canonical supported distros (Manager-provisioned):** `ubuntu`, `debian`, `fedora`, `almalinux`, `alpine`, `arch`. These are the distros the Manager's `detect_distro_id()` and `generate_distro_config()` can handle.
+
+**Agent has additional match arms** for `rhel`, `centos`, `rocky`, and `manjaro` at `provision.rs:239-261` that the Manager does NOT provision. These arms exist in the agent for forward compatibility but the Manager cannot currently detect or generate repo config for these distros. An unrecognized distro at enrollment MUST fail loudly (explicit error/log), not silently return `None`.
 
 **Current Manager gap:** Enrollment approval handler (`crates/pm-web/src/routes/enrollment.rs` line 322) sets `repo_config: None`. The struct and types exist, but the handler does not populate `repo_config` during approval. This must be implemented.
 
@@ -187,85 +191,30 @@ The PkiBundle JSON fields use logical names (`ca_crt`, `server_crt`, `server_key
 - **Scheme:** HTTP (no TLS — GPG signatures provide integrity)
 - **Base URL:** `http://<manager-host>/`
 - **Repo paths:** `/apt/`, `/dnf/`, `/apk/`, `/pacman/`
-- **Integrity:** All packages and repo metadata signed by the Manager's GPG key
+- **Integrity:** Repo metadata signed by the Manager's GPG key
 - **GPG key:** Per-manager, stored alongside CA in `/etc/patch-manager/ca/`
 - **GPG key delivery:** Via enrollment bundle `repo_config.gpg_public_key` or fallback `GET /api/v1/pki/repo-config`
 
-### 4.2 Manager-Initiated Self-Update
+### 4.2 Self-Update via Standard Package Update
 
-**Endpoint:** `POST /api/v1/system/update` (Manager calls Agent)
+Self-updating the agent is a standard package update — no different from updating any other package. The Manager uses the existing package update endpoint:
 
-**Request body:**
-```json
-{
-  "target_version": "string | null",
-  "restart": true,
-  "restart_delay_seconds": 5
-}
-```
+**Endpoint:** `PUT /api/v1/packages/linux-patch-api` (Manager calls Agent)
 
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `target_version` | string \| null | No | null | Specific package version to install. null = latest available |
-| `restart` | boolean | No | true | Restart agent service after successful upgrade |
-| `restart_delay_seconds` | integer | No | 5 | Delay before restart (clamped to max 300) |
+This is the standard package update endpoint already defined in §1.1. No custom self-update endpoint is needed.
 
-**Response (202):**
-```json
-{
-  "success": true,
-  "request_id": "UUID",
-  "timestamp": "ISO 8601",
-  "data": {
-    "job_id": "UUID",
-    "status": "pending",
-    "operation": "self_update",
-    "target_version": "1.5.6-1",
-    "restart": true,
-    "restart_delay_seconds": 5,
-    "source": "manager_repo"
-  }
-}
-```
+### 4.3 Delayed Restart Model
 
-**Error codes:**
-| Code | HTTP | Description |
-|------|------|-------------|
-| `INVALID_VERSION` | 400 | Version format invalid or not in repo |
-| `UPDATE_IN_PROGRESS` | 409 | A self-update is already running |
-| `UPDATE_SERVICE_START_ERROR` | 500 | Self-update systemd unit failed to start |
+The agent's maintainer scripts handle the upgrade lifecycle:
 
-### 4.3 Self-Update Status Query
+1. **prerm/pre-deinstall:** Does NOT stop the service on upgrade — only on removal
+2. **dpkg/apk/pacman:** Replaces files on disk while the service keeps running on the old binary in memory
+3. **postinst/post-install:** Schedules a 300s delayed service restart:
+   - systemd distros: `systemd-run --on-active=300s systemctl restart linux-patch-api.service`
+   - Alpine (OpenRC): `nohup sh -c 'sleep 300 && rc-service linux-patch-api restart' >/dev/null 2>&1 &`
+4. After 300s, the service restarts and loads the new binary
 
-**Endpoint:** `GET /api/v1/system/update/status` (Manager calls Agent)
-
-**Response (200):**
-```json
-{
-  "success": true,
-  "request_id": "UUID",
-  "timestamp": "ISO 8601",
-  "data": {
-    "previous_version": "1.4.3-1",
-    "new_version": "1.5.6-1",
-    "changed": true,
-    "status": "success",
-    "error": null,
-    "at": "2026-06-27T14:03:12Z"
-  }
-}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `previous_version` | string \| null | Agent version before update (null if first install) |
-| `new_version` | string \| null | Agent version after update (null if failed before install) |
-| `changed` | boolean | true if package version changed |
-| `status` | string | `success`, `rollback`, `failed`, `health_check_timeout`, `pending` |
-| `error` | string \| null | Error message if status != success |
-| `at` | ISO 8601 \| null | Timestamp when self-update completed |
-
-**Response (404):** `NO_SELF_UPDATE_RECORD` — no self-update has been performed.
+No custom scripts (`self-update.sh`), detached systemd units, marker files, health check loops, or auto-rollback are needed. The native package manager and standard maintainer scripts handle everything.
 
 ### 4.4 Fallback Repo Config Fetch
 
@@ -282,25 +231,24 @@ The PkiBundle JSON fields use logical names (`ca_crt`, `server_crt`, `server_key
       "gpg_public_key": "-----BEGIN PGP PUBLIC KEY BLOCK-----\n...\n-----END PGP PUBLIC KEY BLOCK-----",
       "sources_config": "deb [signed-by=/etc/apt/keyrings/lpa-repo.gpg] http://manager.moon-dragon.us/apt noble main",
       "distro_id": "ubuntu",
-      "keyring_path": "/etc/apt/keyrings/lpa-repo.gpg",
-      "repo_base_url": "http://manager.moon-dragon.us"
+      "keyring_path": "/etc/apt/keyrings/lpa-repo.gpg"
     }
   }
-}
+},
 ```
 
 **Note:** `sources_config` uses `http://` (port 80), NOT `https://`.
 
 **Error (404):** `PKI_REPO_CONFIG_UNAVAILABLE` — Manager has not provisioned repo config for this host's distro.
 
-### 4.5 Agent Execution Model
+### 4.5 Deprecated Endpoints
 
-- Agent writes request to `/var/lib/linux_patch_api/self-update.request`
-- Triggers `self-update.sh` via detached systemd unit (`linux-patch-api-update.service`)
-- The update unit has its own cgroup — no `Requires=`, `BindsTo=`, `PartOf=` coupling to the agent service
-- This allows the update to survive the agent being killed by dpkg prerm
-- After install: 60-second health check; auto-rollback to `previous_version` on failure
-- Marker file `/var/lib/linux_patch_api/last_self_update.json` is source of truth (not in-memory job state)
+The following endpoints are deprecated and should not be used for new implementations:
+
+- `POST /api/v1/system/update` — replaced by standard `PUT /api/v1/packages/{name}`
+- `GET /api/v1/system/update/status` — replaced by standard `GET /api/v1/jobs/{id}`
+
+These endpoints may still exist in the codebase for backward compatibility but should be removed in a future cleanup pass.
 
 ---
 
@@ -367,25 +315,39 @@ These are the Manager's own API for admin enrollment management. Documented here
 
 ---
 
-## 7. Known Gaps Requiring Implementation
+## 7. Known Gaps
 
-These gaps exist in the current codebase as of 2026-06-29 and must be resolved for full contract compliance:
+### 7.1 Code Gaps (fixable inside a repo)
 
-| Gap | Side | Description | Priority |
-|-----|------|-------------|----------|
-| G-01 | Manager | Enrollment handler did not populate `repo_config` in PkiBundle | CLOSED — handler now calls detect_distro_id + generate_distro_config + reads GPG key (enrollment.rs:318-383) |
-| G-02 | Manager | `GET /api/v1/pki/repo-config` endpoint may not be fully implemented (fallback path) | P1 |
-| G-03 | Manager | `RepoConfig.distro_id` comments show version-suffixed format; code must strip version to match agent expectation | P1 |
-| G-04 | Manager | Package repo directory infrastructure (`/var/www/lpa-repo/`) not set up | P1 |
-| G-05 | Manager | GPG key not generated on manager host | P1 |
-| G-06 | Manager | ServeDir for `/apt/`, `/dnf/`, `/apk/`, `/pacman/` repo paths not configured in router | P1 |
-| G-07 | Manager | Manager SPEC/ARCHITECTURE/REQUIREMENTS do not mention self-update or package repo feature | P0 |
-| G-08 | Manager | Manager ARCHITECTURE §12.1 missing 3 self-update endpoints from integration table | P0 |
-| G-09 | Agent | Agent SPEC.md says `server.key` but code uses `server.key.pem` — doc must be corrected | P1 |
-| G-10 | Agent | Agent ARCHITECTURE.md says `server.key` but code uses `server.key.pem` — doc must be corrected | P1 |
-| G-11 | Both | API repo version numbers are inconsistent (SPEC=2.0.0, README=1.0.0, health example=0.0.1) | P1 |
-| G-12 | Manager | Manager README port confusion (config says 443, access instructions say 8080) | P2 |
-| G-13 | Manager | Manager SPEC (0.0.2) behind SDD (0.0.3) — needs version bump and content sync | P2 |
+These gaps require code changes. Each carries a file:line citation from current master code.
+
+| Gap | Side | Description | Evidence (file:line) | Status |
+|-----|------|-------------|----------------------|--------|
+| G-01 | Manager | Enrollment handler did not populate `repo_config` in PkiBundle | `crates/pm-web/src/routes/enrollment.rs:318-383` | CLOSED — handler now calls detect_distro_id + generate_distro_config + reads GPG key |
+| G-07 | Manager | Manager SPEC/ARCHITECTURE/REQUIREMENTS do not mention self-update or package repo feature | `SPEC.md` (self-update section added), `ARCHITECTURE.md:577-579` (endpoints added) | CLOSED by PR #123 |
+| G-08 | Manager | Manager ARCHITECTURE §12.1 was missing 3 self-update endpoints | `ARCHITECTURE.md:577-579` (now present) | CLOSED by PR #123 |
+| G-09 | Agent | Agent SPEC.md said `server.key` but code uses `server.key.pem` | `src/enroll/provision.rs:18` defines `DEFAULT_SERVER_KEY = "/etc/linux_patch_api/certs/server.key.pem"` | CLOSED by PR #116 |
+| G-10 | Agent | Agent ARCHITECTURE.md said `server.key` but code uses `server.key.pem` | Same evidence as G-09 | CLOSED by PR #116 |
+| G-11 | Both | API repo version numbers inconsistent (SPEC=2.0.0, README=1.0.0, health example=0.0.1) | `SPEC.md:6` says v2.0.0, `README.md:4` says v1.0.0, `API_SPEC.md:362` shows 0.0.1 | OPEN — needs version reconciliation |
+| G-12 | Manager | Manager README port confusion (config said 443, access instructions said 8080) | `README.md:158` (was 8080, now 443) | CLOSED by PR #123 |
+| G-13 | Manager | Manager SPEC (0.0.2) behind SDD (0.0.3) | `SPEC.md:25` (now 0.0.3), `ARCHITECTURE.md:8` (0.0.3) | CLOSED by PR #123 |
+
+### 7.2 Host-Provisioning Gaps (deployment state, NOT code)
+
+These gaps are deployment tasks on the manager host. They belong in a deployment runbook, not a code-gap list. The code that would consume these resources is already implemented and working.
+
+| Gap | Side | Description | Evidence (code that consumes the resource) | Status |
+|-----|------|-------------|-------------------------------------------|--------|
+| G-04 | Manager host | Package repo directory `/var/www/lpa-repo/` not created on manager host | `crates/pm-web/src/lib.rs:261` reads `state.config.repo.dir`; ServeDir serves from it at runtime | DEPLOYMENT TASK — code is ready, directory must be created and populated |
+| G-05 | Manager host | GPG signing key not generated on manager host | `crates/pm-web/src/routes/pki.rs:102` reads from `repo_config.gpg_public_key_path`; `crates/pm-core/src/config.rs:91` defines the path config | DEPLOYMENT TASK — code is ready, key must be generated and placed |
+
+### 7.3 Gaps Closed During Verification
+
+| Gap | Claimed Status | Verified Status | Evidence |
+|-----|---------------|-----------------|----------|
+| G-02 | "may not be fully implemented" | **CLOSED — fully implemented** | `crates/pm-web/src/routes/pki.rs:25` route registered, `:83-150` handler reads GPG key, generates distro config, returns RepoConfig |
+| G-03 | "distro_id format mismatch" | **FIXED — was a real mismatch** | Manager `models.rs:233` returned version-suffixed; Agent `provision.rs:237` expects bare exact match. Fixed: detect_distro_id now returns bare ids, generate_distro_config uses `==` |
+| G-06 | "ServeDir not configured" | **CLOSED — fully configured** | `crates/pm-web/src/lib.rs:260-267` build_repo_router with 4 nest_service entries; `crates/pm-web/src/main.rs:161-182` spawns on configured port 80 |
 
 ---
 

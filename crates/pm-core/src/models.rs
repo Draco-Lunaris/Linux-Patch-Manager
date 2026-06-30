@@ -212,9 +212,10 @@ pub struct RepoConfig {
     /// For apk: a repository URL line.
     /// For pacman: an include file content.
     pub sources_config: String,
-    /// Detected distribution identifier WITHOUT version suffix (e.g., `ubuntu`,
-    /// `debian`, `fedora`, `alpine`, `arch`). The agent expects bare distro names,
-    /// not version-suffixed strings. See INTERFACE_CONTRACT.md §2.3.
+    /// Bare distribution identifier with no version suffix (e.g., `ubuntu`,
+    /// `debian`, `fedora`, `almalinux`, `alpine`, `arch`). The agent's
+    /// `provision_repo_config()` matches this against exact bare strings.
+    /// See INTERFACE_CONTRACT.md §2.3.
     pub distro_id: String,
     /// Filesystem path where the GPG public key should be installed
     /// (e.g., `/etc/apt/keyrings/lpa-repo.gpg` for apt,
@@ -224,26 +225,24 @@ pub struct RepoConfig {
 
 /// Detect distro_id from OS details fields extracted during enrollment.
 ///
-/// Returns a distro_id string like `ubuntu-24.04`, `debian-12`, `fedora-40`,
-/// `alpine-3.21`, or `arch`, or `None` if the OS is unrecognized.
+/// Returns a bare distro_id string (no version suffix): `ubuntu`, `debian`,
+/// `fedora`, `almalinux`, `alpine`, or `arch`, or `None` if the OS is
+/// unrecognized. The agent's `provision_repo_config()` matches distro_id
+/// against exact bare strings — version-suffixed values will miss every
+/// match arm and bail. See INTERFACE_CONTRACT.md §2.3.
 pub fn detect_distro_id(os_family: Option<&str>, os_name: Option<&str>) -> Option<String> {
     let os = os_family.unwrap_or_default().to_ascii_lowercase();
     let name = os_name.unwrap_or_default().to_ascii_lowercase();
     if os.contains("ubuntu") || name.contains("ubuntu") {
-        let ver = name.split_whitespace().nth(1).unwrap_or("");
-        Some(format!("ubuntu-{}", ver))
+        Some("ubuntu".to_string())
     } else if os.contains("debian") || name.contains("debian") {
-        let ver = name.split_whitespace().nth(1).unwrap_or("");
-        Some(format!("debian-{}", ver))
+        Some("debian".to_string())
     } else if os.contains("fedora") || name.contains("fedora") {
-        let ver = name.split_whitespace().nth(1).unwrap_or("");
-        Some(format!("fedora-{}", ver))
+        Some("fedora".to_string())
     } else if os.contains("alma") || name.contains("alma") {
-        let ver = name.split_whitespace().nth(1).unwrap_or("9");
-        Some(format!("almalinux-{}", ver))
+        Some("almalinux".to_string())
     } else if os.contains("alpine") || name.contains("alpine") {
-        let ver = name.split_whitespace().nth(1).unwrap_or("");
-        Some(format!("alpine-{}", ver))
+        Some("alpine".to_string())
     } else if os.contains("arch") || name.contains("arch") {
         Some("arch".to_string())
     } else {
@@ -256,17 +255,17 @@ pub fn detect_distro_id(os_family: Option<&str>, os_name: Option<&str>) -> Optio
 /// Returns `None` if the distro is not supported.
 pub fn generate_distro_config(distro_id: &str, repo_url_base: &str) -> Option<(String, String)> {
     let base = repo_url_base.trim_end_matches('/');
-    if distro_id.starts_with("ubuntu-") || distro_id.starts_with("debian-") {
+    if distro_id == "ubuntu" || distro_id == "debian" {
         let sources = format!("deb [signed-by=/etc/apt/keyrings/lpa-repo.gpg] {base}/apt/ ./");
         let keyring = "/etc/apt/keyrings/lpa-repo.gpg".to_string();
         Some((sources, keyring))
-    } else if distro_id.starts_with("fedora-") || distro_id.starts_with("almalinux-") {
+    } else if distro_id == "fedora" || distro_id == "almalinux" {
         let sources = format!(
             "[lpa-repo]\\nname=Linux Patch API Repo\\nbaseurl={base}/dnf/\\nenabled=1\\ngpgcheck=1\\ngpgkey=file:///etc/pki/rpm-gpg/lpa-repo.gpg\\n"
         );
         let keyring = "/etc/pki/rpm-gpg/lpa-repo.gpg".to_string();
         Some((sources, keyring))
-    } else if distro_id.starts_with("alpine-") {
+    } else if distro_id == "alpine" {
         let sources = format!("{base}/apk/");
         let keyring = "/etc/apk/keys/lpa-repo.rsa.pub".to_string();
         Some((sources, keyring))
