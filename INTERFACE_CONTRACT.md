@@ -373,7 +373,7 @@ These gaps exist in the current codebase as of 2026-06-29 and must be resolved f
 
 | Gap | Side | Description | Priority |
 |-----|------|-------------|----------|
-| G-01 | Manager | Enrollment handler does not populate `repo_config` in PkiBundle (line 322: `repo_config: None`) | P0 |
+| G-01 | Manager | Enrollment handler did not populate `repo_config` in PkiBundle | CLOSED — handler now calls detect_distro_id + generate_distro_config + reads GPG key (enrollment.rs:318-383) |
 | G-02 | Manager | `GET /api/v1/pki/repo-config` endpoint may not be fully implemented (fallback path) | P1 |
 | G-03 | Manager | `RepoConfig.distro_id` comments show version-suffixed format; code must strip version to match agent expectation | P1 |
 | G-04 | Manager | Package repo directory infrastructure (`/var/www/lpa-repo/`) not set up | P1 |

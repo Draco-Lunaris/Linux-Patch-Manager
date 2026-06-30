@@ -11,8 +11,8 @@ use pm_auth::AuthUser;
 use pm_core::{
     db,
     models::{
-        ApprovedEntry, CreateEnrollmentRequest, EnrollmentRequest, EnrollmentStatusResponse, Host,
-        PkiBundle,
+        detect_distro_id, generate_distro_config, ApprovedEntry, CreateEnrollmentRequest,
+        EnrollmentRequest, EnrollmentStatusResponse, Host, PkiBundle, RepoConfig,
     },
 };
 use rand::{distributions::Alphanumeric, Rng};
@@ -310,16 +310,77 @@ async fn approve_enrollment(
     // includes intermediate + root) and the current CRL.
     let ca_chain = issued.ca_root_pem.clone(); // Root mode: chain is just the root cert
     let crl_pem = state.ca.generate_crl(&state.db).await.unwrap_or_default(); // Empty string on failure: agent falls back to WebPKI-only
+
+    // Build repo_config: detect distro from enrollment os_details, read GPG
+    // public key, generate distro-specific sources_config and keyring_path.
+    // If any step fails, repo_config is None and the agent falls back to
+    // GET /api/v1/pki/repo-config (legacy path).
+    let repo_config = {
+        let os_family = enrollment_request
+            .os_details
+            .get("distro")
+            .and_then(|v| v.as_str());
+        let os_name = enrollment_request
+            .os_details
+            .get("name")
+            .and_then(|v| v.as_str());
+
+        match detect_distro_id(os_family, os_name) {
+            Some(distro_id) => {
+                let repo_cfg = &state.config.repo;
+                match generate_distro_config(&distro_id, &repo_cfg.url_base) {
+                    Some((sources_config, keyring_path)) => {
+                        match std::fs::read_to_string(&repo_cfg.gpg_public_key_path) {
+                            Ok(gpg_public_key) => {
+                                tracing::info!(
+                                    distro_id = %distro_id,
+                                    gpg_key_path = %repo_cfg.gpg_public_key_path,
+                                    "repo_config populated for enrollment"
+                                );
+                                Some(RepoConfig {
+                                    gpg_public_key,
+                                    sources_config,
+                                    distro_id,
+                                    keyring_path,
+                                })
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    error = %e,
+                                    path = %repo_cfg.gpg_public_key_path,
+                                    "Failed to read GPG public key — repo_config will be None"
+                                );
+                                None
+                            }
+                        }
+                    }
+                    None => {
+                        tracing::warn!(
+                            distro_id = %distro_id,
+                            "generate_distro_config returned None — unsupported distro, repo_config will be None"
+                        );
+                        None
+                    }
+                }
+            }
+            None => {
+                tracing::warn!(
+                    os_family = ?os_family,
+                    os_name = ?os_name,
+                    "detect_distro_id returned None — unrecognized OS, repo_config will be None"
+                );
+                None
+            }
+        }
+    };
+
     let pki = PkiBundle {
         ca_crt: issued.ca_root_pem,
         ca_chain,
         server_crt: issued.server_cert_pem,
         server_key: issued.server_key_pem,
         crl_pem,
-        // repo_config is populated in M6 (enrollment handler distro detection +
-        // sources_config generation). Set to None for now — agents enrolled
-        // with this bundle will fall back to GET /api/v1/pki/repo-config (M2).
-        repo_config: None,
+        repo_config,
     };
     state.approved_enrollments.insert(
         enrollment_request.polling_token.clone(),
