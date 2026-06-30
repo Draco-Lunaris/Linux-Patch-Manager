@@ -11,8 +11,9 @@ use pm_auth::AuthUser;
 use pm_core::{
     db,
     models::{
-        detect_distro_id, generate_distro_config, ApprovedEntry, CreateEnrollmentRequest,
-        EnrollmentRequest, EnrollmentStatusResponse, Host, PkiBundle, RepoConfig,
+        detect_apt_codename, detect_distro_id, generate_distro_config, ApprovedEntry,
+        CreateEnrollmentRequest, EnrollmentRequest, EnrollmentStatusResponse, Host, PkiBundle,
+        RepoConfig,
     },
 };
 use rand::{distributions::Alphanumeric, Rng};
@@ -328,7 +329,12 @@ async fn approve_enrollment(
         match detect_distro_id(os_family, os_name) {
             Some(distro_id) => {
                 let repo_cfg = &state.config.repo;
-                match generate_distro_config(&distro_id, &repo_cfg.url_base) {
+                let os_version = enrollment_request
+                    .os_details
+                    .get("version")
+                    .and_then(|v| v.as_str());
+                let codename = detect_apt_codename(os_version);
+                match generate_distro_config(&distro_id, &repo_cfg.url_base, codename.as_deref()) {
                     Some((sources_config, keyring_path)) => {
                         match std::fs::read_to_string(&repo_cfg.gpg_public_key_path) {
                             Ok(gpg_public_key) => {
