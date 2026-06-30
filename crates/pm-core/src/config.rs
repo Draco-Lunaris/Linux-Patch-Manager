@@ -82,7 +82,7 @@ pub struct AppConfig {
 /// distribution to agents during enrollment.
 ///
 /// Added for issue #116 (self-update v2.0.0).
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RepoServerConfig {
     /// Base directory for package repo files (default: /var/www/lpa-repo).
     /// Subdirectories: apt/, dnf/, apk/, pacman/.
@@ -98,6 +98,17 @@ pub struct RepoServerConfig {
     /// HTTP port for the repo server (default: 80).
     #[serde(default = "default_repo_http_port")]
     pub http_port: u16,
+}
+
+impl Default for RepoServerConfig {
+    fn default() -> Self {
+        Self {
+            dir: default_repo_dir(),
+            gpg_public_key_path: default_gpg_key_path(),
+            url_base: default_repo_url_base(),
+            http_port: default_repo_http_port(),
+        }
+    }
 }
 
 fn default_repo_dir() -> String {
