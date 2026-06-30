@@ -19,9 +19,11 @@ The GPG key has a **2-year expiry** as a safety net. Key rotation should be perf
 - **Type:** RSA 4096
 - **Usage:** Signing only
 - **Expiry:** 2 years
-- **Storage:** Alongside CA certificates (e.g., `/etc/patch-manager/ca/`)
+- **Created:** 2026-06-28
+- **Expires:** 2028-06-27
+- **Storage:** Per-manager on disk at `/etc/patch-manager/ca/` alongside CA material (NEVER in Vaultwarden or CI secrets — see AGENTS.md Rule 2)
 - **Distribution:** Via enrollment `PkiBundle.repo_config.gpg_public_key`
-- **No shared storage:** Each manager has its own unique key; no Vaultwarden, no CI secrets
+- **GPG keyring:** `~/.gnupg` on `lpm.moon-dragon.us` (echo user)
 
 ## Key Health Monitoring
 
@@ -67,6 +69,7 @@ gpg --armor --export-secret-keys lpa-repo@localhost > /etc/patch-manager/ca/lpa-
 chmod 600 /etc/patch-manager/ca/lpa-repo-private-key.asc
 ```
 
+Store on the manager host at `/etc/patch-manager/ca/` (per-manager, NEVER in Vaultwarden or CI secrets — see AGENTS.md Rule 2):
 ### 3. Update Repo Configuration
 
 ```bash
@@ -109,7 +112,7 @@ gpg --gen-revoke <old-key-id> | gpg --import
 The CRL health check system monitors GPG key expiry. When a key approaches expiry (within 90 days), the system can:
 
 1. Generate a new key automatically
-2. Store alongside CA
+2. Store on manager host at `/etc/patch-manager/ca/` (NEVER in Vaultwarden or CI secrets)
 3. Update repo configuration
 4. Trigger re-enrollment for affected agents
 

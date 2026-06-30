@@ -71,8 +71,8 @@ async fn get_crl(State(state): State<AppState>) -> impl IntoResponse {
 ///
 /// # Query parameters
 ///
-/// - `distro_id` (required): The agent's distro identifier (e.g.,
-///   `ubuntu-24.04`, `debian-12`, `fedora-40`, `alpine-3.21`, `arch`).
+/// - `distro_id` (required): The agent's bare distro identifier (e.g.,
+///   `ubuntu`, `debian`, `fedora`, `almalinux`, `alpine`, `arch`). No version suffix.
 ///
 /// # Response
 ///
