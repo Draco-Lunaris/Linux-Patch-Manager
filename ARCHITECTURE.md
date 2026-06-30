@@ -574,6 +574,9 @@ HTTP status codes follow standard REST semantics (`400`, `401`, `403`, `404`, `4
 - `GET  /api/v1/jobs/{id}` — Get job status
 - `POST /api/v1/jobs/{id}/rollback` — Rollback a job
 - `POST /api/v1/system/reboot` — Reboot host
+- `POST /api/v1/system/update` — Trigger agent self-update from manager-hosted repo
+- `GET  /api/v1/system/update/status` — Get most recent self-update result
+- `GET  /api/v1/pki/repo-config` — Fallback repo config fetch (for agents enrolled before repo provisioning)
 - `WS   /api/v1/ws/jobs` — Real-time job status
 
 ### 12.2 Manager's Own API Surface (selected)
