@@ -36,7 +36,7 @@ use crate::{
     types::{
         AgentEnvelope, AgentJobStatus, ApplyPatchesRequest, ApplyPatchesResponse, HealthData,
         PackagesData, PatchesData, RollbackResponse, SelfUpdateRequest, SelfUpdateResponse,
-        SelfUpdateStatus, ServiceStatusData, SystemInfoData,
+        SelfUpdateStatus, ServiceStatusData, SystemInfoData, UpdatePackageResponse,
     },
 };
 
@@ -237,8 +237,20 @@ impl AgentClient {
             .await
     }
 
+    /// `PUT /api/v1/packages/{name}` — update a specific package on the agent.
+    ///
+    /// This is the standard package update endpoint. For agent self-upgrades,
+    /// call with `"linux-patch-api"` as the package name.
+    #[instrument(skip(self), fields(base_url = %self.base_url, package_name = %package_name))]
+    pub async fn update_package(
+        &self,
+        package_name: &str,
+    ) -> Result<UpdatePackageResponse, AgentClientError> {
+        self.put(&format!("packages/{}", package_name)).await
+    }
+
     // --------------------------------------------------------
-    // Self-update methods
+    // Self-update methods (deprecated — use update_package instead)
     // --------------------------------------------------------
 
     /// `POST /api/v1/system/update` — trigger agent self-upgrade.
@@ -254,6 +266,45 @@ impl AgentClient {
     #[instrument(skip(self), fields(base_url = %self.base_url))]
     pub async fn self_update_status(&self) -> Result<SelfUpdateStatus, AgentClientError> {
         self.get("system/update/status", &[]).await
+    }
+
+    // --------------------------------------------------------
+    // Private PUT helper
+    // --------------------------------------------------------
+
+    /// Execute a PUT request against `{base_url}/{path}` with an empty body,
+    /// deserialize the [`AgentEnvelope`], and extract the `data` field.
+    async fn put<Resp>(&self, path: &str) -> Result<Resp, AgentClientError>
+    where
+        Resp: DeserializeOwned,
+    {
+        let url = format!("{}/{}", self.base_url, path);
+        debug!(url = %url, "Sending PUT request to agent");
+
+        let response = self.inner.put(&url).send().await?;
+        let status = response.status();
+        debug!(url = %url, status = %status, "Received PUT response from agent");
+
+        let body_text = response.text().await?;
+        let envelope: AgentEnvelope<Resp> = serde_json::from_str(&body_text)?;
+
+        if !status.is_success() || !envelope.success {
+            if let Some(err) = envelope.error {
+                return Err(AgentClientError::ApiError {
+                    code: err.code,
+                    message: err.message,
+                });
+            }
+            return Err(AgentClientError::ApiError {
+                code: status.as_str().to_string(),
+                message: format!("Agent returned HTTP {} for {}", status.as_u16(), url),
+            });
+        }
+
+        envelope.data.ok_or_else(|| AgentClientError::ApiError {
+            code: "MISSING_DATA".to_string(),
+            message: "Agent response success=true but data field is absent".to_string(),
+        })
     }
 
     // --------------------------------------------------------

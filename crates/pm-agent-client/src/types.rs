@@ -45,6 +45,20 @@ pub struct AgentErrorBody {
 }
 
 // ============================================================
+// PUT /api/v1/packages/{name}
+// ============================================================
+
+/// Response from `PUT /api/v1/packages/{name}` — standard package update.
+/// Returns an async job ID for status polling.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct UpdatePackageResponse {
+    /// Agent-assigned async job ID for status polling.
+    pub job_id: String,
+    /// Initial status: typically `"pending"` or `"running"`.
+    pub status: String,
+}
+
+// ============================================================
 // GET /api/v1/health
 // ============================================================
 

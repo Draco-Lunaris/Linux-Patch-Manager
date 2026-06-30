@@ -646,37 +646,20 @@ async fn execute_self_upgrade_host_job(
     pjh_id: Uuid,
     host_id: Uuid,
     client: &AgentClient,
-    patch_selection: &serde_json::Value,
+    _patch_selection: &serde_json::Value,
 ) {
-    let req: pm_agent_client::types::SelfUpdateRequest = match serde_json::from_value(
-        patch_selection.clone(),
-    ) {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::error!(
-                %pjh_id,
-                error = %e,
-                "execute_self_upgrade_host_job: failed to parse patch_selection as SelfUpdateRequest"
-            );
-            handle_host_failure(pool, pjh_id, format!("Invalid self-upgrade payload: {e}")).await;
-            return;
-        },
-    };
-
     tracing::info!(
         %pjh_id,
         %host_id,
-        target_version = ?req.target_version,
-        "execute_self_upgrade_host_job: submitting self-upgrade to agent"
+        "execute_self_upgrade_host_job: triggering standard package update for linux-patch-api"
     );
 
-    match client.self_update(&req).await {
+    match client.update_package("linux-patch-api").await {
         Ok(resp) => {
             tracing::info!(
                 %pjh_id,
                 agent_job_id = %resp.job_id,
-                target_version = ?resp.target_version,
-                "execute_self_upgrade_host_job: agent accepted self-upgrade"
+                "execute_self_upgrade_host_job: agent accepted package update"
             );
             if let Err(e) =
                 sqlx::query("UPDATE patch_job_hosts SET agent_job_id = $1 WHERE id = $2")
