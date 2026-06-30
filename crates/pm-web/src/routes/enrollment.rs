@@ -343,7 +343,7 @@ async fn approve_enrollment(
                                     distro_id,
                                     keyring_path,
                                 })
-                            }
+                            },
                             Err(e) => {
                                 tracing::warn!(
                                     error = %e,
@@ -351,18 +351,18 @@ async fn approve_enrollment(
                                     "Failed to read GPG public key — repo_config will be None"
                                 );
                                 None
-                            }
+                            },
                         }
-                    }
+                    },
                     None => {
                         tracing::warn!(
                             distro_id = %distro_id,
                             "generate_distro_config returned None — unsupported distro, repo_config will be None"
                         );
                         None
-                    }
+                    },
                 }
-            }
+            },
             None => {
                 tracing::warn!(
                     os_family = ?os_family,
@@ -370,7 +370,7 @@ async fn approve_enrollment(
                     "detect_distro_id returned None — unrecognized OS, repo_config will be None"
                 );
                 None
-            }
+            },
         }
     };
 
