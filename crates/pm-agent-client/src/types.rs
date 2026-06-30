@@ -259,5 +259,3 @@ pub struct RollbackResponse {
     pub job_id: String,
     pub status: String,
 }
-
-

@@ -35,8 +35,8 @@ use crate::{
     error::AgentClientError,
     types::{
         AgentEnvelope, AgentJobStatus, ApplyPatchesRequest, ApplyPatchesResponse, HealthData,
-        PackagesData, PatchesData, RollbackResponse,
-        ServiceStatusData, SystemInfoData, UpdatePackageResponse,
+        PackagesData, PatchesData, RollbackResponse, ServiceStatusData, SystemInfoData,
+        UpdatePackageResponse,
     },
 };
 
