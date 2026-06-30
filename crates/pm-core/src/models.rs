@@ -212,8 +212,9 @@ pub struct RepoConfig {
     /// For apk: a repository URL line.
     /// For pacman: an include file content.
     pub sources_config: String,
-    /// Detected distribution identifier (e.g., `ubuntu-24.04`, `debian-12`,
-    /// `fedora-40`, `alpine-3.21`, `arch`).
+    /// Detected distribution identifier WITHOUT version suffix (e.g., `ubuntu`,
+    /// `debian`, `fedora`, `alpine`, `arch`). The agent expects bare distro names,
+    /// not version-suffixed strings. See INTERFACE_CONTRACT.md §2.3.
     pub distro_id: String,
     /// Filesystem path where the GPG public key should be installed
     /// (e.g., `/etc/apt/keyrings/lpa-repo.gpg` for apt,
