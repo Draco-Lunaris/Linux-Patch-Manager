@@ -121,6 +121,7 @@ async fn get_repo_config(
     let (sources_config, keyring_path) = match pm_core::models::generate_distro_config(
         &distro_id,
         &repo_config.url_base,
+        params.codename.as_deref(),
     ) {
         Some(config) => config,
         None => {
@@ -153,6 +154,8 @@ async fn get_repo_config(
 #[derive(serde::Deserialize)]
 struct RepoConfigQuery {
     distro_id: String,
+    #[serde(default)]
+    codename: Option<String>,
 }
 
 #[cfg(test)]
