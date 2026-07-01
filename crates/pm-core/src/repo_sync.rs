@@ -1,0 +1,393 @@
+//! Shared package sync logic for the manager-hosted package repository.
+//!
+//! Both the scheduled worker (`pm-worker`) and the manual admin trigger
+//! (`pm-web` routes) call these functions to avoid code duplication.
+//!
+//! Added for Phase 5 of issue #116 gap fix (consolidate sync logic).
+
+use crate::config::PackageSyncConfig;
+use serde::Deserialize;
+
+/// GitHub API release asset representation.
+#[derive(Debug, Deserialize)]
+pub struct GithubAsset {
+    pub name: String,
+    pub browser_download_url: String,
+    pub size: u64,
+}
+
+/// GitHub API release representation.
+#[derive(Debug, Deserialize)]
+pub struct GithubRelease {
+    pub tag_name: String,
+    pub prerelease: bool,
+    pub assets: Vec<GithubAsset>,
+}
+
+/// Information about a successfully synced package — for DB persistence.
+#[derive(Debug, Clone)]
+pub struct SyncedPackage {
+    pub filename: String,
+    pub version: String,
+    pub distro: String,
+    pub distro_codename: Option<String>,
+    pub file_size: i64,
+}
+
+/// Result of a sync cycle — counts, errors, and synced package details for DB update.
+#[derive(Debug, Default)]
+pub struct SyncResult {
+    pub packages_synced: i32,
+    pub packages_skipped: i32,
+    pub errors: Vec<String>,
+    /// Details of each successfully synced package — for repo_packages table INSERT.
+    pub synced_packages: Vec<SyncedPackage>,
+}
+
+/// Fetch releases from GitHub API (last N releases, excluding prereleases unless allowed).
+pub async fn fetch_github_releases(
+    config: &PackageSyncConfig,
+) -> Result<Vec<GithubRelease>, anyhow::Error> {
+    let url = format!(
+        "https://api.github.com/repos/{}/releases?per_page={}",
+        config.github_repo,
+        config.max_releases.min(100)
+    );
+
+    let client = reqwest::Client::builder()
+        .user_agent("Linux-Patch-Manager-Sync/1.0")
+        .timeout(std::time::Duration::from_secs(30))
+        .build()?;
+
+    let mut req = client.get(&url);
+    if !config.github_token.is_empty() {
+        req = req.header("Authorization", format!("Bearer {}", config.github_token));
+    }
+
+    let resp = req.send().await?;
+
+    if !resp.status().is_success() {
+        anyhow::bail!("GitHub API returned status: {}", resp.status());
+    }
+
+    let releases: Vec<GithubRelease> = resp.json().await?;
+
+    // Filter out prereleases.
+    let filtered: Vec<GithubRelease> = releases
+        .into_iter()
+        .filter(|r| !r.prerelease)
+        .take(config.max_releases as usize)
+        .collect();
+
+    Ok(filtered)
+}
+
+/// Download a GitHub asset to a local path.
+pub async fn download_asset(
+    url: &str,
+    path: &str,
+    config: &PackageSyncConfig,
+) -> Result<(), anyhow::Error> {
+    // Ensure tmp directory exists.
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        tokio::fs::create_dir_all(parent).await.ok();
+    }
+
+    let client = reqwest::Client::builder()
+        .user_agent("Linux-Patch-Manager-Sync/1.0")
+        .timeout(std::time::Duration::from_secs(120))
+        .build()?;
+
+    let mut req = client.get(url);
+    if !config.github_token.is_empty() {
+        req = req.header("Authorization", format!("Bearer {}", config.github_token));
+    }
+
+    let resp = req.send().await?;
+
+    if !resp.status().is_success() {
+        anyhow::bail!("Download failed with status: {}", resp.status());
+    }
+
+    let bytes = resp.bytes().await?;
+    tokio::fs::write(path, bytes).await?;
+
+    Ok(())
+}
+
+/// Import a package file into the appropriate repo format.
+///
+/// For apt, reprepro auto-signs Release/InRelease via SignWith config.
+/// For dnf/apk/pacman, metadata is signed with detached GPG signatures
+/// using `pm_core::gpg::sign_file_detached()`.
+pub async fn import_to_repo(
+    file_path: &str,
+    distro: &str,
+    codename: Option<&str>,
+    repo_dir: &str,
+) -> Result<(), anyhow::Error> {
+    use crate::gpg;
+
+    match distro {
+        "apt" => {
+            let codename = codename.unwrap_or("noble");
+            let output = tokio::process::Command::new("reprepro")
+                .arg("-b")
+                .arg(format!("{repo_dir}/apt"))
+                .arg("includedeb")
+                .arg(codename)
+                .arg(file_path)
+                .output()
+                .await?;
+
+            if !output.status.success() {
+                anyhow::bail!(
+                    "reprepro includedeb failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+        },
+        "dnf" => {
+            // Copy RPM to dnf repo directory and regenerate metadata.
+            let dest_dir = format!("{repo_dir}/dnf/el9/Packages");
+            tokio::fs::create_dir_all(&dest_dir).await.ok();
+            let filename = std::path::Path::new(file_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("package.rpm");
+            let dest = format!("{dest_dir}/{filename}");
+            tokio::fs::copy(file_path, &dest).await?;
+
+            let output = tokio::process::Command::new("createrepo_c")
+                .arg("--update")
+                .arg(format!("{repo_dir}/dnf/el9"))
+                .output()
+                .await?;
+
+            if !output.status.success() {
+                anyhow::bail!(
+                    "createrepo_c failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+
+            // Sign repomd.xml with detached GPG signature for dnf verification.
+            let repomd_path = format!("{repo_dir}/dnf/el9/repodata/repomd.xml");
+            let repomd_sig_path = format!("{repo_dir}/dnf/el9/repodata/repomd.xml.asc");
+            if std::path::Path::new(&repomd_path).exists() {
+                if let Err(e) = gpg::sign_file_detached(&repomd_path, &repomd_sig_path, true).await
+                {
+                    tracing::warn!(error = %e, "GPG sign repomd.xml failed (non-fatal but clients will not trust this repo)");
+                }
+            }
+        },
+        "apk" => {
+            // Copy APK to apk repo directory.
+            let dest_dir = format!("{repo_dir}/apk/v3.21");
+            tokio::fs::create_dir_all(&dest_dir).await.ok();
+            let filename = std::path::Path::new(file_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("package.apk");
+            let dest = format!("{dest_dir}/{filename}");
+            tokio::fs::copy(file_path, &dest).await?;
+
+            // Generate APK index.
+            let output = tokio::process::Command::new("apk")
+                .arg("index")
+                .arg("-o")
+                .arg(format!("{dest_dir}/APKINDEX.tar.gz"))
+                .arg(&dest)
+                .output()
+                .await?;
+
+            if !output.status.success() {
+                tracing::warn!(
+                    "apk index failed (non-fatal): {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+
+            // Sign APKINDEX.tar.gz with detached GPG signature for apk verification.
+            let apkindex_path = format!("{dest_dir}/APKINDEX.tar.gz");
+            let apkindex_sig_path = format!("{dest_dir}/APKINDEX.tar.gz.sig");
+            if std::path::Path::new(&apkindex_path).exists() {
+                if let Err(e) =
+                    gpg::sign_file_detached(&apkindex_path, &apkindex_sig_path, false).await
+                {
+                    tracing::warn!(error = %e, "GPG sign APKINDEX.tar.gz failed (non-fatal but clients will not trust this repo)");
+                }
+            }
+        },
+        "pacman" => {
+            // Copy to pacman repo directory.
+            let dest_dir = format!("{repo_dir}/pacman/x86_64");
+            tokio::fs::create_dir_all(&dest_dir).await.ok();
+            let filename = std::path::Path::new(file_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("package.pkg.tar.zst");
+            let dest = format!("{dest_dir}/{filename}");
+            tokio::fs::copy(file_path, &dest).await?;
+
+            // Update pacman repo database.
+            let output = tokio::process::Command::new("repo-add")
+                .arg(format!("{dest_dir}/lpa-repo.db.tar.zst"))
+                .arg(&dest)
+                .output()
+                .await?;
+
+            if !output.status.success() {
+                tracing::warn!(
+                    "repo-add failed (non-fatal): {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+
+            // Sign lpa-repo.db.tar.zst with detached GPG signature for pacman verification.
+            let db_path = format!("{dest_dir}/lpa-repo.db.tar.zst");
+            let db_sig_path = format!("{dest_dir}/lpa-repo.db.tar.zst.sig");
+            if std::path::Path::new(&db_path).exists() {
+                if let Err(e) = gpg::sign_file_detached(&db_path, &db_sig_path, false).await {
+                    tracing::warn!(error = %e, "GPG sign lpa-repo.db.tar.zst failed (non-fatal but clients will not trust this repo)");
+                }
+            }
+        },
+        _ => {
+            anyhow::bail!("Unsupported distro: {distro}");
+        },
+    }
+
+    Ok(())
+}
+
+/// Check if a filename is a recognized package file.
+pub fn is_package_file(name: &str) -> bool {
+    name.ends_with(".deb")
+        || name.ends_with(".rpm")
+        || name.ends_with(".apk")
+        || name.ends_with(".pkg.tar.zst")
+}
+
+/// Detect repo format (apt/dnf/apk/pacman) from filename patterns.
+pub fn detect_distro_from_filename(name: &str) -> Option<String> {
+    if name.ends_with(".deb") {
+        Some("apt".to_string())
+    } else if name.ends_with(".rpm") {
+        Some("dnf".to_string())
+    } else if name.ends_with(".apk") {
+        Some("apk".to_string())
+    } else if name.ends_with(".pkg.tar.zst") {
+        Some("pacman".to_string())
+    } else {
+        None
+    }
+}
+
+/// Detect codename from filename patterns.
+///
+/// Expected patterns: `*_noble_amd64.deb`, `*_jammy_amd64.deb`,
+/// `*_bookworm_amd64.deb`, `*_trixie_amd64.deb`, `*_el9.x86_64.rpm`, etc.
+pub fn detect_codename_from_filename(name: &str, distro: &str) -> Option<String> {
+    let lower = name.to_ascii_lowercase();
+    match distro {
+        "apt" => {
+            for codename in &["noble", "jammy", "bookworm", "trixie"] {
+                if lower.contains(codename) {
+                    return Some(codename.to_string());
+                }
+            }
+            None
+        },
+        "dnf" => {
+            if lower.contains("el9") || lower.contains("fc") {
+                Some("el9".to_string())
+            } else {
+                None
+            }
+        },
+        "apk" => {
+            if lower.contains("v3.21") {
+                Some("v3.21".to_string())
+            } else {
+                None
+            }
+        },
+        "pacman" => Some("x86_64".to_string()),
+        _ => None,
+    }
+}
+
+/// Run a full sync cycle: fetch releases, download assets, import into repo.
+///
+/// This is the shared entry point called by both the scheduled worker and
+/// the manual admin trigger. The caller is responsible for creating and
+/// updating the `repo_sync_log` DB entry.
+///
+/// Returns a `SyncResult` with counts and errors for the caller to persist.
+pub async fn run_sync_cycle(
+    config: &PackageSyncConfig,
+    repo_dir: &str,
+) -> Result<SyncResult, anyhow::Error> {
+    let sync_config = config;
+
+    let releases = fetch_github_releases(sync_config).await?;
+
+    let mut result = SyncResult::default();
+
+    for release in &releases {
+        for asset in &release.assets {
+            // Only process package files.
+            if !is_package_file(&asset.name) {
+                result.packages_skipped += 1;
+                continue;
+            }
+
+            // Determine distro from filename.
+            let distro = detect_distro_from_filename(&asset.name);
+            if distro.is_none() {
+                result.packages_skipped += 1;
+                continue;
+            }
+
+            let distro = distro.unwrap();
+            let codename = detect_codename_from_filename(&asset.name, &distro);
+
+            // Download the asset.
+            let download_path = format!("{repo_dir}/tmp/{}", asset.name);
+            match download_asset(&asset.browser_download_url, &download_path, sync_config).await {
+                Ok(()) => {
+                    // Import into repo.
+                    if let Err(e) =
+                        import_to_repo(&download_path, &distro, codename.as_deref(), repo_dir).await
+                    {
+                        result
+                            .errors
+                            .push(format!("Import failed for {}: {e}", asset.name));
+                        result.packages_skipped += 1;
+                    } else {
+                        result.packages_synced += 1;
+                        result.synced_packages.push(SyncedPackage {
+                            filename: asset.name.clone(),
+                            version: release.tag_name.clone(),
+                            distro: distro.clone(),
+                            distro_codename: codename.clone(),
+                            file_size: asset.size as i64,
+                        });
+                    }
+
+                    // Clean up temp file.
+                    let _ = tokio::fs::remove_file(&download_path).await;
+                },
+                Err(e) => {
+                    result
+                        .errors
+                        .push(format!("Download failed for {}: {e}", asset.name));
+                    result.packages_skipped += 1;
+                },
+            }
+        }
+    }
+
+    Ok(result)
+}

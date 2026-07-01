@@ -6,6 +6,7 @@ pub mod error;
 pub mod gpg;
 pub mod logging;
 pub mod models;
+pub mod repo_sync;
 pub mod request_id;
 
 // Re-export commonly used types
