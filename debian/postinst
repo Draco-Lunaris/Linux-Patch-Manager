@@ -169,6 +169,40 @@ setup_database() {
 #
 # NEVER edit an applied migration again; append a new one instead.
 # ---------------------------------------------------------------------------
+# 4b. Fix table ownership (idempotent).
+#
+# Tables created by setup.sh or earlier migrations may be owned by the
+# postgres superuser rather than the patch_manager application user. This
+# prevents ALTER TABLE in future migrations (e.g., DROP COLUMN) from
+# succeeding — PostgreSQL requires the table owner (not just a privileged
+# role) to perform ALTER TABLE operations.
+#
+# This reassigns all tables and sequences in the public schema to the
+# patch_manager user so all migrations run cleanly on upgrade.
+# ---------------------------------------------------------------------------
+fix_table_ownership() {
+    info "Ensuring all tables and sequences are owned by '${DB_USER}'..."
+
+    # Reassign all tables in public schema.
+    psql_run_db -c "REASSIGN OWNED BY postgres TO ${DB_USER};" 2>/dev/null || true
+
+    # More targeted: ensure all tables and sequences in public schema are owned
+    # by the application user. REASSIGN OWNED may not cover all cases (e.g., if
+    # tables were created by a different role), so also do explicit updates.
+    psql_run_db -c "DO \$\$
+    DECLARE r RECORD;
+    BEGIN
+        FOR r IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' LOOP
+            EXECUTE format('ALTER TABLE public.%I OWNER TO ${DB_USER};', r.tablename);
+        END LOOP;
+        FOR r IN SELECT sequence_name FROM information_schema.sequences WHERE sequence_schema = 'public' LOOP
+            EXECUTE format('ALTER SEQUENCE public.%I OWNER TO ${DB_USER};', r.sequence_name);
+        END LOOP;
+    END \$\$;" 2>/dev/null || true
+
+    info "Table ownership verified."
+}
+
 repair_migration_checksums() {
     # Skip if the migrations table doesn't exist yet (fresh install).
     local has_table
@@ -434,6 +468,7 @@ case "$1" in
         create_directories
         wait_for_postgresql
         setup_database
+        fix_table_ownership
         repair_migration_checksums
         write_config
         generate_jwt_keys
