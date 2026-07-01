@@ -92,8 +92,8 @@ async fn run_manual_sync(
     // Persist synced packages to repo_packages table.
     for pkg in &result.synced_packages {
         let _ = sqlx::query(
-            "INSERT INTO repo_packages (filename, version, distro, distro_codename, arch, file_size, source, sync_log_id)
-             VALUES ($1, $2, $3, $4, 'amd64', $5, 'github', $6)
+            "INSERT INTO repo_packages (filename, version, distro, distro_codename, arch, file_size, sha256, source, sync_log_id)
+             VALUES ($1, $2, $3, $4, 'amd64', $5, $6, 'github', $7)
              ON CONFLICT (filename, version, distro, arch) DO NOTHING",
         )
         .bind(&pkg.filename)
@@ -101,6 +101,7 @@ async fn run_manual_sync(
         .bind(&pkg.distro)
         .bind(&pkg.distro_codename)
         .bind(pkg.file_size)
+        .bind(&pkg.sha256)
         .bind(sync_log_id)
         .execute(pool).await;
     }

@@ -139,6 +139,51 @@ sso_callback_url = "http://localhost:5173/auth/sso/callback"
 # allowed_origins = ["https://patch-manager.example.com"]
 
 # ============================================================
+# Manager-Hosted Package Repository
+# ============================================================
+# The manager serves a GPG-signed package repo on port 80 (plain HTTP).
+# GPG metadata signatures provide integrity — no TLS needed on repo paths.
+# A per-manager GPG signing key is auto-generated on first startup if missing.
+
+[repo]
+# Base directory for package repo files (apt/, dnf/, apk/, pacman/)
+dir = "/var/www/lpa-repo"
+
+# Path to the GPG public key (ASCII-armored) for repo signing.
+# Auto-generated on startup alongside CA material.
+gpg_public_key_path = "/etc/patch-manager/ca/lpa-repo-public-key.asc"
+
+# Path to the GPG private key (ASCII-armored, 0600 perms).
+# Auto-generated on startup alongside CA material.
+gpg_private_key_path = "/etc/patch-manager/ca/lpa-repo-private-key.asc"
+
+# Base URL for the repo as seen by agents (used to generate sources_config)
+url_base = "http://lpm.moon-dragon.us"
+
+# HTTP port for the repo server (default: 80)
+http_port = 80
+
+# ============================================================
+# Package Sync (Worker subsection)
+# ============================================================
+# Background worker that pulls packages from GitHub Releases into the
+# manager-hosted package repo. Uses unauthenticated GitHub API (60/hr limit —
+# sufficient for hourly sync). No tokens or credentials needed.
+
+[worker.package_sync]
+# Enable the package sync worker (default: false)
+enabled = false
+
+# Sync interval in seconds (default: 3600 = 1 hour)
+interval_secs = 3600
+
+# GitHub repository to sync from (e.g., "Draco-Lunaris/Linux-Patch-Api")
+github_repo = "Draco-Lunaris/Linux-Patch-Api"
+
+# Maximum number of recent releases to sync (default: 3 — last 3 versions)
+max_releases = 3
+
+# ============================================================
 # Rate Limiting
 # ============================================================
 [rate_limit]

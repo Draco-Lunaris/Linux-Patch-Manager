@@ -159,13 +159,12 @@ Management plane web application communicating with Linux Patch API agents on ea
 
 The Manager hosts a GPG-signed package repository for agent self-updates. The agent receives repo configuration (GPG public key + distro-specific sources config) during enrollment or via fallback `GET /api/v1/pki/repo-config`.
 
-- **Repo server:** Port 80 (plain HTTP — GPG signatures provide integrity)
+- **Repo server:** Port 80 (plain HTTP — GPG metadata signatures provide integrity)
 - **Repo paths:** `/apt/`, `/dnf/`, `/apk/`, `/pacman/` on the manager host
 - **GPG key:** Per-manager, stored alongside CA in `/etc/patch-manager/ca/`
-- **Manager triggers:** `POST /api/v1/system/update` on the agent (optional `target_version`)
-- **Status polling:** `GET /api/v1/system/update/status` on the agent
-- **Agent execution:** Detached systemd unit with own cgroup; native package manager (apt/dnf/apk/pacman)
-- **Auto-rollback:** 60-second health check after upgrade; rolls back to previous version on failure
+- **Manager triggers:** Standard `PUT /api/v1/packages/{name}` on the agent (optional `target_version`)
+- **Agent execution:** Native package manager (apt/dnf/apk/pacman) with standard maintainer scripts
+- **Delayed restart:** Maintainer scripts schedule a 300s delayed service restart after package replacement
 - **Fallback:** `GET /api/v1/pki/repo-config` for agents enrolled before repo provisioning
 
 See [INTERFACE_CONTRACT.md](INTERFACE_CONTRACT.md) §4 for the full self-update protocol.
