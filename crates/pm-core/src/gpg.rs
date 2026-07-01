@@ -396,3 +396,271 @@ fn generate_reprepro_distributions(gpg_key_id: &str) -> String {
 
     content
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::LazyLock;
+    use tokio::sync::Mutex;
+
+    /// Mutex to prevent parallel GPG tests from interfering with each other's GNUPGHOME.
+    /// Uses tokio::sync::Mutex via LazyLock because these are async tests that hold
+    /// the guard across .await points.
+    static GPG_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    /// Set up an isolated GNUPGHOME for testing GPG operations.
+    fn setup_test_gnupg_home() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("Failed to create temp dir for GNUPGHOME");
+        std::env::set_var("GNUPGHOME", dir.path());
+        // Kill any existing gpg-agent to ensure clean state.
+        let _ = std::process::Command::new("gpgconf")
+            .arg("--kill")
+            .arg("gpg-agent")
+            .output();
+        dir
+    }
+
+    #[tokio::test]
+    async fn test_ensure_signing_key_generates_new_key() {
+        let _lock = GPG_TEST_LOCK.lock().await;
+        let _gnupg_home = setup_test_gnupg_home();
+
+        let temp = tempfile::tempdir().expect("Failed to create temp dir");
+        let pub_key_path = temp
+            .path()
+            .join("lpa-repo-public-key.asc")
+            .to_str()
+            .unwrap()
+            .to_string();
+        let priv_key_path = temp
+            .path()
+            .join("lpa-repo-private-key.asc")
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        let result = ensure_signing_key(&pub_key_path, &priv_key_path).await;
+
+        assert!(
+            result.is_ok(),
+            "ensure_signing_key should succeed: {:?}",
+            result.err()
+        );
+        let key_info = result.unwrap();
+        assert!(key_info.newly_generated, "Key should be newly generated");
+        assert!(!key_info.key_id.is_empty(), "Key ID should not be empty");
+        assert!(
+            std::path::Path::new(&pub_key_path).exists(),
+            "Public key file should exist"
+        );
+        assert!(
+            std::path::Path::new(&priv_key_path).exists(),
+            "Private key file should exist"
+        );
+
+        // Verify the public key file contains PGP public key block.
+        let pub_key_content = std::fs::read_to_string(&pub_key_path).unwrap();
+        assert!(
+            pub_key_content.contains("BEGIN PGP PUBLIC KEY BLOCK"),
+            "Public key file should contain PGP public key block"
+        );
+
+        // Verify the private key file contains PGP private key block.
+        let priv_key_content = std::fs::read_to_string(&priv_key_path).unwrap();
+        assert!(
+            priv_key_content.contains("BEGIN PGP PRIVATE KEY BLOCK"),
+            "Private key file should contain PGP private key block"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ensure_signing_key_finds_existing_key() {
+        let _lock = GPG_TEST_LOCK.lock().await;
+        let _gnupg_home = setup_test_gnupg_home();
+
+        let temp = tempfile::tempdir().expect("Failed to create temp dir");
+        let pub_key_path = temp
+            .path()
+            .join("lpa-repo-public-key.asc")
+            .to_str()
+            .unwrap()
+            .to_string();
+        let priv_key_path = temp
+            .path()
+            .join("lpa-repo-private-key.asc")
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        // First call generates the key.
+        let result1 = ensure_signing_key(&pub_key_path, &priv_key_path).await;
+        assert!(
+            result1.is_ok(),
+            "First call should succeed: {:?}",
+            result1.err()
+        );
+        assert!(
+            result1.unwrap().newly_generated,
+            "First call should generate new key"
+        );
+
+        // Second call should find the existing key.
+        let result2 = ensure_signing_key(&pub_key_path, &priv_key_path).await;
+        assert!(
+            result2.is_ok(),
+            "Second call should succeed: {:?}",
+            result2.err()
+        );
+        let key_info = result2.unwrap();
+        assert!(
+            !key_info.newly_generated,
+            "Second call should find existing key"
+        );
+        assert!(!key_info.key_id.is_empty(), "Key ID should not be empty");
+    }
+
+    #[tokio::test]
+    async fn test_sign_file_detached_creates_valid_signature() {
+        let _lock = GPG_TEST_LOCK.lock().await;
+        let _gnupg_home = setup_test_gnupg_home();
+
+        let temp = tempfile::tempdir().expect("Failed to create temp dir");
+        let pub_key_path = temp
+            .path()
+            .join("lpa-repo-public-key.asc")
+            .to_str()
+            .unwrap()
+            .to_string();
+        let priv_key_path = temp
+            .path()
+            .join("lpa-repo-private-key.asc")
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        // Generate a signing key first.
+        let key_info = ensure_signing_key(&pub_key_path, &priv_key_path)
+            .await
+            .expect("Key generation failed");
+        assert!(!key_info.key_id.is_empty());
+
+        // Create a test file to sign.
+        let test_file = temp.path().join("test_metadata.xml");
+        std::fs::write(&test_file, b"<repomd>test content</repomd>").unwrap();
+        let test_file_path = test_file.to_str().unwrap().to_string();
+        let sig_path = temp
+            .path()
+            .join("test_metadata.xml.asc")
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        // Sign the file.
+        let result = sign_file_detached(&test_file_path, &sig_path, true).await;
+        assert!(
+            result.is_ok(),
+            "sign_file_detached should succeed: {:?}",
+            result.err()
+        );
+
+        // Verify signature file exists and is non-empty.
+        assert!(
+            std::path::Path::new(&sig_path).exists(),
+            "Signature file should exist"
+        );
+        let sig_content = std::fs::read_to_string(&sig_path).unwrap();
+        assert!(
+            !sig_content.is_empty(),
+            "Signature file should not be empty"
+        );
+        assert!(
+            sig_content.contains("BEGIN PGP SIGNATURE"),
+            "Armored signature should contain PGP signature block"
+        );
+
+        // Verify the signature is valid using gpg --verify.
+        let verify_output = std::process::Command::new("gpg")
+            .arg("--verify")
+            .arg(&sig_path)
+            .arg(&test_file_path)
+            .output()
+            .expect("Failed to run gpg --verify");
+        assert!(
+            verify_output.status.success(),
+            "gpg --verify should succeed: {}",
+            String::from_utf8_lossy(&verify_output.stderr)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ensure_repo_directories_creates_structure() {
+        let _lock = GPG_TEST_LOCK.lock().await;
+        let _gnupg_home = setup_test_gnupg_home();
+
+        let temp = tempfile::tempdir().expect("Failed to create temp dir");
+        let repo_dir = temp.path().to_str().unwrap().to_string();
+
+        // Generate a key first to get a key ID.
+        let pub_key_path = temp.path().join("pubkey.asc").to_str().unwrap().to_string();
+        let priv_key_path = temp
+            .path()
+            .join("privkey.asc")
+            .to_str()
+            .unwrap()
+            .to_string();
+        let key_info = ensure_signing_key(&pub_key_path, &priv_key_path)
+            .await
+            .expect("Key generation failed");
+
+        // Initialize repo directories.
+        let result = ensure_repo_directories(&repo_dir, &key_info.key_id).await;
+        assert!(
+            result.is_ok(),
+            "ensure_repo_directories should succeed: {:?}",
+            result.err()
+        );
+
+        // Verify all expected directories exist.
+        assert!(std::path::Path::new(&format!("{repo_dir}/apt")).exists());
+        assert!(std::path::Path::new(&format!("{repo_dir}/dnf/el9/Packages")).exists());
+        assert!(std::path::Path::new(&format!("{repo_dir}/apk/v3.21")).exists());
+        assert!(std::path::Path::new(&format!("{repo_dir}/pacman/x86_64")).exists());
+        assert!(std::path::Path::new(&format!("{repo_dir}/tmp")).exists());
+
+        // Verify reprepro conf/distributions was created with SignWith.
+        let dist_path = format!("{repo_dir}/apt/conf/distributions");
+        assert!(
+            std::path::Path::new(&dist_path).exists(),
+            "distributions file should exist"
+        );
+        let dist_content = std::fs::read_to_string(&dist_path).unwrap();
+        assert!(
+            dist_content.contains(&key_info.key_id),
+            "distributions should contain the GPG key ID"
+        );
+        assert!(
+            dist_content.contains("SignWith"),
+            "distributions should contain SignWith directive"
+        );
+        assert!(
+            dist_content.contains("noble"),
+            "distributions should contain noble codename"
+        );
+        assert!(
+            dist_content.contains("jammy"),
+            "distributions should contain jammy codename"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_gpg_key_info_struct() {
+        let info = GpgKeyInfo {
+            key_id: "ABCD1234EF567890".to_string(),
+            public_key_path: "/tmp/pub.asc".to_string(),
+            private_key_path: "/tmp/priv.asc".to_string(),
+            newly_generated: true,
+        };
+        assert_eq!(info.key_id, "ABCD1234EF567890");
+        assert!(info.newly_generated);
+    }
+}
