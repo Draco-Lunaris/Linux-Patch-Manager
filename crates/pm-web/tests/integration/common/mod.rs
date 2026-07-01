@@ -110,6 +110,7 @@ pub async fn setup_state_no_db() -> AppState {
         oidc_cache: Arc::new(Mutex::new(OidcCache::default())),
         ca: Arc::new(ca),
         approved_enrollments: Arc::new(DashMap::new()),
+        gpg_key_id: String::new(),
     }
 }
 
@@ -167,6 +168,7 @@ pub async fn setup_state(pool: PgPool) -> AppState {
         oidc_cache: Arc::new(Mutex::new(OidcCache::default())),
         ca: Arc::new(ca),
         approved_enrollments: Arc::new(DashMap::new()),
+        gpg_key_id: String::new(),
     }
 }
 

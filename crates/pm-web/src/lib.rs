@@ -131,6 +131,9 @@ pub struct AppState {
     /// Entries are single-use (removed on retrieval) and expire after
     /// [`ENROLLMENT_BUNDLE_TTL_SECS`](pm_core::models::ENROLLMENT_BUNDLE_TTL_SECS).
     pub approved_enrollments: Arc<DashMap<String, ApprovedEntry>>,
+    /// GPG key ID for the manager-hosted package repo signing key.
+    /// Populated on startup by `pm_core::gpg::ensure_signing_key()`.
+    pub gpg_key_id: String,
 }
 
 /// Construct the full Axum router.

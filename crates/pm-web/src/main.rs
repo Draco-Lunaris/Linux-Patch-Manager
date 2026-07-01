@@ -65,6 +65,47 @@ async fn main() -> anyhow::Result<()> {
             panic!("CA initialization failed: {}", e);
         });
 
+    // Bootstrap GPG signing key for the manager-hosted package repository.
+    // Generates a per-manager RSA 4096 key if none exists, stored alongside CA material.
+    let gpg_key_info = pm_core::gpg::ensure_signing_key(
+        &config.repo.gpg_public_key_path,
+        &config.repo.gpg_private_key_path,
+    )
+    .await
+    .unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "GPG key bootstrap failed (dev mode)");
+        // Non-fatal — repo sync will fail later if gpg is truly unavailable.
+        pm_core::gpg::GpgKeyInfo {
+            key_id: String::new(),
+            public_key_path: config.repo.gpg_public_key_path.clone(),
+            private_key_path: config.repo.gpg_private_key_path.clone(),
+            newly_generated: false,
+        }
+    });
+    if gpg_key_info.newly_generated {
+        tracing::info!(
+            key_id = %gpg_key_info.key_id,
+            "GPG signing key generated for manager-hosted repo"
+        );
+    } else if !gpg_key_info.key_id.is_empty() {
+        tracing::info!(
+            key_id = %gpg_key_info.key_id,
+            "GPG signing key found — existing key will be used"
+        );
+    }
+
+    // Initialize the manager-hosted package repo directory structure.
+    // Creates apt/dnf/apk/pacman dirs and reprepro conf/distributions with SignWith.
+    if !gpg_key_info.key_id.is_empty() {
+        if let Err(e) =
+            pm_core::gpg::ensure_repo_directories(&config.repo.dir, &gpg_key_info.key_id).await
+        {
+            tracing::warn!(error = %e, "Repo directory init failed (non-fatal for dev mode)");
+        }
+    } else {
+        tracing::warn!("Skipping repo dir init — no GPG key ID available");
+    }
+
     let ws_tickets: Arc<DashMap<String, WsTicket>> = Arc::new(DashMap::new());
     let sso_sessions: Arc<DashMap<String, SsoSession>> = Arc::new(DashMap::new());
     let sso_handoffs: Arc<DashMap<String, SsoHandoff>> = Arc::new(DashMap::new());
@@ -154,6 +195,7 @@ async fn main() -> anyhow::Result<()> {
         ca: Arc::new(ca),
         approved_enrollments,
         oidc_cache,
+        gpg_key_id: gpg_key_info.key_id.clone(),
     };
 
     let app = build_router(state.clone());

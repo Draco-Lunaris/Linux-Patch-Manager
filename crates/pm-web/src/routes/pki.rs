@@ -202,6 +202,7 @@ mod tests {
             oidc_cache: Arc::new(Mutex::new(OidcCache::default())),
             ca: Arc::new(ca),
             approved_enrollments: Arc::new(DashMap::new()),
+            gpg_key_id: String::new(),
         };
 
         Some((pool, state))

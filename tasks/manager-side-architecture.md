@@ -176,7 +176,6 @@ Tracks individual packages in the manager-hosted repo.
 | arch | TEXT | 'amd64' |
 | file_size | BIGINT | File size in bytes |
 | sha256 | TEXT | SHA-256 checksum |
-| gpg_signed | BOOLEAN | Whether package is GPG signed |
 | source | TEXT | 'github' or 'manual' |
 | synced_at | TIMESTAMPTZ | When package was synced |
 | sync_log_id | UUID | FK to repo_sync_log |

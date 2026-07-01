@@ -421,8 +421,21 @@ async fn sync_status(
 async fn list_packages(
     State(state): State<AppState>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let packages: Vec<Value> = sqlx::query_as::<_, (uuid::Uuid, String, String, String, Option<String>, String, i64, bool, String, chrono::DateTime<chrono::Utc>)>(
-        "SELECT id, filename, version, distro, distro_codename, arch, file_size, gpg_signed, source, synced_at
+    let packages: Vec<Value> = sqlx::query_as::<
+        _,
+        (
+            uuid::Uuid,
+            String,
+            String,
+            String,
+            Option<String>,
+            String,
+            i64,
+            String,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
+        "SELECT id, filename, version, distro, distro_codename, arch, file_size, source, synced_at
          FROM repo_packages ORDER BY synced_at DESC LIMIT 200",
     )
     .fetch_all(&state.db)
@@ -438,9 +451,8 @@ async fn list_packages(
                     "distro_codename": row.4,
                     "arch": row.5,
                     "file_size": row.6,
-                    "gpg_signed": row.7,
-                    "source": row.8,
-                    "synced_at": row.9,
+                    "source": row.7,
+                    "synced_at": row.8,
                 })
             })
             .collect()

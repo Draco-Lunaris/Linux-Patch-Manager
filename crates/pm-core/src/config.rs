@@ -89,8 +89,15 @@ pub struct RepoServerConfig {
     #[serde(default = "default_repo_dir")]
     pub dir: String,
     /// Path to the GPG public key file (ASCII-armored) for repo signing.
+    /// Stored alongside CA material in /etc/patch-manager/ca/ (NOT in the
+    /// HTTP-served repo directory — private key must not be web-accessible).
     #[serde(default = "default_gpg_key_path")]
     pub gpg_public_key_path: String,
+    /// Path to the GPG private key file (ASCII-armored) for repo signing.
+    /// Stored alongside CA material in /etc/patch-manager/ca/ with 0600 perms.
+    /// Added for issue #116 gap fix (GPG key bootstrap).
+    #[serde(default = "default_gpg_private_key_path")]
+    pub gpg_private_key_path: String,
     /// Base URL for the repo as seen by agents (e.g., http://lpm.moon-dragon.us).
     /// Used to generate distro-specific sources_config strings.
     #[serde(default = "default_repo_url_base")]
@@ -105,6 +112,7 @@ impl Default for RepoServerConfig {
         Self {
             dir: default_repo_dir(),
             gpg_public_key_path: default_gpg_key_path(),
+            gpg_private_key_path: default_gpg_private_key_path(),
             url_base: default_repo_url_base(),
             http_port: default_repo_http_port(),
         }
@@ -115,7 +123,10 @@ fn default_repo_dir() -> String {
     "/var/www/lpa-repo".to_string()
 }
 fn default_gpg_key_path() -> String {
-    "/var/www/lpa-repo/lpa-repo-public-key.asc".to_string()
+    "/etc/patch-manager/ca/lpa-repo-public-key.asc".to_string()
+}
+fn default_gpg_private_key_path() -> String {
+    "/etc/patch-manager/ca/lpa-repo-private-key.asc".to_string()
 }
 fn default_repo_url_base() -> String {
     "http://lpm.moon-dragon.us".to_string()
