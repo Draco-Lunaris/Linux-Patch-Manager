@@ -393,3 +393,155 @@ pub async fn run_sync_cycle(
 
     Ok(result)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_package_file_recognizes_all_formats() {
+        assert!(is_package_file("linux-patch-api_1.0.0_noble_amd64.deb"));
+        assert!(is_package_file("linux-patch-api-1.0.0-1.el9.x86_64.rpm"));
+        assert!(is_package_file("linux-patch-api-1.0.0-r0.apk"));
+        assert!(is_package_file(
+            "linux-patch-api-1.0.0-1-x86_64.pkg.tar.zst"
+        ));
+    }
+
+    #[test]
+    fn test_is_package_file_rejects_non_packages() {
+        assert!(!is_package_file("README.md"));
+        assert!(!is_package_file("checksums.txt"));
+        assert!(!is_package_file("source.tar.gz"));
+        assert!(!is_package_file(""));
+    }
+
+    #[test]
+    fn test_detect_distro_deb() {
+        assert_eq!(
+            detect_distro_from_filename("pkg_1.0_noble_amd64.deb"),
+            Some("apt".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_distro_rpm() {
+        assert_eq!(
+            detect_distro_from_filename("pkg-1.0.el9.x86_64.rpm"),
+            Some("dnf".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_distro_apk() {
+        assert_eq!(
+            detect_distro_from_filename("pkg-1.0-r0.apk"),
+            Some("apk".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_distro_pacman() {
+        assert_eq!(
+            detect_distro_from_filename("pkg-1.0-1-x86_64.pkg.tar.zst"),
+            Some("pacman".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_distro_unknown() {
+        assert_eq!(detect_distro_from_filename("file.txt"), None);
+    }
+
+    #[test]
+    fn test_detect_codename_apt_noble() {
+        assert_eq!(
+            detect_codename_from_filename("pkg_1.0_noble_amd64.deb", "apt"),
+            Some("noble".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_codename_apt_jammy() {
+        assert_eq!(
+            detect_codename_from_filename("pkg_1.0_jammy_amd64.deb", "apt"),
+            Some("jammy".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_codename_apt_bookworm() {
+        assert_eq!(
+            detect_codename_from_filename("pkg_1.0_bookworm_amd64.deb", "apt"),
+            Some("bookworm".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_codename_apt_trixie() {
+        assert_eq!(
+            detect_codename_from_filename("pkg_1.0_trixie_amd64.deb", "apt"),
+            Some("trixie".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_codename_dnf_el9() {
+        assert_eq!(
+            detect_codename_from_filename("pkg-1.0.el9.x86_64.rpm", "dnf"),
+            Some("el9".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_codename_apk_v321() {
+        assert_eq!(
+            detect_codename_from_filename("pkg-1.0-v3.21.apk", "apk"),
+            Some("v3.21".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_codename_pacman() {
+        assert_eq!(
+            detect_codename_from_filename("pkg-1.0-1-x86_64.pkg.tar.zst", "pacman"),
+            Some("x86_64".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_codename_unknown_distro() {
+        assert_eq!(detect_codename_from_filename("file.deb", "unknown"), None);
+    }
+
+    #[test]
+    fn test_detect_codename_apt_not_found() {
+        assert_eq!(
+            detect_codename_from_filename("pkg_1.0_amd64.deb", "apt"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_synced_package_struct() {
+        let pkg = SyncedPackage {
+            filename: "test.deb".to_string(),
+            version: "v1.0.0".to_string(),
+            distro: "apt".to_string(),
+            distro_codename: Some("noble".to_string()),
+            file_size: 1024,
+            sha256: Some("abc123".to_string()),
+        };
+        assert_eq!(pkg.filename, "test.deb");
+        assert_eq!(pkg.sha256, Some("abc123".to_string()));
+    }
+
+    #[test]
+    fn test_sync_result_default() {
+        let result = SyncResult::default();
+        assert_eq!(result.packages_synced, 0);
+        assert_eq!(result.packages_skipped, 0);
+        assert!(result.errors.is_empty());
+        assert!(result.synced_packages.is_empty());
+    }
+}
