@@ -32,6 +32,7 @@ pub struct SyncedPackage {
     pub distro: String,
     pub distro_codename: Option<String>,
     pub file_size: i64,
+    pub sha256: Option<String>,
 }
 
 /// Result of a sync cycle — counts, errors, and synced package details for DB update.
@@ -59,12 +60,7 @@ pub async fn fetch_github_releases(
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
 
-    let mut req = client.get(&url);
-    if !config.github_token.is_empty() {
-        req = req.header("Authorization", format!("Bearer {}", config.github_token));
-    }
-
-    let resp = req.send().await?;
+    let resp = client.get(&url).send().await?;
 
     if !resp.status().is_success() {
         anyhow::bail!("GitHub API returned status: {}", resp.status());
@@ -82,12 +78,16 @@ pub async fn fetch_github_releases(
     Ok(filtered)
 }
 
-/// Download a GitHub asset to a local path.
+/// Download a GitHub asset to a local path and compute its SHA256 checksum.
+///
+/// Returns the hex-encoded SHA256 digest for storage in `repo_packages.sha256`.
 pub async fn download_asset(
     url: &str,
     path: &str,
-    config: &PackageSyncConfig,
-) -> Result<(), anyhow::Error> {
+    _config: &PackageSyncConfig,
+) -> Result<String, anyhow::Error> {
+    use sha2::{Digest, Sha256};
+
     // Ensure tmp directory exists.
     if let Some(parent) = std::path::Path::new(path).parent() {
         tokio::fs::create_dir_all(parent).await.ok();
@@ -98,21 +98,22 @@ pub async fn download_asset(
         .timeout(std::time::Duration::from_secs(120))
         .build()?;
 
-    let mut req = client.get(url);
-    if !config.github_token.is_empty() {
-        req = req.header("Authorization", format!("Bearer {}", config.github_token));
-    }
-
-    let resp = req.send().await?;
+    let resp = client.get(url).send().await?;
 
     if !resp.status().is_success() {
         anyhow::bail!("Download failed with status: {}", resp.status());
     }
 
     let bytes = resp.bytes().await?;
+
+    // Compute SHA256 checksum for integrity tracking.
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    let digest = hex::encode(hasher.finalize());
+
     tokio::fs::write(path, bytes).await?;
 
-    Ok(())
+    Ok(digest)
 }
 
 /// Import a package file into the appropriate repo format.
@@ -356,7 +357,7 @@ pub async fn run_sync_cycle(
             // Download the asset.
             let download_path = format!("{repo_dir}/tmp/{}", asset.name);
             match download_asset(&asset.browser_download_url, &download_path, sync_config).await {
-                Ok(()) => {
+                Ok(sha256) => {
                     // Import into repo.
                     if let Err(e) =
                         import_to_repo(&download_path, &distro, codename.as_deref(), repo_dir).await
@@ -373,6 +374,7 @@ pub async fn run_sync_cycle(
                             distro: distro.clone(),
                             distro_codename: codename.clone(),
                             file_size: asset.size as i64,
+                            sha256: Some(sha256),
                         });
                     }
 

@@ -198,10 +198,6 @@ pub struct PackageSyncConfig {
     /// Sync interval in seconds (default: 3600 = 1 hour).
     #[serde(default = "default_sync_interval")]
     pub interval_secs: u64,
-    /// GitHub API token for authenticated requests (5000/hr vs 60/hr unauthenticated).
-    /// If empty, unauthenticated requests are used.
-    #[serde(default)]
-    pub github_token: String,
     /// GitHub repository to sync from (e.g., "Draco-Lunaris/Linux-Patch-Api").
     #[serde(default = "default_sync_repo")]
     pub github_repo: String,
