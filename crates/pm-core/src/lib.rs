@@ -3,6 +3,7 @@ pub mod config;
 pub mod crypto;
 pub mod db;
 pub mod error;
+pub mod gpg;
 pub mod logging;
 pub mod models;
 pub mod request_id;

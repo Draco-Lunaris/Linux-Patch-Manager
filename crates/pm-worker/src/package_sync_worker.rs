@@ -8,6 +8,7 @@
 //! Added for issue #116 (M13).
 
 use pm_core::config::AppConfig;
+use pm_core::gpg;
 use serde::Deserialize;
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -305,6 +306,16 @@ async fn import_to_repo(
                     String::from_utf8_lossy(&output.stderr)
                 );
             }
+
+            // Sign repomd.xml with detached GPG signature for dnf verification.
+            let repomd_path = format!("{repo_dir}/dnf/el9/repodata/repomd.xml");
+            let repomd_sig_path = format!("{repo_dir}/dnf/el9/repodata/repomd.xml.asc");
+            if std::path::Path::new(&repomd_path).exists() {
+                if let Err(e) = gpg::sign_file_detached(&repomd_path, &repomd_sig_path, true).await
+                {
+                    tracing::warn!(error = %e, "GPG sign repomd.xml failed (non-fatal but clients will not trust this repo)");
+                }
+            }
         },
         "apk" => {
             // Copy APK to apk repo directory.
@@ -332,6 +343,17 @@ async fn import_to_repo(
                     String::from_utf8_lossy(&output.stderr)
                 );
             }
+
+            // Sign APKINDEX.tar.gz with detached GPG signature for apk verification.
+            let apkindex_path = format!("{dest_dir}/APKINDEX.tar.gz");
+            let apkindex_sig_path = format!("{dest_dir}/APKINDEX.tar.gz.sig");
+            if std::path::Path::new(&apkindex_path).exists() {
+                if let Err(e) =
+                    gpg::sign_file_detached(&apkindex_path, &apkindex_sig_path, false).await
+                {
+                    tracing::warn!(error = %e, "GPG sign APKINDEX.tar.gz failed (non-fatal but clients will not trust this repo)");
+                }
+            }
         },
         "pacman" => {
             // Copy to pacman repo directory.
@@ -356,6 +378,15 @@ async fn import_to_repo(
                     "repo-add failed (non-fatal): {}",
                     String::from_utf8_lossy(&output.stderr)
                 );
+            }
+
+            // Sign lpa-repo.db.tar.zst with detached GPG signature for pacman verification.
+            let db_path = format!("{dest_dir}/lpa-repo.db.tar.zst");
+            let db_sig_path = format!("{dest_dir}/lpa-repo.db.tar.zst.sig");
+            if std::path::Path::new(&db_path).exists() {
+                if let Err(e) = gpg::sign_file_detached(&db_path, &db_sig_path, false).await {
+                    tracing::warn!(error = %e, "GPG sign lpa-repo.db.tar.zst failed (non-fatal but clients will not trust this repo)");
+                }
             }
         },
         _ => {

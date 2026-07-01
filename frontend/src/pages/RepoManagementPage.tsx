@@ -6,7 +6,6 @@ import {
 } from '@mui/material'
 import {
   Sync as SyncIcon, Store as PackageIcon, CloudDownload as DownloadIcon,
-  VerifiedUser as VerifiedIcon, WarningAmber as WarningIcon,
 } from '@mui/icons-material'
 import { repoApi } from '../api/client'
 
@@ -29,7 +28,6 @@ interface RepoPackage {
   distro_codename: string | null
   arch: string
   file_size: number
-  gpg_signed: boolean
   source: string
   synced_at: string
 }
@@ -134,19 +132,6 @@ export default function RepoManagementPage() {
             </CardContent>
           </Card>
         </Grid>
-        <Grid size={{ xs: 12, sm: 4 }}>
-          <Card>
-            <CardContent>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <VerifiedIcon color="primary" />
-                <Typography variant="h6">GPG Signed</Typography>
-              </Box>
-              <Typography variant="h4" sx={{ mt: 1 }}>
-                {packages.filter(p => p.gpg_signed).length}
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
       </Grid>
 
       {/* Actions */}
@@ -240,13 +225,6 @@ export default function RepoManagementPage() {
                     <TableCell>{pkg.distro_codename || '—'}</TableCell>
                     <TableCell>{pkg.arch}</TableCell>
                     <TableCell>{(pkg.file_size / 1024 / 1024).toFixed(1)} MB</TableCell>
-                    <TableCell>
-                      {pkg.gpg_signed ? (
-                        <Chip size="small" icon={<VerifiedIcon />} label="Signed" color="success" />
-                      ) : (
-                        <Chip size="small" icon={<WarningIcon />} label="Unsigned" color="warning" />
-                      )}
-                    </TableCell>
                     <TableCell>{pkg.source}</TableCell>
                     <TableCell>{new Date(pkg.synced_at).toLocaleDateString()}</TableCell>
                   </TableRow>
