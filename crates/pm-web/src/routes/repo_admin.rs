@@ -71,279 +71,50 @@ async fn run_manual_sync(
     config: &std::sync::Arc<pm_core::config::AppConfig>,
     sync_log_id: uuid::Uuid,
 ) -> Result<(), anyhow::Error> {
-    use serde::Deserialize;
-
-    #[derive(Debug, Deserialize)]
-    struct GithubAsset {
-        name: String,
-        browser_download_url: String,
-        size: u64,
-    }
-
-    #[derive(Debug, Deserialize)]
-    struct GithubRelease {
-        tag_name: String,
-        prerelease: bool,
-        assets: Vec<GithubAsset>,
-    }
-
     let sync_config = &config.worker.package_sync;
     let repo_dir = &config.repo.dir;
 
-    // Fetch releases from GitHub API.
-    let url = format!(
-        "https://api.github.com/repos/{}/releases?per_page={}",
-        sync_config.github_repo,
-        sync_config.max_releases.min(100)
-    );
+    // Run the shared sync logic (same code path as the scheduled worker).
+    let result = match pm_core::repo_sync::run_sync_cycle(sync_config, repo_dir).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(sync_log_id = %sync_log_id, error = %e, "Manual sync failed");
+            let _ = sqlx::query(
+                "UPDATE repo_sync_log SET status = 'failed', error_message = $2, finished_at = NOW() WHERE id = $1",
+            )
+            .bind(sync_log_id)
+            .bind(format!("Sync error: {e}"))
+            .execute(pool).await;
+            return Err(e);
+        },
+    };
 
-    let client = reqwest::Client::builder()
-        .user_agent("Linux-Patch-Manager-Sync/1.0")
-        .timeout(std::time::Duration::from_secs(30))
-        .build()?;
-
-    let mut req = client.get(&url);
-    if !sync_config.github_token.is_empty() {
-        req = req.header(
-            "Authorization",
-            format!("Bearer {}", sync_config.github_token),
-        );
-    }
-
-    let resp = req.send().await?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        anyhow::bail!("GitHub API returned {}: {}", status, body);
-    }
-
-    let releases: Vec<GithubRelease> = resp.json().await?;
-    let releases: Vec<GithubRelease> = releases
-        .into_iter()
-        .filter(|r| !r.prerelease)
-        .take(sync_config.max_releases as usize)
-        .collect();
-
-    tracing::info!(sync_log_id = %sync_log_id, releases = releases.len(), "Fetched releases from GitHub");
-
-    let mut packages_synced = 0i32;
-    let mut packages_skipped = 0i32;
-    let mut errors: Vec<String> = Vec::new();
-
-    for release in &releases {
-        for asset in &release.assets {
-            // Only process package files.
-            let is_pkg = asset.name.ends_with(".deb")
-                || asset.name.ends_with(".rpm")
-                || asset.name.ends_with(".apk")
-                || asset.name.ends_with(".pkg.tar.zst");
-
-            if !is_pkg {
-                packages_skipped += 1;
-                continue;
-            }
-
-            // Determine distro from filename.
-            let distro = if asset.name.ends_with(".deb") {
-                "apt"
-            } else if asset.name.ends_with(".rpm") {
-                "dnf"
-            } else if asset.name.ends_with(".apk") {
-                "apk"
-            } else {
-                "pacman"
-            };
-
-            // Detect codename from filename.
-            let lower = asset.name.to_ascii_lowercase();
-            let codename: Option<&str> = match distro {
-                "apt" => ["noble", "jammy", "bookworm", "trixie"]
-                    .iter()
-                    .find(|c| lower.contains(*c))
-                    .copied(),
-                "dnf" => {
-                    if lower.contains("el9") || lower.contains("fc") {
-                        Some("el9")
-                    } else {
-                        None
-                    }
-                },
-                "apk" => {
-                    if lower.contains("v3.21") {
-                        Some("v3.21")
-                    } else {
-                        None
-                    }
-                },
-                "pacman" => Some("x86_64"),
-                _ => None,
-            };
-
-            // Download the asset.
-            let download_path = format!("{repo_dir}/tmp/{}", asset.name);
-            if let Some(parent) = std::path::Path::new(&download_path).parent() {
-                tokio::fs::create_dir_all(parent).await.ok();
-            }
-
-            tracing::info!(asset = %asset.name, "Downloading package asset");
-
-            let dl_resp = match client.get(&asset.browser_download_url).send().await {
-                Ok(r) => r,
-                Err(e) => {
-                    errors.push(format!("Download failed for {}: {}", asset.name, e));
-                    packages_skipped += 1;
-                    continue;
-                },
-            };
-
-            if !dl_resp.status().is_success() {
-                errors.push(format!(
-                    "Download failed for {}: HTTP {}",
-                    asset.name,
-                    dl_resp.status()
-                ));
-                packages_skipped += 1;
-                continue;
-            }
-
-            let bytes = match dl_resp.bytes().await {
-                Ok(b) => b,
-                Err(e) => {
-                    errors.push(format!("Download body failed for {}: {}", asset.name, e));
-                    packages_skipped += 1;
-                    continue;
-                },
-            };
-
-            if let Err(e) = tokio::fs::write(&download_path, &bytes).await {
-                errors.push(format!("Write failed for {}: {}", asset.name, e));
-                packages_skipped += 1;
-                continue;
-            }
-
-            // Import into repo.
-            let import_ok = match distro {
-                "apt" => {
-                    let cn = codename.unwrap_or("noble");
-                    let output = tokio::process::Command::new("reprepro")
-                        .arg("-b")
-                        .arg(format!("{repo_dir}/apt"))
-                        .arg("includedeb")
-                        .arg(cn)
-                        .arg(&download_path)
-                        .output()
-                        .await;
-                    match output {
-                        Ok(o) if o.status.success() => true,
-                        Ok(o) => {
-                            errors.push(format!(
-                                "reprepro failed for {}: {}",
-                                asset.name,
-                                String::from_utf8_lossy(&o.stderr)
-                            ));
-                            false
-                        },
-                        Err(e) => {
-                            errors
-                                .push(format!("reprepro command failed for {}: {}", asset.name, e));
-                            false
-                        },
-                    }
-                },
-                "dnf" => {
-                    let dest_dir = format!("{repo_dir}/dnf/el9/Packages");
-                    let _ = tokio::fs::create_dir_all(&dest_dir).await;
-                    let filename = std::path::Path::new(&download_path)
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("pkg.rpm");
-                    let dest = format!("{dest_dir}/{filename}");
-                    if let Err(e) = tokio::fs::copy(&download_path, &dest).await {
-                        errors.push(format!("Copy failed for {}: {}", asset.name, e));
-                        false
-                    } else {
-                        let output = tokio::process::Command::new("createrepo_c")
-                            .arg("--update")
-                            .arg(format!("{repo_dir}/dnf/el9"))
-                            .output()
-                            .await;
-                        match output {
-                            Ok(o) if o.status.success() => true,
-                            Ok(o) => {
-                                errors.push(format!(
-                                    "createrepo_c failed for {}: {}",
-                                    asset.name,
-                                    String::from_utf8_lossy(&o.stderr)
-                                ));
-                                false
-                            },
-                            Err(e) => {
-                                errors.push(format!(
-                                    "createrepo_c command failed for {}: {}",
-                                    asset.name, e
-                                ));
-                                false
-                            },
-                        }
-                    }
-                },
-                "apk" | "pacman" => {
-                    let subdir = if distro == "apk" {
-                        "apk/v3.21"
-                    } else {
-                        "pacman/x86_64"
-                    };
-                    let dest_dir = format!("{repo_dir}/{subdir}");
-                    let _ = tokio::fs::create_dir_all(&dest_dir).await;
-                    let filename = std::path::Path::new(&download_path)
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("pkg");
-                    let dest = format!("{dest_dir}/{filename}");
-                    match tokio::fs::copy(&download_path, &dest).await {
-                        Ok(_) => true,
-                        Err(e) => {
-                            errors.push(format!("Copy failed for {}: {}", asset.name, e));
-                            false
-                        },
-                    }
-                },
-                _ => false,
-            };
-
-            if import_ok {
-                let _ = sqlx::query(
-                    "INSERT INTO repo_packages (filename, version, distro, distro_codename, arch, file_size, source, sync_log_id)\n                     VALUES ($1, $2, $3, $4, 'amd64', $5, 'github', $6)\n                     ON CONFLICT (filename, version, distro, arch) DO NOTHING",
-                )
-                .bind(&asset.name)
-                .bind(&release.tag_name)
-                .bind(distro)
-                .bind(codename)
-                .bind(asset.size as i64)
-                .bind(sync_log_id)
-                .execute(pool).await;
-
-                packages_synced += 1;
-                tracing::info!(asset = %asset.name, "Package imported successfully");
-            } else {
-                packages_skipped += 1;
-            }
-
-            // Clean up temp file.
-            let _ = tokio::fs::remove_file(&download_path).await;
-        }
+    // Persist synced packages to repo_packages table.
+    for pkg in &result.synced_packages {
+        let _ = sqlx::query(
+            "INSERT INTO repo_packages (filename, version, distro, distro_codename, arch, file_size, source, sync_log_id)
+             VALUES ($1, $2, $3, $4, 'amd64', $5, 'github', $6)
+             ON CONFLICT (filename, version, distro, arch) DO NOTHING",
+        )
+        .bind(&pkg.filename)
+        .bind(&pkg.version)
+        .bind(&pkg.distro)
+        .bind(&pkg.distro_codename)
+        .bind(pkg.file_size)
+        .bind(sync_log_id)
+        .execute(pool).await;
     }
 
     // Update sync_log with results.
-    let status = if errors.is_empty() {
+    let status = if result.errors.is_empty() {
         "success"
     } else {
         "partial"
     };
-    let error_msg = if errors.is_empty() {
+    let error_msg = if result.errors.is_empty() {
         None
     } else {
-        Some(errors.join("; "))
+        Some(result.errors.join("; "))
     };
 
     sqlx::query(
@@ -351,15 +122,15 @@ async fn run_manual_sync(
     )
     .bind(sync_log_id)
     .bind(status)
-    .bind(packages_synced)
-    .bind(packages_skipped)
+    .bind(result.packages_synced)
+    .bind(result.packages_skipped)
     .bind(error_msg)
     .execute(pool).await?;
 
     tracing::info!(
         sync_log_id = %sync_log_id,
-        packages_synced,
-        packages_skipped,
+        packages_synced = result.packages_synced,
+        packages_skipped = result.packages_skipped,
         status,
         "Manual repo sync completed"
     );
