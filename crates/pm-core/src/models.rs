@@ -282,14 +282,25 @@ pub fn generate_distro_config(
 ) -> Option<(String, String)> {
     let base = repo_url_base.trim_end_matches('/');
     if distro_id == "ubuntu" || distro_id == "debian" {
-        let suite = codename.unwrap_or("noble");
+        // Use distro-appropriate default codename — never give Debian an
+        // Ubuntu suite name. (Gap analysis HIGH-3)
+        let suite = match codename {
+            Some(c) => c,
+            None => {
+                if distro_id == "debian" {
+                    "bookworm"
+                } else {
+                    "noble"
+                }
+            },
+        };
         let sources =
             format!("deb [signed-by=/etc/apt/keyrings/lpa-repo.gpg] {base}/apt {suite} main");
         let keyring = "/etc/apt/keyrings/lpa-repo.gpg".to_string();
         Some((sources, keyring))
     } else if distro_id == "fedora" || distro_id == "almalinux" {
         let sources = format!(
-            "[lpa-repo]\\nname=Linux Patch API Repo\\nbaseurl={base}/dnf/\\nenabled=1\\ngpgcheck=1\\ngpgkey=file:///etc/pki/rpm-gpg/lpa-repo.gpg\\n"
+            "[lpa-repo]\nname=Linux Patch API Repo\nbaseurl={base}/dnf/\nenabled=1\ngpgcheck=1\ngpgkey=file:///etc/pki/rpm-gpg/lpa-repo.gpg\n"
         );
         let keyring = "/etc/pki/rpm-gpg/lpa-repo.gpg".to_string();
         Some((sources, keyring))
@@ -299,7 +310,7 @@ pub fn generate_distro_config(
         Some((sources, keyring))
     } else if distro_id == "arch" {
         let sources = format!(
-            "[lpa-repo]\\nServer = {base}/pacman/$repo\\nSigLevel = Required DatabaseOptional\\n"
+            "[lpa-repo]\nServer = {base}/pacman/$repo\nSigLevel = Required DatabaseOptional\n"
         );
         let keyring = "/etc/pacman.d/gnupg/lpa-repo.gpg".to_string();
         Some((sources, keyring))
