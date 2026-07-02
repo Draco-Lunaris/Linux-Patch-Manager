@@ -1,11 +1,10 @@
 Package: linux-patch-manager
-Version: 1.3.2-1
+Version: 1.3.4-1
 Architecture: amd64
 Maintainer: Moon Dragon <echo@moon-dragon.us>
 Installed-Size: 45000
-Depends: postgresql-16, openssl, curl, cron | cron-daemon, util-linux, libssl3, libc6 (>= 2.39), libfontconfig1
+Depends: postgresql-16, openssl, curl, cron | cron-daemon, util-linux, libssl3, libc6 (>= 2.39), libfontconfig1, gnupg, reprepro, createrepo-c, apk-tools, pacman-package-manager
 Recommends: postgresql-client-16, fonts-dejavu-core
-Suggests: gpg
 Section: admin
 Priority: optional
 Description: Enterprise Linux Patch Management System

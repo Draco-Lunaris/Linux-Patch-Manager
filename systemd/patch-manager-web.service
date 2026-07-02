@@ -14,6 +14,7 @@ WorkingDirectory=/opt/patch-manager
 
 # Configuration
 Environment="PATCH_MANAGER_CONFIG=/etc/patch-manager/config.toml"
+Environment="GNUPGHOME=/etc/patch-manager/ca/.gnupg"
 # Override individual settings via environment if needed:
 # Environment="PATCH_MANAGER__DATABASE__URL=postgres://..."
 
@@ -36,7 +37,7 @@ TimeoutStopSec=30s
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/log/patch-manager /etc/patch-manager/ca /etc/patch-manager/certs /etc/patch-manager/tls /etc/patch-manager/jwt /etc/patch-manager/keys /usr/share/patch-manager/frontend
+ReadWritePaths=/var/log/patch-manager /etc/patch-manager/ca /etc/patch-manager/ca/.gnupg /etc/patch-manager/certs /etc/patch-manager/tls /etc/patch-manager/jwt /etc/patch-manager/keys /usr/share/patch-manager/frontend
 PrivateTmp=true
 PrivateDevices=true
 ProtectKernelTunables=true
