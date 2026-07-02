@@ -64,7 +64,7 @@ create_service_user() {
 # 2. Create required directories (idempotent)
 # ---------------------------------------------------------------------------
 create_directories() {
-    mkdir -p "${CONFIG_DIR}/ca" "${CONFIG_DIR}/certs" \
+    mkdir -p "${CONFIG_DIR}/ca" "${CONFIG_DIR}/ca/.gnupg" "${CONFIG_DIR}/certs" \
              "${CONFIG_DIR}/jwt" "${CONFIG_DIR}/keys" "${CONFIG_DIR}/tls" \
              /var/log/patch-manager /opt/patch-manager \
              /var/backups/patch-manager
@@ -79,7 +79,7 @@ create_directories() {
     chmod -R a+rX /usr/share/patch-manager/frontend
 
     chmod 750 "${CONFIG_DIR}/ca" "${CONFIG_DIR}/jwt" "${CONFIG_DIR}/keys"
-    chmod 700 /var/backups/patch-manager
+    chmod 700 "${CONFIG_DIR}/ca/.gnupg" /var/backups/patch-manager
 }
 
 # ---------------------------------------------------------------------------
@@ -267,6 +267,69 @@ write_config() {
     chown "${SERVICE_USER}:${SERVICE_USER}" "${config_file}"
     chmod 640 "${config_file}"
     info "Configuration written to ${config_file}"
+}
+
+# ---------------------------------------------------------------------------
+# 6b. Migrate config sections (idempotent)
+#
+# Ensures [repo] and [worker.package_sync] sections exist in config.toml.
+# Older configs may lack these sections if they were generated before the
+# manager-hosted repo feature was added.
+# ---------------------------------------------------------------------------
+migrate_config_sections() {
+    local config_file="${CONFIG_DIR}/config.toml"
+    [[ -f "${config_file}" ]] || return 0
+
+    # Check for [repo] section.
+    if ! grep -q '^\[repo\]' "${config_file}"; then
+        info "Adding [repo] section to config.toml..."
+        cat >> "${config_file}" << 'REPO_EOF'
+
+# ============================================================
+# Manager-Hosted Package Repository
+# ============================================================
+[repo]
+# Base directory for package repo files (apt/, dnf/, apk/, pacman/)
+dir = "/var/www/lpa-repo"
+
+# Path to the GPG public key (ASCII-armored) for repo signing.
+gpg_public_key_path = "/etc/patch-manager/ca/lpa-repo-public-key.asc"
+
+# Path to the GPG private key (ASCII-armored, 0600 perms).
+gpg_private_key_path = "/etc/patch-manager/ca/lpa-repo-private-key.asc"
+
+# Base URL for the repo as seen by agents (used to generate sources_config)
+url_base = "http://lpm.moon-dragon.us"
+
+# HTTP port for the repo server (default: 80)
+http_port = 80
+REPO_EOF
+        info "[repo] section added."
+    fi
+
+    # Check for [worker.package_sync] section.
+    if ! grep -q '^\[worker\.package_sync\]' "${config_file}"; then
+        info "Adding [worker.package_sync] section to config.toml..."
+        cat >> "${config_file}" << 'SYNC_EOF'
+
+# ============================================================
+# Package Sync (Worker subsection)
+# ============================================================
+[worker.package_sync]
+# Enable the package sync worker (default: false)
+enabled = true
+
+# Sync interval in seconds (default: 3600 = 1 hour)
+interval_secs = 3600
+
+# GitHub repository to sync from (e.g., "Draco-Lunaris/Linux-Patch-Api")
+github_repo = "Draco-Lunaris/Linux-Patch-Api"
+
+# Maximum number of recent releases to sync (default: 3 — last 3 versions)
+max_releases = 3
+SYNC_EOF
+        info "[worker.package_sync] section added."
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -471,6 +534,7 @@ case "$1" in
         fix_table_ownership
         repair_migration_checksums
         write_config
+        migrate_config_sections
         generate_jwt_keys
         generate_tls_certs
         generate_client_cert
