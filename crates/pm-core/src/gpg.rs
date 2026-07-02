@@ -16,7 +16,13 @@ use std::path::Path;
 const GPG_KEY_NAME: &str = "Linux Patch API Repo";
 const GPG_KEY_EMAIL: &str = "lpa-repo@localhost";
 const GPG_KEY_EXPIRY: &str = "2y";
-const GPG_HOME_DIR: &str = "/etc/patch-manager/ca/.gnupg";
+/// Resolve the GPG home directory for keyring operations.
+///
+/// Uses the `GNUPGHOME` environment variable if set (for testing),
+/// falling back to the production default `/etc/patch-manager/ca/.gnupg`.
+fn gpg_homedir() -> String {
+    std::env::var("GNUPGHOME").unwrap_or_else(|_| "/etc/patch-manager/ca/.gnupg".to_string())
+}
 
 /// Result of GPG key bootstrap.
 #[derive(Debug)]
@@ -90,7 +96,7 @@ pub async fn ensure_signing_key(
 
     let mut child = tokio::process::Command::new("gpg")
         .arg("--homedir")
-        .arg(GPG_HOME_DIR)
+        .arg(gpg_homedir())
         .arg("--batch")
         .arg("--gen-key")
         .stdin(std::process::Stdio::piped())
@@ -162,7 +168,7 @@ pub async fn ensure_signing_key(
 async fn export_public_key(email: &str, path: &str) -> Result<(), GpgError> {
     let output = tokio::process::Command::new("gpg")
         .arg("--homedir")
-        .arg(GPG_HOME_DIR)
+        .arg(gpg_homedir())
         .arg("--armor")
         .arg("--export")
         .arg(email)
@@ -191,7 +197,7 @@ async fn export_public_key(email: &str, path: &str) -> Result<(), GpgError> {
 async fn export_private_key(email: &str, path: &str) -> Result<(), GpgError> {
     let output = tokio::process::Command::new("gpg")
         .arg("--homedir")
-        .arg(GPG_HOME_DIR)
+        .arg(gpg_homedir())
         .arg("--armor")
         .arg("--export-secret-keys")
         .arg(email)
@@ -220,7 +226,7 @@ async fn export_private_key(email: &str, path: &str) -> Result<(), GpgError> {
 async fn get_key_id(email: &str) -> Result<String, GpgError> {
     let output = tokio::process::Command::new("gpg")
         .arg("--homedir")
-        .arg(GPG_HOME_DIR)
+        .arg(gpg_homedir())
         .arg("--list-keys")
         .arg("--with-colons")
         .arg(email)
@@ -268,7 +274,7 @@ async fn extract_key_id_from_private_key(private_key_path: &str) -> Result<Strin
     // Import the private key into the keyring (idempotent — gpg handles duplicates).
     let _ = tokio::process::Command::new("gpg")
         .arg("--homedir")
-        .arg(GPG_HOME_DIR)
+        .arg(gpg_homedir())
         .arg("--batch")
         .arg("--import")
         .arg(private_key_path)
@@ -294,7 +300,7 @@ pub async fn sign_file_detached(
 ) -> Result<(), GpgError> {
     let mut cmd = tokio::process::Command::new("gpg");
     cmd.arg("--homedir")
-        .arg(GPG_HOME_DIR)
+        .arg(gpg_homedir())
         .arg("--batch")
         .arg("--yes")
         .arg("--detach-sign");
@@ -596,7 +602,7 @@ mod tests {
         // Verify the signature is valid using gpg --verify.
         let verify_output = std::process::Command::new("gpg")
             .arg("--homedir")
-            .arg(GPG_HOME_DIR)
+            .arg(gpg_homedir())
             .arg("--verify")
             .arg(&sig_path)
             .arg(&test_file_path)
