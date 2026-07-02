@@ -88,9 +88,9 @@ pub async fn download_asset(
 ) -> Result<String, anyhow::Error> {
     use sha2::{Digest, Sha256};
 
-    // Ensure tmp directory exists.
+    // Ensure tmp directory exists — propagate error instead of silently swallowing it.
     if let Some(parent) = std::path::Path::new(path).parent() {
-        tokio::fs::create_dir_all(parent).await.ok();
+        tokio::fs::create_dir_all(parent).await?;
     }
 
     let client = reqwest::Client::builder()

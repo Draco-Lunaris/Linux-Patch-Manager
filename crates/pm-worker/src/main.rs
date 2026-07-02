@@ -72,6 +72,16 @@ async fn main() -> anyhow::Result<()> {
 
     let config = Arc::new(config);
 
+    // Ensure repo directory structure exists (including tmp/ for package downloads).
+    // The web process normally creates this at startup, but the worker may start
+    // first or run independently, so we ensure it here too.
+    if let Err(e) = pm_core::gpg::ensure_repo_directories(&config.repo.dir, "").await {
+        tracing::warn!(
+            error = %e,
+            "Repo directory init failed (non-fatal if web process already created it)"
+        );
+    }
+
     // Spawn worker tasks
     let heartbeat_handle = tokio::spawn(run_heartbeat(
         pool.clone(),
