@@ -69,8 +69,11 @@ create_directories() {
              /var/log/patch-manager /opt/patch-manager \
              /var/backups/patch-manager
 
+    # Manager-hosted package repo directory (apt/dnf/apk/pacman subdirs
+    # are created by the application on startup; we only need the base dir).
+    mkdir -p /var/www/lpa-repo
     chown -R "${SERVICE_USER}:${SERVICE_USER}" \
-        "${CONFIG_DIR}" /var/log/patch-manager /opt/patch-manager
+        "${CONFIG_DIR}" /var/log/patch-manager /opt/patch-manager /var/www/lpa-repo
 
     # Frontend assets stay root-owned and read-only: the service must not be
     # able to rewrite the JavaScript it serves (persistence vector if pm-web
