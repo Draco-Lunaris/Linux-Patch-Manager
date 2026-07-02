@@ -333,7 +333,15 @@ async fn approve_enrollment(
                     .os_details
                     .get("version")
                     .and_then(|v| v.as_str());
-                let codename = detect_apt_codename(os_version);
+                // Prefer the agent-provided codename from /etc/os-release's
+                // VERSION_CODENAME. Only fall back to version-based detection
+                // if the agent didn't send one. (Gap analysis HIGH-3)
+                let codename = enrollment_request
+                    .os_details
+                    .get("codename")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .or_else(|| detect_apt_codename(os_version));
                 match generate_distro_config(&distro_id, &repo_cfg.url_base, codename.as_deref()) {
                     Some((sources_config, keyring_path)) => {
                         match std::fs::read_to_string(&repo_cfg.gpg_public_key_path) {
@@ -370,10 +378,10 @@ async fn approve_enrollment(
                 }
             },
             None => {
-                tracing::warn!(
+                tracing::error!(
                     os_family = ?os_family,
                     os_name = ?os_name,
-                    "detect_distro_id returned None — unrecognized OS, repo_config will be None"
+                    "detect_distro_id returned None — unrecognized OS. Agent will be unable to self-update without fallback repo-config. Enrollment continues but this host needs manual repo provisioning or a manager-side distro mapping."
                 );
                 None
             },
