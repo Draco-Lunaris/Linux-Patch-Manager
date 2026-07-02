@@ -91,10 +91,10 @@ The package sync worker runs as a background task in `pm-worker`. It fetches the
 2. Filter out prereleases, take last N releases
 3. For each release, download package assets (`.deb`, `.rpm`, `.apk`, `.pkg.tar.zst`)
 4. Import into local repo:
-   - `.deb` → `reprepro includedeb <codename>`
-   - `.rpm` → copy to dnf repo + `createrepo_c --update`
-   - `.apk` → copy to apk repo + `apk index`
-   - `.pkg.tar.zst` → copy to pacman repo + `repo-add`
+   - `.deb` → `pure Rust apt metadata generation`
+   - `.rpm` → copy to dnf repo + pure Rust RPM metadata generation
+   - `.apk` → copy to apk repo + pure Rust APK index generation
+   - `.pkg.tar.zst` → copy to pacman repo + pure Rust pacman DB generation
 5. Sign repo metadata with manager's GPG key
 6. Record packages in `repo_packages` table
 7. Update `repo_sync_log` with results
@@ -117,8 +117,8 @@ The repo server is a second axum listener on port 80 (plain HTTP) serving static
 **Routes:**
 | Path | Content |
 |------|---------|
-| `/apt/` | reprepro output (Packages, Release, InRelease) |
-| `/dnf/` | createrepo_c output (repodata/) |
+| `/apt/` | pure Rust apt metadata (Packages, Release, InRelease) |
+| `/dnf/` | pure Rust RPM metadata (repodata/) |
 | `/apk/` | APKINDEX.tar.gz + .apk files |
 | `/pacman/` | repo database + .pkg.tar.zst files |
 
