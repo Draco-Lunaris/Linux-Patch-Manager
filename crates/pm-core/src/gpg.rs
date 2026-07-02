@@ -326,13 +326,41 @@ pub async fn sign_file_detached(
     Ok(())
 }
 
+/// Sign a file using GPG clear-signing (inline signature), producing an InRelease-style file.
+///
+/// Used by the apt metadata generation to create `InRelease` files.
+/// The output file contains the original content wrapped in a PGP signature.
+pub async fn sign_file_clearsign(file_path: &str, output_path: &str) -> Result<(), GpgError> {
+    let output = tokio::process::Command::new("gpg")
+        .arg("--homedir")
+        .arg(gpg_homedir())
+        .arg("--batch")
+        .arg("--yes")
+        .arg("--clearsign")
+        .arg("--output")
+        .arg(output_path)
+        .arg(file_path)
+        .output()
+        .await
+        .map_err(|e| GpgError::CommandFailed(format!("gpg --clearsign failed: {e}")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(GpgError::CommandFailed(format!(
+            "gpg --clearsign failed for {file_path}: {stderr}"
+        )));
+    }
+
+    Ok(())
+}
+
 /// Ensure the manager-hosted package repository directory structure exists.
 ///
 /// Creates base directories for all four distro formats and generates the
 /// reprepro `conf/distributions` file with `SignWith <key-id>` for apt.
 ///
 /// This must be called after `ensure_signing_key()` so the key ID is available.
-pub async fn ensure_repo_directories(repo_dir: &str, gpg_key_id: &str) -> Result<(), GpgError> {
+pub async fn ensure_repo_directories(repo_dir: &str, _gpg_key_id: &str) -> Result<(), GpgError> {
     // Base directories.
     let dirs = [
         format!("{repo_dir}/apt"),
@@ -353,69 +381,19 @@ pub async fn ensure_repo_directories(repo_dir: &str, gpg_key_id: &str) -> Result
 
     tracing::info!(repo_dir, "Package repo directory structure initialized");
 
-    // Create reprepro conf/distributions with SignWith for apt auto-signing.
-    let conf_dir = format!("{repo_dir}/apt/conf");
-    tokio::fs::create_dir_all(&conf_dir)
-        .await
-        .map_err(|e| GpgError::CommandFailed(format!("Failed to create {conf_dir}: {e}")))?;
-
-    let distributions_path = format!("{conf_dir}/distributions");
-    if !Path::new(&distributions_path).exists() {
-        let distributions_content = generate_reprepro_distributions(gpg_key_id);
-        tokio::fs::write(&distributions_path, &distributions_content)
+    // Create apt pool directory structure for pure Rust metadata generation.
+    for codename in &["noble", "jammy", "bookworm", "trixie"] {
+        let pool_dir = format!("{repo_dir}/apt/dists/{codename}/main/binary-amd64");
+        tokio::fs::create_dir_all(&pool_dir)
             .await
-            .map_err(|e| GpgError::CommandFailed(format!("Failed to write distributions: {e}")))?;
-        tracing::info!(
-            path = %distributions_path,
-            key_id = gpg_key_id,
-            "reprepro conf/distributions created with SignWith"
-        );
-    } else {
-        // Verify SignWith is present; add if missing.
-        let existing = tokio::fs::read_to_string(&distributions_path)
-            .await
-            .unwrap_or_default();
-        if !existing.contains("SignWith") && !gpg_key_id.is_empty() {
-            let updated = generate_reprepro_distributions(gpg_key_id);
-            tokio::fs::write(&distributions_path, &updated)
-                .await
-                .map_err(|e| {
-                    GpgError::CommandFailed(format!("Failed to update distributions: {e}"))
-                })?;
-            tracing::info!(
-                path = %distributions_path,
-                key_id = gpg_key_id,
-                "reprepro conf/distributions updated with SignWith"
-            );
-        } else {
-            tracing::debug!(path = %distributions_path, "reprepro conf/distributions already configured");
-        }
+            .map_err(|e| GpgError::CommandFailed(format!("Failed to create {pool_dir}: {e}")))?;
     }
+    // Also create dnf repodata directory.
+    tokio::fs::create_dir_all(format!("{repo_dir}/dnf/el9/repodata"))
+        .await
+        .map_err(|e| GpgError::CommandFailed(format!("Failed to create repodata dir: {e}")))?;
 
     Ok(())
-}
-
-/// Generate reprepro conf/distributions content with SignWith for all supported codenames.
-fn generate_reprepro_distributions(gpg_key_id: &str) -> String {
-    let codenames = ["noble", "jammy", "bookworm", "trixie"];
-    let mut content = String::new();
-
-    for codename in &codenames {
-        content.push_str(&format!(
-            "Origin: Linux Patch API\n\
-             Label: Linux Patch API Repo\n\
-             Suite: {codename}\n\
-             Codename: {codename}\n\
-             Architectures: amd64\n\
-             Components: main\n\
-             Description: Linux Patch API agent packages for Ubuntu/Debian {codename}\n\
-             SignWith: {key_id}\n\n",
-            codename = codename,
-            key_id = gpg_key_id,
-        ));
-    }
-
-    content
 }
 
 #[cfg(test)]
@@ -646,33 +624,21 @@ mod tests {
         // Verify all expected directories exist.
         assert!(std::path::Path::new(&format!("{repo_dir}/apt")).exists());
         assert!(std::path::Path::new(&format!("{repo_dir}/dnf/el9/Packages")).exists());
+        assert!(std::path::Path::new(&format!("{repo_dir}/dnf/el9/repodata")).exists());
         assert!(std::path::Path::new(&format!("{repo_dir}/apk/v3.21")).exists());
         assert!(std::path::Path::new(&format!("{repo_dir}/pacman/x86_64")).exists());
         assert!(std::path::Path::new(&format!("{repo_dir}/tmp")).exists());
 
-        // Verify reprepro conf/distributions was created with SignWith.
-        let dist_path = format!("{repo_dir}/apt/conf/distributions");
-        assert!(
-            std::path::Path::new(&dist_path).exists(),
-            "distributions file should exist"
-        );
-        let dist_content = std::fs::read_to_string(&dist_path).unwrap();
-        assert!(
-            dist_content.contains(&key_info.key_id),
-            "distributions should contain the GPG key ID"
-        );
-        assert!(
-            dist_content.contains("SignWith"),
-            "distributions should contain SignWith directive"
-        );
-        assert!(
-            dist_content.contains("noble"),
-            "distributions should contain noble codename"
-        );
-        assert!(
-            dist_content.contains("jammy"),
-            "distributions should contain jammy codename"
-        );
+        // Verify apt pool directories were created for all codenames.
+        for codename in &["noble", "jammy", "bookworm", "trixie"] {
+            assert!(
+                std::path::Path::new(&format!(
+                    "{repo_dir}/apt/dists/{codename}/main/binary-amd64"
+                ))
+                .exists(),
+                "apt pool directory should exist for {codename}"
+            );
+        }
     }
 
     #[tokio::test]

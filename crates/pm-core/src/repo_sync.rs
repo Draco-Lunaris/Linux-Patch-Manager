@@ -118,40 +118,38 @@ pub async fn download_asset(
 
 /// Import a package file into the appropriate repo format.
 ///
-/// For apt, reprepro auto-signs Release/InRelease via SignWith config.
-/// For dnf/apk/pacman, metadata is signed with detached GPG signatures
-/// using `pm_core::gpg::sign_file_detached()`.
+/// All metadata generation is done in pure Rust via `repo_metadata`.
+/// GPG signing of metadata files is handled within each generator
+/// using `pm_core::gpg::sign_file_detached()` / `sign_file_clearsign()`.
 pub async fn import_to_repo(
     file_path: &str,
     distro: &str,
     codename: Option<&str>,
     repo_dir: &str,
 ) -> Result<(), anyhow::Error> {
-    use crate::gpg;
+    use crate::repo_metadata;
 
     match distro {
         "apt" => {
             let codename = codename.unwrap_or("noble");
-            let output = tokio::process::Command::new("reprepro")
-                .arg("-b")
-                .arg(format!("{repo_dir}/apt"))
-                .arg("includedeb")
-                .arg(codename)
-                .arg(file_path)
-                .output()
-                .await?;
 
-            if !output.status.success() {
-                anyhow::bail!(
-                    "reprepro includedeb failed: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            }
+            // Copy .deb to apt pool directory.
+            let pool_dir = format!("{repo_dir}/apt/pool");
+            tokio::fs::create_dir_all(&pool_dir).await?;
+            let filename = std::path::Path::new(file_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("package.deb");
+            let dest = format!("{pool_dir}/{filename}");
+            tokio::fs::copy(file_path, &dest).await?;
+
+            // Generate apt metadata (Packages, Release, InRelease, Release.gpg).
+            repo_metadata::generate_apt_metadata(repo_dir, codename).await?;
         },
         "dnf" => {
-            // Copy RPM to dnf repo directory and regenerate metadata.
+            // Copy RPM to dnf repo Packages directory.
             let dest_dir = format!("{repo_dir}/dnf/el9/Packages");
-            tokio::fs::create_dir_all(&dest_dir).await.ok();
+            tokio::fs::create_dir_all(&dest_dir).await?;
             let filename = std::path::Path::new(file_path)
                 .file_name()
                 .and_then(|n| n.to_str())
@@ -159,24 +157,15 @@ pub async fn import_to_repo(
             let dest = format!("{dest_dir}/{filename}");
             tokio::fs::copy(file_path, &dest).await?;
 
-            let output = tokio::process::Command::new("createrepo_c")
-                .arg("--update")
-                .arg(format!("{repo_dir}/dnf/el9"))
-                .output()
-                .await?;
-
-            if !output.status.success() {
-                anyhow::bail!(
-                    "createrepo_c failed: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            }
+            // Generate DNF metadata (primary.xml.gz, filelists.xml.gz, repomd.xml).
+            repo_metadata::generate_dnf_metadata(repo_dir).await?;
 
             // Sign repomd.xml with detached GPG signature for dnf verification.
             let repomd_path = format!("{repo_dir}/dnf/el9/repodata/repomd.xml");
             let repomd_sig_path = format!("{repo_dir}/dnf/el9/repodata/repomd.xml.asc");
             if std::path::Path::new(&repomd_path).exists() {
-                if let Err(e) = gpg::sign_file_detached(&repomd_path, &repomd_sig_path, true).await
+                if let Err(e) =
+                    crate::gpg::sign_file_detached(&repomd_path, &repomd_sig_path, true).await
                 {
                     tracing::warn!(error = %e, "GPG sign repomd.xml failed (non-fatal but clients will not trust this repo)");
                 }
@@ -185,7 +174,7 @@ pub async fn import_to_repo(
         "apk" => {
             // Copy APK to apk repo directory.
             let dest_dir = format!("{repo_dir}/apk/v3.21");
-            tokio::fs::create_dir_all(&dest_dir).await.ok();
+            tokio::fs::create_dir_all(&dest_dir).await?;
             let filename = std::path::Path::new(file_path)
                 .file_name()
                 .and_then(|n| n.to_str())
@@ -193,28 +182,15 @@ pub async fn import_to_repo(
             let dest = format!("{dest_dir}/{filename}");
             tokio::fs::copy(file_path, &dest).await?;
 
-            // Generate APK index.
-            let output = tokio::process::Command::new("apk")
-                .arg("index")
-                .arg("-o")
-                .arg(format!("{dest_dir}/APKINDEX.tar.gz"))
-                .arg(&dest)
-                .output()
-                .await?;
-
-            if !output.status.success() {
-                tracing::warn!(
-                    "apk index failed (non-fatal): {}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            }
+            // Generate APK index (APKINDEX.tar.gz) in pure Rust.
+            repo_metadata::generate_apk_metadata(repo_dir).await?;
 
             // Sign APKINDEX.tar.gz with detached GPG signature for apk verification.
             let apkindex_path = format!("{dest_dir}/APKINDEX.tar.gz");
             let apkindex_sig_path = format!("{dest_dir}/APKINDEX.tar.gz.sig");
             if std::path::Path::new(&apkindex_path).exists() {
                 if let Err(e) =
-                    gpg::sign_file_detached(&apkindex_path, &apkindex_sig_path, false).await
+                    crate::gpg::sign_file_detached(&apkindex_path, &apkindex_sig_path, false).await
                 {
                     tracing::warn!(error = %e, "GPG sign APKINDEX.tar.gz failed (non-fatal but clients will not trust this repo)");
                 }
@@ -223,7 +199,7 @@ pub async fn import_to_repo(
         "pacman" => {
             // Copy to pacman repo directory.
             let dest_dir = format!("{repo_dir}/pacman/x86_64");
-            tokio::fs::create_dir_all(&dest_dir).await.ok();
+            tokio::fs::create_dir_all(&dest_dir).await?;
             let filename = std::path::Path::new(file_path)
                 .file_name()
                 .and_then(|n| n.to_str())
@@ -231,25 +207,15 @@ pub async fn import_to_repo(
             let dest = format!("{dest_dir}/{filename}");
             tokio::fs::copy(file_path, &dest).await?;
 
-            // Update pacman repo database.
-            let output = tokio::process::Command::new("repo-add")
-                .arg(format!("{dest_dir}/lpa-repo.db.tar.zst"))
-                .arg(&dest)
-                .output()
-                .await?;
-
-            if !output.status.success() {
-                tracing::warn!(
-                    "repo-add failed (non-fatal): {}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            }
+            // Generate pacman repo database (lpa-repo.db.tar.zst) in pure Rust.
+            repo_metadata::generate_pacman_metadata(repo_dir).await?;
 
             // Sign lpa-repo.db.tar.zst with detached GPG signature for pacman verification.
             let db_path = format!("{dest_dir}/lpa-repo.db.tar.zst");
             let db_sig_path = format!("{dest_dir}/lpa-repo.db.tar.zst.sig");
             if std::path::Path::new(&db_path).exists() {
-                if let Err(e) = gpg::sign_file_detached(&db_path, &db_sig_path, false).await {
+                if let Err(e) = crate::gpg::sign_file_detached(&db_path, &db_sig_path, false).await
+                {
                     tracing::warn!(error = %e, "GPG sign lpa-repo.db.tar.zst failed (non-fatal but clients will not trust this repo)");
                 }
             }
