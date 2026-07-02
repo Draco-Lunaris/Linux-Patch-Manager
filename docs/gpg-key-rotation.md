@@ -73,13 +73,13 @@ Store on the manager host at `/etc/patch-manager/ca/` (per-manager, NEVER in Vau
 ### 3. Update Repo Configuration
 
 ```bash
-# Update reprepro SignWith in distributions config
+# Re-sign apt metadata (pure Rust generation)
 # Edit /var/www/lpa-repo/apt/conf/distributions
 # Replace old key ID with new key ID in all SignWith lines
 
 # Re-sign all repo metadata
-reprepro -b /var/www/lpa-repo/apt export
-createrepo_c --update /var/www/lpa-repo/dnf/el9
+# Re-run repo sync to regenerate signed metadata with new GPG key
+# Re-run repo sync to regenerate signed metadata with new GPG key
 ```
 
 ### 4. Re-enroll Agents
