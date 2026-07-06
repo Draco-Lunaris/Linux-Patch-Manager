@@ -802,6 +802,36 @@ async fn regenerate_certs(
         )
     })?;
 
+    // Restart manager services so the new TLS cert is loaded.
+    // The web server and worker both read the TLS cert at startup;
+    // without a restart they continue serving with the old cert.
+    let restart = tokio::process::Command::new("systemctl")
+        .args([
+            "restart",
+            "patch-manager-web.service",
+            "patch-manager-worker.service",
+        ])
+        .output()
+        .await;
+    match &restart {
+        Ok(o) if o.status.success() => {
+            tracing::info!("Manager services restarted after cert regeneration");
+        },
+        Ok(o) => {
+            tracing::warn!(
+                status = ?o.status,
+                stderr = %String::from_utf8_lossy(&o.stderr),
+                "Service restart after cert regeneration returned non-zero exit"
+            );
+        },
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "Failed to restart manager services after cert regeneration — manual restart required"
+            );
+        },
+    }
+
     // Parse the new cert for response details
     let parsed = parse_web_tls_cert(&cert_pem);
 
