@@ -22,6 +22,8 @@ import type {
   TriggerUpgradeRequest,
   TriggerUpgradeResponse,
   OsPackageMapping,
+  CertHealthResponse,
+  RegenerateCertsResponse,
 } from '../types'
 
 const BASE_URL = '/api/v1'
@@ -231,6 +233,14 @@ export const certsApi = {
   // Re-issue all certs for a host — revokes all active certs and issues a new one
   reissue: (hostId: string) =>
     apiClient.post<IssuedCert>(`/hosts/${hostId}/certificates/reissue`),
+
+  // Get manager certificate health (web TLS + CRL)
+  getCertHealth: () =>
+    apiClient.get<CertHealthResponse>('/ca/health'),
+
+  // Regenerate web TLS cert and CRL (admin only)
+  regenerateCerts: () =>
+    apiClient.post<RegenerateCertsResponse>('/ca/regenerate'),
 }
 
 // ── Reports API (M9) ─────────────────────────────────────────────────────────

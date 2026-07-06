@@ -191,6 +191,22 @@ if [[ ! -f "${TLS_CERT}" ]]; then
     info "Generating CA-signed web server certificate (valid 365 days)..."
     HOSTNAME_FQDN=$(hostname -f 2>/dev/null || echo "localhost")
     HOSTNAME_SHORT=$(hostname -s 2>/dev/null || echo "localhost")
+
+    # Warn if hostname -f does not return a proper FQDN (no domain part).
+    # This causes the TLS cert CN to be a short hostname, which breaks
+    # agent CRL fetches that verify the server cert hostname against the
+    # manager_url. See issue: agents report "CRL expired" because reqwest
+    # rejects the TLS connection on hostname mismatch.
+    if [[ "${HOSTNAME_FQDN}" == "${HOSTNAME_SHORT}" || "${HOSTNAME_FQDN}" != *.* ]]; then
+        warn "hostname -f returned '${HOSTNAME_FQDN}' which does not appear to be a fully-qualified domain name (FQDN)."
+        warn "The TLS certificate will be issued with CN=${HOSTNAME_FQDN}. If agents connect via a different hostname (e.g. manager.example.com),"
+        warn "CRL fetches will fail with a TLS hostname mismatch error. To fix:"
+        warn "  1. Set the system FQDN: hostnamectl set-hostname $(hostname -s).your-domain.com"
+        warn "  2. Add an entry to /etc/hosts: <IP> <short>.your-domain.com <short>"
+        warn "  3. Re-run this setup script to regenerate the certificate."
+        warn "Continuing with CN=${HOSTNAME_FQDN}..."
+    fi
+
     # Get the host's primary IP address for SAN
     HOST_IP=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}' || echo "127.0.0.1")
 

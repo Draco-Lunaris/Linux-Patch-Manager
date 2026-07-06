@@ -301,6 +301,10 @@ export default function CertificatesPage() {
   const [issuedCert, setIssuedCert] = useState<IssuedCert | null>(null)
   const [keyDialogOpen, setKeyDialogOpen] = useState(false)
 
+  // Regenerate dialog
+  const [regenOpen, setRegenOpen] = useState(false)
+  const [regenerating, setRegenerating] = useState(false)
+
   // Snackbar
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
     open: false, message: '', severity: 'success',
@@ -327,6 +331,21 @@ export default function CertificatesPage() {
   }, [statusFilter, hostFilter])
 
   useEffect(() => { load() }, [load])
+
+  // ── Regenerate server certs ───────────────────────────────────────────────
+  const handleRegenerate = async () => {
+    setRegenerating(true)
+    try {
+      const res = await certsApi.regenerateCerts()
+      showSnack(`Server certs regenerated for ${res.data.hostname}`, 'success')
+      void load()
+    } catch {
+      showSnack('Failed to regenerate server certificates', 'error')
+    } finally {
+      setRegenerating(false)
+      setRegenOpen(false)
+    }
+  }
 
   // ── Download Root CA ────────────────────────────────────────────────────────
   const handleDownloadRootCa = async () => {
@@ -386,6 +405,16 @@ export default function CertificatesPage() {
             sx={{ mr: 1 }}
           >
             Issue Client Certificate
+          </Button>
+        )}
+        {canWrite && (
+          <Button
+            variant="outlined"
+            startIcon={<RefreshIcon />}
+            onClick={() => setRegenOpen(true)}
+            sx={{ mr: 1 }}
+          >
+            Regenerate Server Certs
           </Button>
         )}
         <Tooltip title="Download Root CA">
@@ -556,6 +585,28 @@ export default function CertificatesPage() {
         cert={issuedCert}
         onClose={() => setKeyDialogOpen(false)}
       />
+
+      {/* Regenerate Confirmation Dialog */}
+      <Dialog open={regenOpen} onClose={() => setRegenOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Regenerate Server Certificates</DialogTitle>
+        <DialogContent>
+          <Typography>
+            This will regenerate the web TLS certificate using the current system hostname
+            and regenerate the CRL. The CA root cert and key will not be touched.
+            The web server will need to be restarted for the new cert to take effect.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRegenOpen(false)} disabled={regenerating}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={handleRegenerate}
+            disabled={regenerating}
+          >
+            {regenerating ? <CircularProgress size={20} /> : 'Regenerate'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Snackbar */}
       <Snackbar
