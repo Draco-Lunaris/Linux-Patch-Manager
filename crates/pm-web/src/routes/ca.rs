@@ -2,6 +2,8 @@
 //!
 //! ca_router()        → mounted at /api/v1/ca
 //!   GET  /root.crt                           download_root_ca      (any authed role)
+//!   GET  /health                             cert_health           (any authed role)
+//!   POST /regenerate                         regenerate_certs      (admin only)
 //!
 //! certs_router()     → mounted at /api/v1/certificates
 //!   GET  /                                   list_certificates     (any authed role)
@@ -35,7 +37,10 @@ use crate::AppState;
 
 /// Handles routes mounted at /api/v1/ca
 pub fn ca_router() -> Router<AppState> {
-    Router::new().route("/root.crt", get(download_root_ca))
+    Router::new()
+        .route("/root.crt", get(download_root_ca))
+        .route("/health", get(cert_health))
+        .route("/regenerate", post(regenerate_certs))
 }
 
 /// Handles routes mounted at /api/v1/certificates
@@ -513,4 +518,310 @@ async fn revoke_cert(
     .await;
 
     Ok(Json(json!({ "revoked": true })))
+}
+
+// ── GET /api/v1/ca/health ────────────────────────────────────────────────────
+
+/// Web TLS certificate health details returned by [`cert_health`].
+#[derive(Debug, Serialize)]
+struct WebTlsHealth {
+    cn: Option<String>,
+    sans: Vec<String>,
+    expiry: Option<String>,
+    days_until_expiry: Option<i64>,
+    is_fqdn: bool,
+    cert_exists: bool,
+    error: Option<String>,
+}
+
+/// CRL health details returned by [`cert_health`].
+#[derive(Debug, Serialize)]
+struct CrlHealth {
+    status: String,
+    last_generated: Option<String>,
+    age_seconds: Option<i64>,
+    next_update: Option<String>,
+    revoked_count: Option<i64>,
+    error: Option<String>,
+}
+
+/// Parse a PEM-encoded TLS certificate and extract health-relevant fields.
+fn parse_web_tls_cert(pem: &str) -> WebTlsHealth {
+    use base64::Engine;
+    use x509_parser::extensions::GeneralName;
+
+    // Strip PEM headers/footers and decode base64 to DER
+    let b64: String = pem.lines().filter(|l| !l.starts_with("-----")).collect();
+    let der = match base64::engine::general_purpose::STANDARD.decode(&b64) {
+        Ok(d) => d,
+        Err(e) => {
+            return WebTlsHealth {
+                cn: None,
+                sans: vec![],
+                expiry: None,
+                days_until_expiry: None,
+                is_fqdn: false,
+                cert_exists: true,
+                error: Some(format!("Failed to decode PEM: {e}")),
+            }
+        },
+    };
+
+    match x509_parser::parse_x509_certificate(&der) {
+        Ok((_, cert)) => {
+            let cn = cert
+                .subject()
+                .iter_common_name()
+                .next()
+                .and_then(|attr| attr.as_str().ok())
+                .map(String::from);
+
+            let sans: Vec<String> = cert
+                .subject_alternative_name()
+                .ok()
+                .flatten()
+                .map(|san| {
+                    san.value
+                        .general_names
+                        .iter()
+                        .filter_map(|gn| {
+                            if let GeneralName::DNSName(s) = gn {
+                                Some(s.to_string())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let not_after = cert.validity().not_after;
+            let expiry_ts = not_after.timestamp();
+            let expiry = chrono::DateTime::from_timestamp(expiry_ts, 0).map(|dt| dt.to_rfc3339());
+            let now = chrono::Utc::now();
+            let days_until_expiry =
+                chrono::DateTime::from_timestamp(expiry_ts, 0).map(|dt| (dt - now).num_days());
+
+            let is_fqdn = cn.as_ref().map(|c| c.contains('.')).unwrap_or(false);
+
+            WebTlsHealth {
+                cn,
+                sans,
+                expiry,
+                days_until_expiry,
+                is_fqdn,
+                cert_exists: true,
+                error: None,
+            }
+        },
+        Err(e) => WebTlsHealth {
+            cn: None,
+            sans: vec![],
+            expiry: None,
+            days_until_expiry: None,
+            is_fqdn: false,
+            cert_exists: true,
+            error: Some(format!("Failed to parse certificate: {e}")),
+        },
+    }
+}
+
+/// Check CRL generation status by attempting to generate one on the fly.
+async fn check_crl_status(state: &AppState) -> CrlHealth {
+    match state.ca.generate_crl(&state.db).await {
+        Ok(_) => {
+            let revoked_count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM certificates \
+                 WHERE status = 'revoked'::cert_status AND expires_at > NOW()",
+            )
+            .fetch_one(&state.db)
+            .await
+            .unwrap_or(0);
+
+            let now = chrono::Utc::now();
+            CrlHealth {
+                status: "available".to_string(),
+                last_generated: Some(now.to_rfc3339()),
+                age_seconds: Some(0),
+                next_update: Some((now + chrono::Duration::hours(24)).to_rfc3339()),
+                revoked_count: Some(revoked_count),
+                error: None,
+            }
+        },
+        Err(e) => CrlHealth {
+            status: "error".to_string(),
+            last_generated: None,
+            age_seconds: None,
+            next_update: None,
+            revoked_count: None,
+            error: Some(e.to_string()),
+        },
+    }
+}
+
+/// Determine overall health from individual components.
+fn determine_health(web_tls: &WebTlsHealth, crl: &CrlHealth) -> String {
+    if !web_tls.cert_exists || web_tls.error.is_some() || crl.status == "error" {
+        return "critical".to_string();
+    }
+
+    if let Some(days) = web_tls.days_until_expiry {
+        if days < 0 {
+            return "critical".to_string();
+        }
+        if days < 30 || !web_tls.is_fqdn {
+            return "warning".to_string();
+        }
+    }
+
+    "healthy".to_string()
+}
+
+/// Return manager certificate health: web TLS cert details, CRL status, and overall health.
+async fn cert_health(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let cert_path = &state.config.security.web_tls_cert_path;
+
+    let web_tls = match tokio::fs::read_to_string(cert_path).await {
+        Ok(pem) => parse_web_tls_cert(&pem),
+        Err(_) => WebTlsHealth {
+            cn: None,
+            sans: vec![],
+            expiry: None,
+            days_until_expiry: None,
+            is_fqdn: false,
+            cert_exists: false,
+            error: None,
+        },
+    };
+
+    let crl = check_crl_status(&state).await;
+    let overall = determine_health(&web_tls, &crl);
+
+    Ok(Json(json!({
+        "web_tls": web_tls,
+        "crl": crl,
+        "overall": overall,
+    })))
+}
+
+// ── POST /api/v1/ca/regenerate ───────────────────────────────────────────────
+
+/// Regenerate the web TLS certificate and CRL without touching the CA root.
+async fn regenerate_certs(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_write_access(&auth)?;
+
+    // Read the current system FQDN
+    let output = tokio::process::Command::new("hostname")
+        .arg("-f")
+        .output()
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to execute hostname -f");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": "Failed to determine hostname" } })),
+            )
+        })?;
+
+    let fqdn = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if fqdn.is_empty() {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(
+                json!({ "error": { "code": "internal_error", "message": "hostname -f returned empty string" } }),
+            ),
+        ));
+    }
+
+    // Issue new web TLS cert using the CA
+    let (cert_pem, key_pem) = state.ca.issue_web_tls_cert(&fqdn).await.map_err(|e| {
+        tracing::error!(error = %e, "Failed to issue web TLS cert");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": e.to_string() } })),
+        )
+    })?;
+
+    // Write cert and key to configured paths
+    let cert_path = std::path::Path::new(&state.config.security.web_tls_cert_path);
+    let key_path = std::path::Path::new(&state.config.security.web_tls_key_path);
+
+    if let Some(parent) = cert_path.parent() {
+        tokio::fs::create_dir_all(parent).await.map_err(|e| {
+            tracing::error!(error = %e, "Failed to create cert directory");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": "Failed to create certificate directory" } })),
+            )
+        })?;
+    }
+    if let Some(parent) = key_path.parent() {
+        tokio::fs::create_dir_all(parent).await.map_err(|e| {
+            tracing::error!(error = %e, "Failed to create key directory");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": "Failed to create key directory" } })),
+            )
+        })?;
+    }
+
+    tokio::fs::write(cert_path, &cert_pem).await.map_err(|e| {
+        tracing::error!(error = %e, "Failed to write web TLS cert");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": "Failed to write certificate file" } })),
+        )
+    })?;
+
+    // Write key with restricted permissions
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tokio::fs::write(key_path, &key_pem).await.map_err(|e| {
+            tracing::error!(error = %e, "Failed to write web TLS key");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": "Failed to write key file" } })),
+            )
+        })?;
+        let perms = std::fs::Permissions::from_mode(0o600);
+        let _ = tokio::fs::set_permissions(key_path, perms).await; // best-effort
+    }
+
+    // Regenerate CRL
+    let _crl_pem = state.ca.generate_crl(&state.db).await.map_err(|e| {
+        tracing::error!(error = %e, "Failed to regenerate CRL");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": format!("CRL regeneration failed: {e}") } })),
+        )
+    })?;
+
+    // Parse the new cert for response details
+    let parsed = parse_web_tls_cert(&cert_pem);
+
+    log_event(
+        &state.db,
+        AuditAction::CertificateReissued,
+        Some(auth.user_id),
+        Some(&auth.username),
+        Some("certificate"),
+        Some("web_tls"),
+        json!({ "operation": "regenerate_server_certs", "hostname": &fqdn }),
+        None,
+        None,
+    )
+    .await;
+
+    Ok(Json(json!({
+        "common_name": parsed.cn,
+        "sans": parsed.sans,
+        "expires_at": parsed.expiry,
+        "hostname": fqdn,
+    })))
 }

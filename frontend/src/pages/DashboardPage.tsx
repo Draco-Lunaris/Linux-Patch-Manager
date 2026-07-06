@@ -2,13 +2,21 @@ import { useEffect, useState, useCallback } from 'react'
 import {
   Alert,
   Box,
+  Button,
   Card,
   CardContent,
   CircularProgress,
   Container,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Grid,
   IconButton,
   LinearProgress,
+  List,
+  ListItem,
+  ListItemText,
   Toolbar,
   Tooltip,
   Typography,
@@ -23,9 +31,10 @@ import {
   Refresh as RefreshIcon,
   Security as SecurityIcon,
   VerifiedUser as VerifiedUserIcon,
+  VpnKey as VpnKeyIcon,
 } from '@mui/icons-material'
 import { fleetApi, certsApi } from '../api/client'
-import type { FleetStatus } from '../types'
+import type { FleetStatus, CertHealthResponse } from '../types'
 
 // ── StatCard ─────────────────────────────────────────────────────────────────
 function StatCard({
@@ -61,6 +70,8 @@ export default function DashboardPage() {
   const [status, setStatus] = useState<FleetStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [certHealth, setCertHealth] = useState<CertHealthResponse | null>(null)
+  const [certHealthOpen, setCertHealthOpen] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -73,6 +84,11 @@ export default function DashboardPage() {
     } finally {
       setLoading(false)
     }
+  }, [])
+
+  // Fetch cert health on mount
+  useEffect(() => {
+    certsApi.getCertHealth().then((res) => setCertHealth(res.data)).catch(() => {})
   }, [])
 
   // Initial load
@@ -108,6 +124,20 @@ export default function DashboardPage() {
         <Typography variant="h5" fontWeight={700} sx={{ flexGrow: 1 }}>
           Dashboard
         </Typography>
+        {certHealth && (
+          <Tooltip title={
+            certHealth.overall === 'healthy' ? 'Certificate health: OK' :
+            certHealth.overall === 'warning' ? 'Certificate health: Warning' :
+            'Certificate health: Critical'
+          }>
+            <IconButton onClick={() => setCertHealthOpen(true)}>
+              <VpnKeyIcon sx={{
+                color: certHealth.overall === 'healthy' ? '#2e7d32' :
+                       certHealth.overall === 'warning' ? '#ed6c02' : '#d32f2f',
+              }} />
+            </IconButton>
+          </Tooltip>
+        )}
         <Tooltip title="Download Root CA">
           <IconButton onClick={handleDownloadRootCa}>
             <SecurityIcon />
@@ -291,6 +321,66 @@ export default function DashboardPage() {
           </Card>
         </Box>
       )}
+      {/* ── Certificate Health Dialog ── */}
+      <Dialog open={certHealthOpen} onClose={() => setCertHealthOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Certificate Health</DialogTitle>
+        <DialogContent>
+          {certHealth && (
+            <List dense>
+              <ListItem>
+                <ListItemText
+                  primary="Overall Status"
+                  secondary={certHealth.overall}
+                  slotProps={{ secondary: { sx: {
+                    color: certHealth.overall === 'healthy' ? '#2e7d32' :
+                           certHealth.overall === 'warning' ? '#ed6c02' : '#d32f2f',
+                    fontWeight: 700,
+                  } } }}
+                />
+              </ListItem>
+              <ListItem>
+                <ListItemText primary="Web TLS CN" secondary={certHealth.web_tls.cn ?? 'N/A'} />
+              </ListItem>
+              <ListItem>
+                <ListItemText primary="SANs" secondary={certHealth.web_tls.sans.join(', ') || 'None'} />
+              </ListItem>
+              <ListItem>
+                <ListItemText primary="Expiry" secondary={certHealth.web_tls.expiry ?? 'N/A'} />
+              </ListItem>
+              <ListItem>
+                <ListItemText primary="Days Until Expiry" secondary={certHealth.web_tls.days_until_expiry ?? 'N/A'} />
+              </ListItem>
+              <ListItem>
+                <ListItemText primary="CN is FQDN" secondary={certHealth.web_tls.is_fqdn ? 'Yes' : 'No'} />
+              </ListItem>
+              <ListItem>
+                <ListItemText primary="CRL Status" secondary={certHealth.crl.status} />
+              </ListItem>
+              <ListItem>
+                <ListItemText primary="CRL Revoked Count" secondary={certHealth.crl.revoked_count ?? 'N/A'} />
+              </ListItem>
+              {certHealth.crl.next_update && (
+                <ListItem>
+                  <ListItemText primary="CRL Next Update" secondary={certHealth.crl.next_update} />
+                </ListItem>
+              )}
+              {certHealth.web_tls.error && (
+                <ListItem>
+                  <ListItemText primary="TLS Error" secondary={certHealth.web_tls.error} />
+                </ListItem>
+              )}
+              {certHealth.crl.error && (
+                <ListItem>
+                  <ListItemText primary="CRL Error" secondary={certHealth.crl.error} />
+                </ListItem>
+              )}
+            </List>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setCertHealthOpen(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
     </Container>
   )
 }

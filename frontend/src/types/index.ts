@@ -256,6 +256,42 @@ export interface IssuedCert {
   ca_root_pem: string
 }
 
+// ── Certificate Health ─────────────────────────────────────────────────────
+
+export type CertOverallHealth = 'healthy' | 'warning' | 'critical'
+
+export interface WebTlsHealth {
+  cn: string | null
+  sans: string[]
+  expiry: string | null
+  days_until_expiry: number | null
+  is_fqdn: boolean
+  cert_exists: boolean
+  error: string | null
+}
+
+export interface CrlHealth {
+  status: string
+  last_generated: string | null
+  age_seconds: number | null
+  next_update: string | null
+  revoked_count: number | null
+  error: string | null
+}
+
+export interface CertHealthResponse {
+  web_tls: WebTlsHealth
+  crl: CrlHealth
+  overall: CertOverallHealth
+}
+
+export interface RegenerateCertsResponse {
+  common_name: string | null
+  sans: string[]
+  expires_at: string | null
+  hostname: string
+}
+
 // ── Reports (M9) ─────────────────────────────────────────────────────────────
 export type ReportType = 'compliance' | 'patch-history' | 'vulnerability' | 'audit'
 

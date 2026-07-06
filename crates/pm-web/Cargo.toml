@@ -49,6 +49,7 @@ jsonwebtoken = { workspace = true }
 url = { workspace = true }
 urlencoding = "2"
 regex = { workspace = true }
+x509-parser = "0.16"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
