@@ -1,8 +1,11 @@
 //! Upgrade management routes.
 //!
-//! GET  /api/v1/upgrades/available-versions  — list cached versions (no auth)
-//! POST /api/v1/upgrades/refresh-versions   — refresh version cache from GitHub (admin)
+//! GET  /api/v1/upgrades/available-versions  — list versions from repo_packages (host-filtered)
 //! POST /api/v1/upgrades/trigger             — create a self-upgrade job (operator+)
+//!
+//! The legacy `refresh_versions` endpoint and `available_versions` /
+//! `os_package_mappings` tables have been removed. The manager-hosted
+//! package repository (`repo_packages`) is the single source of truth.
 
 use axum::{
     extract::{Query, State},
@@ -13,8 +16,7 @@ use axum::{
 };
 use pm_auth::rbac::AuthUser;
 use pm_core::audit::{log_event, AuditAction};
-use pm_core::models::AvailableVersion;
-use regex::Regex;
+use pm_core::models::RepoAvailableVersion;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -27,19 +29,17 @@ pub fn public_router() -> Router<AppState> {
     Router::new().route("/available-versions", get(list_available_versions))
 }
 
-/// Protected (authenticated) routes: version refresh (admin) and trigger (operator+).
+/// Protected (authenticated) routes: trigger (operator+).
 pub fn router() -> Router<AppState> {
-    Router::new()
-        .route("/refresh-versions", post(refresh_versions))
-        .route("/trigger", post(trigger_upgrade))
+    Router::new().route("/trigger", post(trigger_upgrade))
 }
 
 // ── Query params ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
 pub struct AvailableVersionsQuery {
-    pub source: Option<String>,
-    pub host_id: Option<Uuid>,
+    /// Required: filter versions by this host's OS → (distro, codename).
+    pub host_id: Uuid,
 }
 
 // ── Trigger upgrade request/response types ───────────────────────────────────
@@ -66,78 +66,57 @@ pub struct TriggerUpgradeResponse {
     skipped: Vec<SkippedHost>,
 }
 
-// ── GET /api/v1/upgrades/available-versions ────────────────────────────────────
+// ── OS → (distro, codename) mapping ──────────────────────────────────────────
 
-async fn list_available_versions(
-    State(state): State<AppState>,
-    Query(q): Query<AvailableVersionsQuery>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let mut versions: Vec<AvailableVersion> = if let Some(source) = &q.source {
-        sqlx::query_as(
-            r#"
-            SELECT id, version, download_url, checksum, file_name,
-                   source, prerelease, published_at, fetched_at
-            FROM available_versions
-            WHERE source = $1
-            ORDER BY published_at DESC
-            "#,
-        )
-        .bind(source)
-        .fetch_all(&state.db)
-        .await
+/// Map a host's `os_name` to `(distro, codename)` for `repo_packages` filtering.
+///
+/// This replaces the legacy `os_package_mappings` table + `lookup_package_pattern`.
+/// The mapping is hardcoded — it matches the agent's .deb asset naming conventions
+/// and the apt suite codenames used in `generate_distro_config`.
+pub(crate) fn map_os_to_distro(os_name: &str) -> Option<(&'static str, Option<&'static str>)> {
+    let lower = os_name.to_ascii_lowercase();
+    if lower.starts_with("ubuntu") {
+        let codename = if lower.contains("24.04") {
+            "noble"
+        } else if lower.contains("22.04") {
+            "jammy"
+        } else if lower.contains("26.04") {
+            "resolute"
+        } else {
+            return Some(("apt", None));
+        };
+        Some(("apt", Some(codename)))
+    } else if lower.starts_with("debian") {
+        let codename = if lower.contains("12") || lower.contains("bookworm") {
+            "bookworm"
+        } else if lower.contains("13") || lower.contains("trixie") {
+            "trixie"
+        } else {
+            return Some(("apt", None));
+        };
+        Some(("apt", Some(codename)))
+    } else if lower.starts_with("fedora") || lower.starts_with("almalinux") {
+        Some(("dnf", Some("el9")))
+    } else if lower.starts_with("alpine") {
+        Some(("apk", Some("v3.21")))
+    } else if lower.starts_with("arch") {
+        Some(("pacman", Some("x86_64")))
     } else {
-        sqlx::query_as(
-            r#"
-            SELECT id, version, download_url, checksum, file_name,
-                   source, prerelease, published_at, fetched_at
-            FROM available_versions
-            ORDER BY published_at DESC
-            "#,
-        )
-        .fetch_all(&state.db)
-        .await
+        None
     }
-    .map_err(|e| {
-        tracing::error!(error = %e, "Failed to list available versions");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
-        )
-    })?;
-
-    // If host_id is provided, filter versions by OS package mapping
-    if let Some(host_id) = q.host_id {
-        if let Some(pattern) = lookup_package_pattern(&state, host_id).await? {
-            match Regex::new(&pattern) {
-                Ok(re) => {
-                    versions.retain(|v| re.is_match(&v.file_name));
-                },
-                Err(e) => {
-                    tracing::warn!(pattern = %pattern, error = %e, "Invalid regex in OS package mapping, skipping filter");
-                },
-            }
-        }
-        // If no mapping found, return all versions (fallback)
-    }
-
-    Ok(Json(serde_json::to_value(&versions).unwrap_or(json!([]))))
 }
 
-/// Look up the package pattern for a host's OS.
-///
-/// Parses the host's `os_name` (e.g. "Ubuntu 24.04") into name and version,
-/// then finds the matching `os_package_mapping` entry.
-pub(crate) async fn lookup_package_pattern(
-    state: &AppState,
+/// Resolve a host's `(distro, codename)` by looking up its `os_name`.
+pub(crate) async fn resolve_host_distro(
+    pool: &sqlx::PgPool,
     host_id: Uuid,
-) -> Result<Option<String>, (StatusCode, Json<Value>)> {
-    // Look up the host's os_name
+) -> Result<Option<(String, Option<String>)>, (StatusCode, Json<Value>)> {
     let os_name: Option<String> = sqlx::query_scalar("SELECT os_name FROM hosts WHERE id = $1")
         .bind(host_id)
-        .fetch_optional(&state.db)
+        .fetch_optional(pool)
         .await
         .map_err(|e| {
-            tracing::error!(error = %e, host_id = %host_id, "Failed to query host OS");
+            tracing::error!(error = %e, %host_id, "Failed to query host OS");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
@@ -146,263 +125,59 @@ pub(crate) async fn lookup_package_pattern(
         .flatten();
 
     let os_name = match os_name {
-        Some(name) => name,
+        Some(n) => n,
         None => {
-            tracing::debug!(host_id = %host_id, "Host has no os_name, skipping OS filter");
+            tracing::debug!(%host_id, "Host has no os_name, cannot resolve distro");
             return Ok(None);
         },
     };
 
-    // Parse os_name into (name, version) using OS-family-aware extraction.
-    // Complex OS names like "Debian GNU/Linux 12 (bookworm)" or
-    // "Fedora Linux 43 (Container Image) 43" require smarter parsing
-    // than a simple space-split.
-    let (parsed_name, parsed_version) = {
-        // Step 1: Extract OS family name from known prefixes
-        let name: &str = if os_name.starts_with("Ubuntu") {
-            "Ubuntu"
-        } else if os_name.starts_with("Debian") {
-            "Debian"
-        } else if os_name.starts_with("Fedora") {
-            "Fedora"
-        } else if os_name.starts_with("AlmaLinux") {
-            "AlmaLinux"
-        } else if os_name.starts_with("Alpine") {
-            "Alpine"
-        } else if os_name.starts_with("Arch") {
-            "Arch"
-        } else {
-            // Fallback: take first word as name
-            os_name.split_whitespace().next().unwrap_or(&os_name)
-        };
+    Ok(map_os_to_distro(&os_name).map(|(d, c)| (d.to_string(), c.map(String::from))))
+}
 
-        // Step 2: Extract version using OS-family-specific patterns
-        let version = if name == "Alpine" || name == "Arch" {
-            // Rolling/irrelevant versions → wildcard
-            "*".to_string()
-        } else if name == "Ubuntu" {
-            // Extract first major.minor, e.g. "24.04" from "24.04.4 LTS"
-            Regex::new(r"(\d+\.\d+)")
-                .ok()
-                .and_then(|re| re.captures(&os_name))
-                .and_then(|caps| caps.get(1))
-                .map(|m| m.as_str().to_string())
-                .unwrap_or_else(|| "*".to_string())
-        } else if name == "Debian" {
-            // Extract version after "GNU/Linux", e.g. "12" from "GNU/Linux 12"
-            Regex::new(r"GNU/Linux\s+(\d+)")
-                .ok()
-                .and_then(|re| re.captures(&os_name))
-                .and_then(|caps| caps.get(1))
-                .map(|m| m.as_str().to_string())
-                .unwrap_or_else(|| "*".to_string())
-        } else if name == "Fedora" {
-            // Extract version after "Fedora", e.g. "43" from "Fedora Linux 43"
-            Regex::new(r"Fedora\s+(?:Linux\s+)?(\d+)")
-                .ok()
-                .and_then(|re| re.captures(&os_name))
-                .and_then(|caps| caps.get(1))
-                .map(|m| m.as_str().to_string())
-                .unwrap_or_else(|| "*".to_string())
-        } else if name == "AlmaLinux" {
-            // Extract major version, e.g. "10" from "AlmaLinux 10.2"
-            let rest = os_name[name.len()..].trim_start();
-            Regex::new(r"(\d+)")
-                .ok()
-                .and_then(|re| re.captures(rest))
-                .and_then(|caps| caps.get(1))
-                .map(|m| m.as_str().to_string())
-                .unwrap_or_else(|| "*".to_string())
-        } else {
-            // Fallback: extract first version-like pattern from the string
-            Regex::new(r"(\d+(?:\.\d+)?)")
-                .ok()
-                .and_then(|re| re.captures(&os_name))
-                .and_then(|caps| caps.get(1))
-                .map(|m| m.as_str().to_string())
-                .unwrap_or_else(|| "*".to_string())
-        };
+// ── GET /api/v1/upgrades/available-versions ────────────────────────────────────
 
-        tracing::debug!(
-            os_name = %os_name,
-            parsed_name = %name,
-            parsed_version = %version,
-            "Parsed OS name and version"
-        );
-
-        (name.to_string(), version)
+/// List available agent versions from `repo_packages`, filtered by the
+/// host's OS → (distro, codename). Only packages the host can actually
+/// install are returned.
+async fn list_available_versions(
+    State(state): State<AppState>,
+    Query(q): Query<AvailableVersionsQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let (distro, codename) = match resolve_host_distro(&state.db, q.host_id).await? {
+        Some(d) => d,
+        None => {
+            return Ok(Json(json!([])));
+        },
     };
 
-    // Find matching OS package mapping:
-    // - os_name must match exactly
-    // - os_version must match exactly OR be '*'
-    let pattern: Option<String> = sqlx::query_scalar(
+    let versions: Vec<RepoAvailableVersion> = sqlx::query_as(
         r#"
-        SELECT package_pattern FROM os_package_mappings
-        WHERE os_name = $1 AND (os_version = $2 OR os_version = '*')
-        ORDER BY os_version = $2 DESC, os_version = '*' DESC
-        LIMIT 1
+        SELECT DISTINCT ON (version)
+               version,
+               distro,
+               distro_codename,
+               filename AS file_name,
+               published_at
+        FROM repo_packages
+        WHERE distro = $1
+          AND (distro_codename = $2 OR distro_codename IS NULL)
+        ORDER BY version DESC, published_at DESC NULLS LAST
         "#,
     )
-    .bind(&parsed_name)
-    .bind(&parsed_version)
-    .fetch_optional(&state.db)
+    .bind(&distro)
+    .bind(&codename)
+    .fetch_all(&state.db)
     .await
     .map_err(|e| {
-        tracing::error!(error = %e, "Failed to query OS package mapping");
+        tracing::error!(error = %e, "Failed to query repo_packages");
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
         )
-    })?
-    .flatten();
-
-    Ok(pattern)
-}
-
-// ── POST /api/v1/upgrades/refresh-versions ─────────────────────────────────────
-
-async fn refresh_versions(
-    State(state): State<AppState>,
-    auth: AuthUser,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    // Admin-only
-    if !auth.role.is_admin() {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(json!({ "error": { "code": "forbidden", "message": "Admin access required" } })),
-        ));
-    }
-
-    // Fetch releases from GitHub API
-    let client = reqwest::Client::new();
-    let response = client
-        .get("https://api.github.com/repos/Draco-Lunaris/Linux-Patch-Api/releases")
-        .header("User-Agent", "pm-web")
-        .header("Accept", "application/vnd.github+json")
-        .send()
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "Failed to fetch GitHub releases");
-            (
-                StatusCode::BAD_GATEWAY,
-                Json(json!({ "error": { "code": "upstream_error", "message": "Failed to fetch releases from GitHub" } })),
-            )
-        })?;
-
-    if !response.status().is_success() {
-        let status = response.status().as_u16();
-        let body = response.text().await.unwrap_or_default();
-        tracing::error!(status, body = %body, "GitHub API returned error");
-        return Err((
-            StatusCode::BAD_GATEWAY,
-            Json(
-                json!({ "error": { "code": "upstream_error", "message": format!("GitHub API returned {}", status) } }),
-            ),
-        ));
-    }
-
-    let releases: Vec<serde_json::Value> = response.json().await.map_err(|e| {
-        tracing::error!(error = %e, "Failed to parse GitHub releases response");
-        (
-            StatusCode::BAD_GATEWAY,
-            Json(json!({ "error": { "code": "upstream_error", "message": "Failed to parse releases" } })),
-        )
     })?;
 
-    let mut upserted = 0i64;
-
-    for release in &releases {
-        let tag_name = release["tag_name"].as_str().unwrap_or("");
-        // Strip leading 'v' from tag to get version
-        let version = tag_name.strip_prefix('v').unwrap_or(tag_name);
-        // Semver pre-release identifiers contain a hyphen (e.g. "1.5.0-beta.1")
-        let prerelease = release["prerelease"].as_bool().unwrap_or(false) || version.contains('-');
-        let published_at = release["published_at"].as_str();
-
-        let assets = match release["assets"].as_array() {
-            Some(a) => a,
-            None => continue,
-        };
-
-        for asset in assets {
-            let file_name = asset["name"].as_str().unwrap_or("");
-            let download_url = asset["browser_download_url"].as_str().unwrap_or("");
-
-            // Determine package type from extension
-            let pkg_type = if file_name.ends_with(".deb") {
-                "deb"
-            } else if file_name.ends_with(".rpm") {
-                "rpm"
-            } else if file_name.ends_with(".apk") {
-                "apk"
-            } else if file_name.ends_with(".tar.zst") {
-                "tar.zst"
-            } else {
-                continue; // skip non-package assets
-            };
-
-            let source = format!("github-{}", pkg_type);
-
-            let result = sqlx::query(
-                r#"
-                INSERT INTO available_versions
-                    (version, download_url, checksum, file_name, source, prerelease, published_at)
-                VALUES
-                    ($1, $2, $3, $4, $5, $6, $7::timestamptz)
-                ON CONFLICT (version, source) DO UPDATE SET
-                    download_url = EXCLUDED.download_url,
-                    checksum = EXCLUDED.checksum,
-                    file_name = EXCLUDED.file_name,
-                    prerelease = EXCLUDED.prerelease,
-                    published_at = EXCLUDED.published_at,
-                    fetched_at = NOW()
-                "#,
-            )
-            .bind(version)
-            .bind(download_url)
-            .bind(None::<String>) // checksum not available from GitHub release metadata
-            .bind(file_name)
-            .bind(&source)
-            .bind(prerelease)
-            .bind(published_at)
-            .execute(&state.db)
-            .await;
-
-            match result {
-                Ok(r) => upserted += r.rows_affected() as i64,
-                Err(e) => {
-                    tracing::warn!(error = %e, version, source = %source, "Failed to upsert version");
-                },
-            }
-        }
-    }
-
-    // Update fetched_at for all github-sourced rows to now
-    let _ = sqlx::query(
-        "UPDATE available_versions SET fetched_at = NOW() WHERE source LIKE 'github-%'",
-    )
-    .execute(&state.db)
-    .await;
-
-    log_event(
-        &state.db,
-        AuditAction::UpgradeVersionRefreshed,
-        Some(auth.user_id),
-        Some(&auth.username),
-        Some("upgrade"),
-        None,
-        json!({ "upserted": upserted }),
-        None,
-        None,
-    )
-    .await;
-
-    tracing::info!(upserted, user = %auth.username, "Available versions refreshed");
-
-    Ok(Json(
-        json!({ "upserted": upserted, "message": "Versions refreshed" }),
-    ))
+    Ok(Json(serde_json::to_value(&versions).unwrap_or(json!([]))))
 }
 
 // ── POST /api/v1/upgrades/trigger ─────────────────────────────────────────────
@@ -412,7 +187,6 @@ async fn trigger_upgrade(
     auth: AuthUser,
     Json(req): Json<TriggerUpgradeRequest>,
 ) -> Result<Json<TriggerUpgradeResponse>, (StatusCode, Json<Value>)> {
-    // RBAC: Operator or Admin only (reject Reporter)
     if !auth.role.can_write() {
         return Err((
             StatusCode::FORBIDDEN,
@@ -431,40 +205,10 @@ async fn trigger_upgrade(
         ));
     }
 
-    // If target_version is specified, verify it exists in available_versions at all
-    if let Some(ref tv) = req.target_version {
-        let exists: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM available_versions WHERE version = $1)",
-        )
-        .bind(tv)
-        .fetch_one(&state.db)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "Failed to check version existence");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
-            )
-        })?;
-
-        if !exists {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(json!({
-                    "error": {
-                        "code": "bad_request",
-                        "message": format!("Version '{}' not found in available versions", tv)
-                    }
-                })),
-            ));
-        }
-    }
-
     let mut skipped: Vec<SkippedHost> = Vec::new();
     let mut valid_hosts: Vec<(Uuid, String)> = Vec::new();
 
     for host_id in &req.host_ids {
-        // Look up host's os_name and agent_version
         let host_row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
             "SELECT os_name, agent_version FROM hosts WHERE id = $1",
         )
@@ -472,14 +216,14 @@ async fn trigger_upgrade(
         .fetch_optional(&state.db)
         .await
         .map_err(|e| {
-            tracing::error!(error = %e, host_id = %host_id, "Failed to query host");
+            tracing::error!(error = %e, %host_id, "Failed to query host");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
             )
         })?;
 
-        let (_os_name, agent_version) = match host_row {
+        let (os_name, agent_version) = match host_row {
             Some(row) => row,
             None => {
                 skipped.push(SkippedHost {
@@ -490,48 +234,86 @@ async fn trigger_upgrade(
             },
         };
 
-        // Get available versions filtered by host's OS package pattern
-        let mut versions = list_host_versions(&state, *host_id).await?;
+        let os_name = match os_name {
+            Some(n) => n,
+            None => {
+                skipped.push(SkippedHost {
+                    host_id: *host_id,
+                    reason: "Host has no OS information".to_string(),
+                });
+                continue;
+            },
+        };
 
-        // Resolve target version
+        let (distro, codename) = match map_os_to_distro(&os_name) {
+            Some(d) => (d.0.to_string(), d.1.map(String::from)),
+            None => {
+                skipped.push(SkippedHost {
+                    host_id: *host_id,
+                    reason: format!("Unsupported OS: {os_name}"),
+                });
+                continue;
+            },
+        };
+
+        // Fetch available versions for this host's distro+codename from repo_packages.
+        let versions: Vec<(String,)> = sqlx::query_as(
+            r#"
+            SELECT DISTINCT version
+            FROM repo_packages
+            WHERE distro = $1
+              AND (distro_codename = $2 OR distro_codename IS NULL)
+            ORDER BY version DESC
+            "#,
+        )
+        .bind(&distro)
+        .bind(&codename)
+        .fetch_all(&state.db)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to query repo_packages for host");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+            )
+        })?;
+
+        let available_versions: Vec<String> = versions.into_iter().map(|r| r.0).collect();
+
+        if available_versions.is_empty() {
+            skipped.push(SkippedHost {
+                host_id: *host_id,
+                reason: "No packages available for this host's OS in the repo".to_string(),
+            });
+            continue;
+        }
+
+        // Resolve target version.
         let resolved_version = match &req.target_version {
             Some(tv) => {
-                // Validate that this version is available for this host's OS
-                if !versions.iter().any(|v| &v.version == tv) {
+                if !available_versions.iter().any(|v| v == tv) {
                     skipped.push(SkippedHost {
                         host_id: *host_id,
-                        reason: format!("Version '{}' not available for this host's OS", tv),
+                        reason: format!("Version '{tv}' not available for this host's OS"),
                     });
                     continue;
                 }
                 tv.clone()
             },
             None => {
-                // Resolve to latest non-prerelease version
-                versions.retain(|v| !v.prerelease);
-                match versions
-                    .iter()
-                    .max_by(|a, b| a.published_at.cmp(&b.published_at))
-                {
-                    Some(v) => v.version.clone(),
-                    None => {
-                        skipped.push(SkippedHost {
-                            host_id: *host_id,
-                            reason: "No non-prerelease versions available for this host's OS"
-                                .to_string(),
-                        });
-                        continue;
-                    },
-                }
+                // Latest = first entry (ORDER BY version DESC).
+                available_versions[0].clone()
             },
         };
 
-        // Check if host is already at the target version
+        // Check if host is already at the target version (normalize: strip -N suffix).
         if let Some(ref current) = agent_version {
-            if current == &resolved_version {
+            let current_norm = current.split('-').next().unwrap_or(current);
+            let target_norm = resolved_version.split('-').next().unwrap_or(&resolved_version);
+            if current_norm == target_norm {
                 skipped.push(SkippedHost {
                     host_id: *host_id,
-                    reason: format!("Host is already at version {}", resolved_version),
+                    reason: format!("Host is already at version {resolved_version}"),
                 });
                 continue;
             }
@@ -540,7 +322,6 @@ async fn trigger_upgrade(
         valid_hosts.push((*host_id, resolved_version));
     }
 
-    // If no valid hosts remain, return early without creating a job
     if valid_hosts.is_empty() {
         return Ok(Json(TriggerUpgradeResponse {
             job_id: Uuid::nil(),
@@ -549,13 +330,12 @@ async fn trigger_upgrade(
         }));
     }
 
-    // Group valid hosts by resolved version (different OSes may resolve to different versions)
+    // Group valid hosts by resolved version.
     let mut groups: BTreeMap<String, Vec<Uuid>> = BTreeMap::new();
     for (host_id, version) in &valid_hosts {
         groups.entry(version.clone()).or_default().push(*host_id);
     }
 
-    // Create one job per version group
     let mut first_job_id = Uuid::nil();
     let mut total_host_count = 0usize;
 
@@ -608,10 +388,7 @@ async fn trigger_upgrade(
             .execute(&state.db)
             .await
             .map_err(|e| {
-                tracing::error!(
-                    error = %e, %job_id, %host_id,
-                    "trigger_upgrade: insert patch_job_hosts failed"
-                );
+                tracing::error!(error = %e, %job_id, %host_id, "trigger_upgrade: insert patch_job_hosts failed");
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
@@ -622,7 +399,6 @@ async fn trigger_upgrade(
         total_host_count += host_ids.len();
     }
 
-    // Audit logging
     let action = if valid_hosts.len() > 1 {
         AuditAction::BatchUpgradeTriggered
     } else {
@@ -661,41 +437,4 @@ async fn trigger_upgrade(
         host_count: total_host_count,
         skipped,
     }))
-}
-
-/// Fetch available versions filtered by a host's OS package pattern.
-async fn list_host_versions(
-    state: &AppState,
-    host_id: Uuid,
-) -> Result<Vec<AvailableVersion>, (StatusCode, Json<Value>)> {
-    let mut versions: Vec<AvailableVersion> = sqlx::query_as(
-        r#"
-        SELECT id, version, download_url, checksum, file_name,
-               source, prerelease, published_at, fetched_at
-        FROM available_versions
-        ORDER BY published_at DESC
-        "#,
-    )
-    .fetch_all(&state.db)
-    .await
-    .map_err(|e| {
-        tracing::error!(error = %e, "Failed to query available versions");
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
-        )
-    })?;
-
-    if let Some(pattern) = lookup_package_pattern(state, host_id).await? {
-        match Regex::new(&pattern) {
-            Ok(re) => {
-                versions.retain(|v| re.is_match(&v.file_name));
-            },
-            Err(e) => {
-                tracing::warn!(pattern = %pattern, error = %e, "Invalid regex in OS package mapping, skipping filter");
-            },
-        }
-    }
-
-    Ok(versions)
 }

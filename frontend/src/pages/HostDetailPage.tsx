@@ -63,7 +63,7 @@ import type {
   HealthCheckWithResult,
   CreateHealthCheckRequest,
   UpdateHealthCheckRequest,
-  AvailableVersion,
+  RepoAvailableVersion,
   TriggerUpgradeRequest,
 } from '../types'
 
@@ -629,7 +629,7 @@ export default function HostDetailPage() {
   const [savingHost, setSavingHost] = useState(false)
 
   // ── Upgrade state ──────────────────────────────────────────────────────────
-  const [availableVersions, setAvailableVersions] = useState<AvailableVersion[]>([])
+  const [availableVersions, setAvailableVersions] = useState<RepoAvailableVersion[]>([])
   const [upgradeDialogOpen, setUpgradeDialogOpen] = useState(false)
   const [upgradeTargetVersion, setUpgradeTargetVersion] = useState<string | null>(null)
   const [upgradeImmediate, setUpgradeImmediate] = useState(true)
@@ -698,18 +698,18 @@ export default function HostDetailPage() {
 
   // ── Fetch available versions for upgrade badge ────────────────────────────
   useEffect(() => {
-    upgradesApi.listAvailableVersions()
+    if (!id) return
+    upgradesApi.listAvailableVersions(id)
       .then(res => setAvailableVersions(res.data))
       .catch(() => { /* ignore */ })
-  }, [])
+  }, [id])
 
   // ── Helper: check if newer version available ──────────────────────────────
   const isNewerVersionAvailable = (): boolean => {
     if (!host?.agent_version) return false
-    const current = String(host.agent_version)
+    const current = String(host.agent_version).split('-')[0]
     return availableVersions.some(v => {
-      if (v.prerelease) return false
-      return v.version.localeCompare(current, undefined, { numeric: true, sensitivity: 'base' }) > 0
+      return v.version !== current
     })
   }
 
@@ -1549,8 +1549,8 @@ export default function HostDetailPage() {
               onChange={e => setUpgradeTargetVersion(e.target.value === '__latest__' ? null : e.target.value)}
             >
               <MenuItem value="__latest__">Latest (auto)</MenuItem>
-              {availableVersions.filter(v => !v.prerelease).map(v => (
-                <MenuItem key={v.id} value={v.version}>{v.version}</MenuItem>
+              {availableVersions.map(v => (
+                <MenuItem key={v.version} value={v.version}>{v.version}</MenuItem>
               ))}
             </Select>
           </FormControl>

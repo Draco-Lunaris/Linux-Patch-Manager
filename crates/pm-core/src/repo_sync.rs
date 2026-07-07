@@ -6,6 +6,7 @@
 //! Added for Phase 5 of issue #116 gap fix (consolidate sync logic).
 
 use crate::config::PackageSyncConfig;
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 /// GitHub API release asset representation.
@@ -22,6 +23,9 @@ pub struct GithubRelease {
     pub tag_name: String,
     pub prerelease: bool,
     pub assets: Vec<GithubAsset>,
+    /// ISO 8601 timestamp from the GitHub API — may be null for drafts.
+    #[serde(default)]
+    pub published_at: Option<DateTime<Utc>>,
 }
 
 /// Information about a successfully synced package — for DB persistence.
@@ -33,6 +37,9 @@ pub struct SyncedPackage {
     pub distro_codename: Option<String>,
     pub file_size: i64,
     pub sha256: Option<String>,
+    /// When the GitHub release was published. Stored in repo_packages.published_at
+    /// so version resolution can sort by release date.
+    pub published_at: Option<DateTime<Utc>>,
 }
 
 /// Result of a sync cycle — counts, errors, and synced package details for DB update.
@@ -253,15 +260,40 @@ pub fn detect_distro_from_filename(name: &str) -> Option<String> {
 
 /// Detect codename from filename patterns.
 ///
-/// Expected patterns: `*_noble_amd64.deb`, `*_jammy_amd64.deb`,
-/// `*_bookworm_amd64.deb`, `*_trixie_amd64.deb`, `*_el9.x86_64.rpm`, etc.
+/// Recognizes both Debian-suite codenames (`noble`, `jammy`, `bookworm`,
+/// `trixie`, `resolute`) and the `os_package_mappings` filename tokens
+/// (`_u2404_`, `_u2204_`, `_u2604_`, `_debian12_`, `_debian13_`) that the
+/// agent's .deb assets use. The token form is mapped to the corresponding
+/// apt suite so that `generate_apt_metadata` (which scans the pool by
+/// codename) includes the file in the correct
+/// `dists/<codename>/main/binary-amd64/Packages` index.
+///
+/// Expected patterns:
+/// - `*_noble_amd64.deb`, `*_jammy_amd64.deb`, `*_bookworm_amd64.deb`,
+///   `*_trixie_amd64.deb`, `*_resolute_amd64.deb`
+/// - `*_u2404_amd64.deb` → `noble`, `*_u2204_amd64.deb` → `jammy`,
+///   `*_u2604_amd64.deb` → `resolute`, `*_debian12_amd64.deb` → `bookworm`,
+///   `*_debian13_amd64.deb` → `trixie`
+/// - `*_el9.x86_64.rpm`, `*_fc43.x86_64.rpm`, etc.
 pub fn detect_codename_from_filename(name: &str, distro: &str) -> Option<String> {
     let lower = name.to_ascii_lowercase();
     match distro {
         "apt" => {
-            for codename in &["noble", "jammy", "bookworm", "trixie"] {
+            let token_to_codename: &[(&str, &str)] = &[
+                ("_u2404_", "noble"),
+                ("_u2204_", "jammy"),
+                ("_u2604_", "resolute"),
+                ("_debian12_", "bookworm"),
+                ("_debian13_", "trixie"),
+            ];
+            for (token, codename) in token_to_codename {
+                if lower.contains(token) {
+                    return Some((*codename).to_string());
+                }
+            }
+            for codename in &["noble", "jammy", "bookworm", "trixie", "resolute"] {
                 if lower.contains(codename) {
-                    return Some(codename.to_string());
+                    return Some((*codename).to_string());
                 }
             }
             None
@@ -334,13 +366,19 @@ pub async fn run_sync_cycle(
                         result.packages_skipped += 1;
                     } else {
                         result.packages_synced += 1;
+                        let version = release
+                            .tag_name
+                            .strip_prefix('v')
+                            .unwrap_or(&release.tag_name)
+                            .to_string();
                         result.synced_packages.push(SyncedPackage {
                             filename: asset.name.clone(),
-                            version: release.tag_name.clone(),
+                            version,
                             distro: distro.clone(),
                             distro_codename: codename.clone(),
                             file_size: asset.size as i64,
                             sha256: Some(sha256),
+                            published_at: release.published_at,
                         });
                     }
 
@@ -489,6 +527,46 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_codename_apt_u2404_maps_to_noble() {
+        assert_eq!(
+            detect_codename_from_filename("linux-patch-api_1.5.6_u2404_amd64.deb", "apt"),
+            Some("noble".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_codename_apt_u2204_maps_to_jammy() {
+        assert_eq!(
+            detect_codename_from_filename("linux-patch-api_1.5.6_u2204_amd64.deb", "apt"),
+            Some("jammy".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_codename_apt_u2604_maps_to_resolute() {
+        assert_eq!(
+            detect_codename_from_filename("linux-patch-api_2.1.1_u2604_amd64.deb", "apt"),
+            Some("resolute".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_codename_apt_debian12_maps_to_bookworm() {
+        assert_eq!(
+            detect_codename_from_filename("linux-patch-api_1.5.6_debian12_amd64.deb", "apt"),
+            Some("bookworm".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_codename_apt_debian13_maps_to_trixie() {
+        assert_eq!(
+            detect_codename_from_filename("linux-patch-api_1.5.6_debian13_amd64.deb", "apt"),
+            Some("trixie".to_string())
+        );
+    }
+
+    #[test]
     fn test_synced_package_struct() {
         let pkg = SyncedPackage {
             filename: "test.deb".to_string(),
@@ -497,6 +575,7 @@ mod tests {
             distro_codename: Some("noble".to_string()),
             file_size: 1024,
             sha256: Some("abc123".to_string()),
+            published_at: None,
         };
         assert_eq!(pkg.filename, "test.deb");
         assert_eq!(pkg.sha256, Some("abc123".to_string()));

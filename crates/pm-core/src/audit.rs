@@ -64,11 +64,6 @@ pub enum AuditAction {
     // Upgrade management events
     UpgradeTriggered,
     BatchUpgradeTriggered,
-    UpgradeVersionRefreshed,
-    // OS package mapping CRUD events
-    OsPackageMappingCreated,
-    OsPackageMappingUpdated,
-    OsPackageMappingDeleted,
 }
 
 impl AuditAction {
@@ -118,10 +113,6 @@ impl AuditAction {
             Self::CrlInvalid => "crl_invalid",
             Self::UpgradeTriggered => "upgrade_triggered",
             Self::BatchUpgradeTriggered => "batch_upgrade_triggered",
-            Self::UpgradeVersionRefreshed => "upgrade_version_refreshed",
-            Self::OsPackageMappingCreated => "os_package_mapping_created",
-            Self::OsPackageMappingUpdated => "os_package_mapping_updated",
-            Self::OsPackageMappingDeleted => "os_package_mapping_deleted",
         }
     }
 }
