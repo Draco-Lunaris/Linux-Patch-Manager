@@ -7,7 +7,6 @@
 
 use super::common::*;
 use axum::http::StatusCode;
-use serde_json::json;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DB-required tests — need live PostgreSQL
@@ -26,7 +25,7 @@ async fn test_available_versions_list() {
     let pool = sqlx::PgPool::connect(&db_url.unwrap()).await.unwrap();
 
     // Seed a host and a repo_package for its distro.
-    let host_id = uuid::Uuid::new_v4();
+    let _host_id = uuid::Uuid::new_v4();
     sqlx::query(
         r#"INSERT INTO hosts (fqdn, ip_address, display_name, os_name, health_status)
            VALUES ('test-avail.example.com', '10.0.0.42', 'Test', 'Ubuntu 24.04 LTS', 'healthy')
