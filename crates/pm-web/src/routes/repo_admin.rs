@@ -150,7 +150,17 @@ async fn run_manual_sync(
 async fn sync_status(
     State(state): State<AppState>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let sync_logs: Vec<Value> = sqlx::query_as::<_, (uuid::Uuid, String, String, i32, i32, Option<String>, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>)>(
+    type SyncLogRow = (
+        uuid::Uuid,
+        String,
+        String,
+        i32,
+        i32,
+        Option<String>,
+        chrono::DateTime<chrono::Utc>,
+        Option<chrono::DateTime<chrono::Utc>,
+    );
+    let sync_logs: Vec<Value> = sqlx::query_as::<_, SyncLogRow>(
         "SELECT id, triggered_by, status, packages_synced, packages_skipped, error_message, started_at, finished_at
          FROM repo_sync_log ORDER BY started_at DESC LIMIT 10",
     )
