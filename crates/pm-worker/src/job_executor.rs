@@ -898,14 +898,27 @@ enum SelfUpgradeReconnectResult {
 /// - If `target_version` is set, the new version must match it.
 /// - If `target_version` is not set, the new version must differ from `old_version`.
 /// - If neither is available, assume success.
+///
+/// Version comparison is **normalized**: a leading `v` prefix and a Debian
+/// revision suffix (`-N`) are stripped before comparison. This handles the
+/// real-world mismatch where `target_version` comes from
+/// `repo_packages.version` (e.g. `"1.5.6"`) but `new_version` comes
+/// from the agent's `health.version` (e.g. `"1.5.6-1"`). Without
+/// normalization, `"1.5.6-1" == "1.5.6"` is false and a successful upgrade
+/// is incorrectly marked failed.
 fn decide_self_upgrade_reconnect_result(
     new_version: &str,
     target_version: Option<&str>,
     old_version: Option<&str>,
 ) -> SelfUpgradeReconnectResult {
+    let normalize = |v: &str| -> String {
+        let v = v.strip_prefix('v').unwrap_or(v);
+        v.split('-').next().unwrap_or(v).to_string()
+    };
+    let new_norm = normalize(new_version);
     let version_ok = match (target_version, old_version) {
-        (Some(target), _) => new_version == target,
-        (None, Some(old)) => new_version != old,
+        (Some(target), _) => new_norm == normalize(target),
+        (None, Some(old)) => new_norm != normalize(old),
         (None, None) => true,
     };
     if version_ok {
@@ -966,42 +979,78 @@ async fn poll_self_upgrade_host(
                 pjh_id = %row.id,
                 "poll_self_upgrade_host: agent self-upgrade job succeeded"
             );
-            // Call health() to get the new agent version.
             let health = match client.health().await {
                 Ok(h) => h,
                 Err(e) => {
                     tracing::warn!(
                         pjh_id = %row.id,
                         error = %e,
-                        "poll_self_upgrade_host: job succeeded but health call failed, using output version"
+                        "poll_self_upgrade_host: job succeeded but health call failed, entering reconnect-confirm"
                     );
-                    // Fall back: mark succeeded without version update.
-                    let output = status_result
-                        .as_ref()
-                        .ok()
-                        .and_then(|s| s.output.clone())
-                        .unwrap_or_else(|| "Self-upgrade completed".to_string());
-                    if let Err(e) = sqlx::query(
-                        r#"
-                        UPDATE patch_job_hosts
-                        SET    status       = 'succeeded',
-                               completed_at = NOW(),
-                               output       = $2
-                        WHERE  id = $1
-                        "#,
-                    )
-                    .bind(row.id)
-                    .bind(&output)
-                    .execute(pool)
-                    .await
-                    {
-                        tracing::error!(pjh_id = %row.id, error = %e, "poll_self_upgrade_host: update failed");
-                    }
-                    sync_job_status(pool, row.job_id).await;
+                    reconnect_confirm_self_upgrade(pool, config, row, client).await;
                     return;
                 },
             };
-            finish_self_upgrade_success(pool, row, &health.version).await;
+
+            let target_version: Option<String> = sqlx::query_scalar::<_, serde_json::Value>(
+                "SELECT patch_selection FROM patch_jobs WHERE id = $1",
+            )
+            .bind(row.job_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|v| {
+                v.get("target_version")
+                    .and_then(|t| t.as_str())
+                    .map(String::from)
+            });
+
+            let old_version: Option<String> =
+                sqlx::query_scalar::<_, String>("SELECT agent_version FROM hosts WHERE id = $1")
+                    .bind(row.host_id)
+                    .fetch_optional(pool)
+                    .await
+                    .ok()
+                    .flatten();
+
+            let new_version = health.version.clone();
+            let result = decide_self_upgrade_reconnect_result(
+                &new_version,
+                target_version.as_deref(),
+                old_version.as_deref(),
+            );
+
+            match result {
+                SelfUpgradeReconnectResult::Succeeded => {
+                    tracing::info!(
+                        pjh_id = %row.id,
+                        new_version = %new_version,
+                        old_version = ?old_version,
+                        target_version = ?target_version,
+                        "poll_self_upgrade_host: version confirmed, marking succeeded"
+                    );
+                    finish_self_upgrade_success(pool, row, &new_version).await;
+                },
+                SelfUpgradeReconnectResult::VersionUnchanged => {
+                    let reason = match target_version {
+                        Some(ref t) => format!(
+                            "Agent reported success but version unchanged: expected {t}, got {new_version}"
+                        ),
+                        None => format!(
+                            "Agent reported success but version unchanged: still {new_version}"
+                        ),
+                    };
+                    tracing::warn!(
+                        pjh_id = %row.id,
+                        new_version = %new_version,
+                        old_version = ?old_version,
+                        target_version = ?target_version,
+                        "poll_self_upgrade_host: agent reported success but no version change, marking failed"
+                    );
+                    handle_host_failure(pool.clone(), row.id, reason).await;
+                },
+            }
         },
         SelfUpgradePollAction::FailedThenReconnectConfirm => {
             tracing::info!(
@@ -1712,6 +1761,43 @@ mod tests {
     fn test_self_upgrade_reconnect_no_baseline_assumes_success() {
         let result = decide_self_upgrade_reconnect_result("1.0.0", None, None);
         assert_eq!(result, SelfUpgradeReconnectResult::Succeeded);
+    }
+
+    /// Agent reports debian-style version with revision suffix (e.g. "2.0.0-1")
+    /// but target_version is the bare upstream version ("2.0.0"). The upgrade
+    /// actually succeeded — normalization must treat them as equal.
+    #[test]
+    fn test_self_upgrade_reconnect_debian_revision_suffix_normalized() {
+        let result =
+            decide_self_upgrade_reconnect_result("2.0.0-1", Some("2.0.0"), Some("1.0.0-1"));
+        assert_eq!(result, SelfUpgradeReconnectResult::Succeeded);
+    }
+
+    /// Agent reports version with leading 'v' (e.g. "v2.0.0-1") but
+    /// target_version is bare ("2.0.0"). Strip the 'v' prefix before compare.
+    #[test]
+    fn test_self_upgrade_reconnect_v_prefix_normalized() {
+        let result =
+            decide_self_upgrade_reconnect_result("v2.0.0-1", Some("2.0.0"), Some("v1.0.0-1"));
+        assert_eq!(result, SelfUpgradeReconnectResult::Succeeded);
+    }
+
+    /// Old version has revision suffix, new version doesn't, no target.
+    /// They differ in upstream version → succeeded.
+    #[test]
+    fn test_self_upgrade_reconnect_old_revision_suffix_normalized() {
+        let result = decide_self_upgrade_reconnect_result("2.0.0", None, Some("1.0.0-1"));
+        assert_eq!(result, SelfUpgradeReconnectResult::Succeeded);
+    }
+
+    /// Same upstream version, different revision suffix, no target.
+    /// "1.5.6-1" vs "1.5.6-2" → after normalization both are "1.5.6" →
+    /// VersionUnchanged (a revision-only bump is not a real upgrade from
+    /// the manager's perspective, which tracks upstream versions).
+    #[test]
+    fn test_self_upgrade_reconnect_revision_only_bump_is_unchanged() {
+        let result = decide_self_upgrade_reconnect_result("1.5.6-2", None, Some("1.5.6-1"));
+        assert_eq!(result, SelfUpgradeReconnectResult::VersionUnchanged);
     }
 
     // ── decide_reconnect_error_action tests ─────────────────────────────────
