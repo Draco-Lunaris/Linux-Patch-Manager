@@ -309,7 +309,10 @@ async fn trigger_upgrade(
         // Check if host is already at the target version (normalize: strip -N suffix).
         if let Some(ref current) = agent_version {
             let current_norm = current.split('-').next().unwrap_or(current);
-            let target_norm = resolved_version.split('-').next().unwrap_or(&resolved_version);
+            let target_norm = resolved_version
+                .split('-')
+                .next()
+                .unwrap_or(&resolved_version);
             if current_norm == target_norm {
                 skipped.push(SkippedHost {
                     host_id: *host_id,

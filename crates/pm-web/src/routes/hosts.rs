@@ -233,8 +233,7 @@ async fn compute_upgrade_available(hosts: &mut [HostSummary], pool: &sqlx::PgPoo
     for h in hosts.iter() {
         if let Some(ref os_name) = h.os_name {
             if let Some((distro, codename)) = map_os_to_distro(os_name) {
-                distro_pairs
-                    .insert((distro.to_string(), codename.map(String::from)));
+                distro_pairs.insert((distro.to_string(), codename.map(String::from)));
             }
         }
     }

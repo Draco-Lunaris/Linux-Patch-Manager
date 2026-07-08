@@ -214,10 +214,12 @@ async fn test_trigger_unknown_version_skipped() {
         body
     );
 
-    sqlx::query("DELETE FROM repo_packages WHERE filename = 'linux-patch-api_2.0.0_u2404_amd64.deb'")
-        .execute(&pool)
-        .await
-        .ok();
+    sqlx::query(
+        "DELETE FROM repo_packages WHERE filename = 'linux-patch-api_2.0.0_u2404_amd64.deb'",
+    )
+    .execute(&pool)
+    .await
+    .ok();
     sqlx::query("DELETE FROM hosts WHERE id = $1")
         .bind(host_id)
         .execute(&pool)

@@ -644,8 +644,8 @@ pub async fn generate_apt_metadata(repo_dir: &str, codename: &str) -> Result<(),
             let name = entry.file_name().to_string_lossy().to_string();
             if name.ends_with(".deb") {
                 let lower = name.to_ascii_lowercase();
-                let matches_token = !static_tokens.is_empty()
-                    && static_tokens.iter().any(|t| lower.contains(t));
+                let matches_token =
+                    !static_tokens.is_empty() && static_tokens.iter().any(|t| lower.contains(t));
                 let matches_bare = lower.contains(&codename_lower);
                 if matches_token || matches_bare {
                     deb_files.push(entry.path().to_string_lossy().to_string());

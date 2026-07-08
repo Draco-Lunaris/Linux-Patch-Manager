@@ -992,20 +992,19 @@ async fn poll_self_upgrade_host(
                 },
             };
 
-            let target_version: Option<String> =
-                sqlx::query_scalar::<_, serde_json::Value>(
-                    "SELECT patch_selection FROM patch_jobs WHERE id = $1",
-                )
-                .bind(row.job_id)
-                .fetch_optional(pool)
-                .await
-                .ok()
-                .flatten()
-                .and_then(|v| {
-                    v.get("target_version")
-                        .and_then(|t| t.as_str())
-                        .map(String::from)
-                });
+            let target_version: Option<String> = sqlx::query_scalar::<_, serde_json::Value>(
+                "SELECT patch_selection FROM patch_jobs WHERE id = $1",
+            )
+            .bind(row.job_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|v| {
+                v.get("target_version")
+                    .and_then(|t| t.as_str())
+                    .map(String::from)
+            });
 
             let old_version: Option<String> =
                 sqlx::query_scalar::<_, String>("SELECT agent_version FROM hosts WHERE id = $1")
@@ -1769,7 +1768,8 @@ mod tests {
     /// actually succeeded — normalization must treat them as equal.
     #[test]
     fn test_self_upgrade_reconnect_debian_revision_suffix_normalized() {
-        let result = decide_self_upgrade_reconnect_result("2.0.0-1", Some("2.0.0"), Some("1.0.0-1"));
+        let result =
+            decide_self_upgrade_reconnect_result("2.0.0-1", Some("2.0.0"), Some("1.0.0-1"));
         assert_eq!(result, SelfUpgradeReconnectResult::Succeeded);
     }
 
@@ -1777,7 +1777,8 @@ mod tests {
     /// target_version is bare ("2.0.0"). Strip the 'v' prefix before compare.
     #[test]
     fn test_self_upgrade_reconnect_v_prefix_normalized() {
-        let result = decide_self_upgrade_reconnect_result("v2.0.0-1", Some("2.0.0"), Some("v1.0.0-1"));
+        let result =
+            decide_self_upgrade_reconnect_result("v2.0.0-1", Some("2.0.0"), Some("v1.0.0-1"));
         assert_eq!(result, SelfUpgradeReconnectResult::Succeeded);
     }
 
