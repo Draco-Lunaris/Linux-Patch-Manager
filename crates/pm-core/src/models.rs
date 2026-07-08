@@ -147,6 +147,14 @@ pub struct HostSummary {
     /// CRL status reported by the agent: valid, expired, missing, invalid, or NULL for older agents.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub crl_status: Option<String>,
+    /// Computed: true if a newer agent version is available in the
+    /// manager-hosted repo for this host's OS.
+    #[serde(default)]
+    pub upgrade_available: bool,
+    /// Computed: the latest version available in the repo for this
+    /// host's OS, or None if no packages are available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_version: Option<String>,
 }
 
 // ============================================================
@@ -779,50 +787,18 @@ pub struct UpdateMaintenanceWindowRequest {
 }
 
 // ============================================================
-// Available Versions (cached release info)
+// Available Versions (from manager-hosted repo_packages)
 // ============================================================
 
-/// A cached release version from GitHub or custom URL.
-/// Mirrors the `available_versions` table.
+/// A version available in the manager-hosted package repository,
+/// filtered by the host's OS → (distro, codename).
+/// Replaces the legacy `AvailableVersion` which mirrored the
+/// `available_versions` table (now dropped).
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
-pub struct AvailableVersion {
-    pub id: Uuid,
+pub struct RepoAvailableVersion {
     pub version: String,
-    pub download_url: String,
-    pub checksum: Option<String>,
+    pub distro: String,
+    pub distro_codename: Option<String>,
     pub file_name: String,
-    pub source: String,
-    pub prerelease: bool,
     pub published_at: Option<DateTime<Utc>>,
-    pub fetched_at: DateTime<Utc>,
-}
-
-// ============================================================
-// OsPackageMapping
-// ============================================================
-
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
-pub struct OsPackageMapping {
-    pub id: Uuid,
-    pub os_name: String,
-    pub os_version: String,
-    pub package_pattern: String,
-    pub display_name: String,
-    pub is_default: bool,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateOsPackageMapping {
-    pub os_name: String,
-    pub os_version: String,
-    pub package_pattern: String,
-    pub display_name: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpdateOsPackageMapping {
-    pub package_pattern: Option<String>,
-    pub display_name: Option<String>,
 }
