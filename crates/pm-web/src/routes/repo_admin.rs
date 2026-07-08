@@ -21,7 +21,7 @@ type SyncLogRow = (
     i32,
     Option<String>,
     chrono::DateTime<chrono::Utc>,
-    Option<chrono::DateTime<chrono::Utc>,
+    Option<chrono::DateTime<chrono::Utc>>,
 );
 
 type PackageRow = (
@@ -52,7 +52,6 @@ pub fn router() -> Router<AppState> {
 async fn trigger_sync(
     State(state): State<AppState>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    // Create a manual sync log entry.
     let sync_log_id: uuid::Uuid = match sqlx::query_scalar(
         "INSERT INTO repo_sync_log (triggered_by, status) VALUES ('manual', 'running') RETURNING id",
     )
@@ -69,7 +68,6 @@ async fn trigger_sync(
         }
     };
 
-    // Spawn the actual sync as a background task.
     let pool = state.db.clone();
     let config = state.config.clone();
     tokio::spawn(async move {
@@ -86,9 +84,6 @@ async fn trigger_sync(
 }
 
 /// Run a manual package sync cycle.
-///
-/// Fetches releases from GitHub API, downloads package assets, imports into
-/// reprepro/createrepo_c, and updates the sync_log entry.
 async fn run_manual_sync(
     pool: &sqlx::PgPool,
     config: &std::sync::Arc<pm_core::config::AppConfig>,
@@ -97,7 +92,6 @@ async fn run_manual_sync(
     let sync_config = &config.worker.package_sync;
     let repo_dir = &config.repo.dir;
 
-    // Run the shared sync logic (same code path as the scheduled worker).
     let result = match pm_core::repo_sync::run_sync_cycle(sync_config, repo_dir).await {
         Ok(r) => r,
         Err(e) => {
@@ -112,7 +106,6 @@ async fn run_manual_sync(
         },
     };
 
-    // Persist synced packages to repo_packages table.
     for pkg in &result.synced_packages {
         let _ = sqlx::query(
             "INSERT INTO repo_packages (filename, version, distro, distro_codename, arch, file_size, sha256, source, sync_log_id, published_at)
@@ -134,17 +127,8 @@ async fn run_manual_sync(
         .execute(pool).await;
     }
 
-    // Update sync_log with results.
-    let status = if result.errors.is_empty() {
-        "success"
-    } else {
-        "partial"
-    };
-    let error_msg = if result.errors.is_empty() {
-        None
-    } else {
-        Some(result.errors.join("; "))
-    };
+    let status = if result.errors.is_empty() { "success" } else { "partial" };
+    let error_msg = if result.errors.is_empty() { None } else { Some(result.errors.join("; ")) };
 
     sqlx::query(
         "UPDATE repo_sync_log SET status = $2, packages_synced = $3, packages_skipped = $4, error_message = $5, finished_at = NOW() WHERE id = $1",
@@ -168,8 +152,6 @@ async fn run_manual_sync(
 }
 
 /// `GET /api/v1/admin/repo/sync-status`
-///
-/// Returns the status of the most recent sync operations.
 async fn sync_status(
     State(state): State<AppState>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
@@ -203,7 +185,6 @@ async fn sync_status(
         )
     })?;
 
-    // Get total package count.
     let total_packages: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM repo_packages")
         .fetch_one(&state.db)
         .await
@@ -216,8 +197,6 @@ async fn sync_status(
 }
 
 /// `GET /api/v1/admin/repo/packages`
-///
-/// Lists all packages in the manager-hosted repo.
 async fn list_packages(
     State(state): State<AppState>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
