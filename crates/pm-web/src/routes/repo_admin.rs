@@ -208,20 +208,18 @@ async fn sync_status(
 async fn list_packages(
     State(state): State<AppState>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let packages: Vec<Value> = sqlx::query_as::<
-        _,
-        (
-            uuid::Uuid,
-            String,
-            String,
-            String,
-            Option<String>,
-            String,
-            i64,
-            String,
-            chrono::DateTime<chrono::Utc>,
-        ),
-    >(
+    type PackageRow = (
+        uuid::Uuid,
+        String,
+        String,
+        String,
+        Option<String>,
+        String,
+        i64,
+        String,
+        chrono::DateTime<chrono::Utc>,
+    );
+    let packages: Vec<Value> = sqlx::query_as::<_, PackageRow>(
         "SELECT id, filename, version, distro, distro_codename, arch, file_size, source, synced_at
          FROM repo_packages ORDER BY synced_at DESC LIMIT 200",
     )
