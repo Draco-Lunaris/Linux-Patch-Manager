@@ -10,7 +10,7 @@ import { Add as AddIcon, Refresh as RefreshIcon, Delete as DeleteIcon, CheckCirc
 import { useNavigate } from 'react-router-dom'
 import { apiClient, hostsApi, enrollmentApi, upgradesApi } from '../api/client'
 import { useAuthStore } from '../store/authStore'
-import type { Host, HostHealthStatus, EnrollmentRequest, EnrollmentConflictResponse, AvailableVersion, TriggerUpgradeRequest } from '../types'
+import type { Host, HostHealthStatus, EnrollmentRequest, EnrollmentConflictResponse, RepoAvailableVersion, TriggerUpgradeRequest } from '../types'
 
 const statusColor = (s: HostHealthStatus) =>
   s === 'healthy' ? 'success' : s === 'degraded' ? 'warning' : s === 'unreachable' ? 'error' : 'default'
@@ -38,7 +38,7 @@ export default function HostsPage() {
   const [conflictModal, setConflictModal] = useState<{ request: EnrollmentRequest; existingHost: Host } | null>(null)
 
   // ── Upgrade state ───────────────────────────────────────────────────────
-  const [availableVersions, setAvailableVersions] = useState<AvailableVersion[]>([])
+  const [availableVersions, setAvailableVersions] = useState<RepoAvailableVersion[]>([])
   const [selectedHostIds, setSelectedHostIds] = useState<Set<string>>(new Set())
   const [upgradeDialogOpen, setUpgradeDialogOpen] = useState(false)
   const [upgradeTargetVersion, setUpgradeTargetVersion] = useState<string | null>(null)
@@ -168,9 +168,9 @@ export default function HostsPage() {
   }
 
   // ── Upgrade handlers ────────────────────────────────────────────────────
-  const loadAvailableVersions = useCallback(async () => {
+  const loadAvailableVersions = useCallback(async (hostId: string) => {
     try {
-      const res = await upgradesApi.listAvailableVersions()
+      const res = await upgradesApi.listAvailableVersions(hostId)
       setAvailableVersions(res.data)
     } catch { /* ignore */ }
   }, [])
@@ -180,6 +180,10 @@ export default function HostsPage() {
     setUpgradeTargetVersion(null)
     setUpgradeImmediate(true)
     setUpgradeDialogOpen(true)
+    setAvailableVersions([])
+    if (hostIds.length === 1) {
+      loadAvailableVersions(hostIds[0])
+    }
   }
 
   const handleTriggerUpgrade = async () => {
@@ -232,17 +236,12 @@ export default function HostsPage() {
     }
   }
 
-  // Helper: check if a newer version is available for a host
+  // Helper: check if a newer version is available for a host (computed by backend)
   const isNewerVersionAvailable = (host: Host): boolean => {
-    if (!host.agent_version) return false
-    const current = host.agent_version
-    return availableVersions.some(v => {
-      if (v.prerelease) return false
-      return v.version.localeCompare(current, undefined, { numeric: true, sensitivity: 'base' }) > 0
-    })
+    return host.upgrade_available === true
   }
 
-  useEffect(() => { load(); loadPending(); loadAvailableVersions() }, [load, loadPending, loadAvailableVersions])
+  useEffect(() => { load(); loadPending() }, [load, loadPending])
 
   const filtered = hosts.filter(h =>
     h.fqdn.toLowerCase().includes(search.toLowerCase()) ||
@@ -288,7 +287,7 @@ export default function HostsPage() {
         </Tooltip>
         <TextField size="small" placeholder="Search..." value={search}
           onChange={e => setSearch(e.target.value)} sx={{ mr: 2 }} />
-        <Tooltip title="Refresh"><IconButton onClick={() => { load(); loadPending(); loadAvailableVersions() }}><RefreshIcon /></IconButton></Tooltip>
+        <Tooltip title="Refresh"><IconButton onClick={() => { load(); loadPending() }}><RefreshIcon /></IconButton></Tooltip>
         {canWrite && selectedHostIds.size > 0 && (
           <Button
             variant="outlined"
@@ -529,22 +528,19 @@ export default function HostsPage() {
           <Typography variant="body2" color="text.secondary">
             {selectedHostIds.size} host{selectedHostIds.size > 1 ? 's' : ''} selected for agent upgrade.
           </Typography>
-          <FormControl fullWidth>
-            <InputLabel>Target Version</InputLabel>
-            <Select
-              value={upgradeTargetVersion ?? '__latest__'}
-              label="Target Version"
-              onChange={e => setUpgradeTargetVersion(e.target.value === '__latest__' ? null : e.target.value)}
-            >
-              <MenuItem value="__latest__">Latest (auto)</MenuItem>
-              {availableVersions
-                .filter(v => !v.prerelease)
-                .filter((v, i, arr) => arr.findIndex(x => x.version === v.version) === i)
-                .map(v => (
-                <MenuItem key={v.id} value={v.version}>{v.version}</MenuItem>
-              ))}
-            </Select>
-          </FormControl>
+            <FormControl fullWidth>
+              <InputLabel>Target Version</InputLabel>
+              <Select
+                value={upgradeTargetVersion ?? '__latest__'}
+                label="Target Version"
+                onChange={e => setUpgradeTargetVersion(e.target.value === '__latest__' ? null : e.target.value)}
+              >
+                <MenuItem value="__latest__">Latest (auto)</MenuItem>
+                {availableVersions.map(v => (
+                <MenuItem key={v.version} value={v.version}>{v.version}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <Button
               variant={upgradeImmediate ? 'contained' : 'outlined'}
