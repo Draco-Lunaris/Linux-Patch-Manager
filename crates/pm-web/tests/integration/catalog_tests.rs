@@ -35,10 +35,11 @@ async fn test_available_versions_list() {
     .await
     .expect("failed to seed host");
 
-    let host_id: uuid::Uuid = sqlx::query_scalar("SELECT id FROM hosts WHERE fqdn = 'test-avail.example.com'")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let host_id: uuid::Uuid =
+        sqlx::query_scalar("SELECT id FROM hosts WHERE fqdn = 'test-avail.example.com'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
 
     sqlx::query(
         r#"INSERT INTO repo_packages (filename, version, distro, distro_codename, arch, file_size, source)
@@ -52,14 +53,7 @@ async fn test_available_versions_list() {
     let state = setup_state(pool.clone()).await;
 
     let url = format!("/api/v1/upgrades/available-versions?host_id={}", host_id);
-    let (status, body) = send_request(
-        state,
-        axum::http::Method::GET,
-        &url,
-        None,
-        None,
-    )
-    .await;
+    let (status, body) = send_request(state, axum::http::Method::GET, &url, None, None).await;
 
     assert_eq!(
         status,
@@ -79,10 +73,12 @@ async fn test_available_versions_list() {
     );
 
     // Cleanup
-    sqlx::query("DELETE FROM repo_packages WHERE filename = 'linux-patch-api_2.0.0_u2404_amd64.deb'")
-        .execute(&pool)
-        .await
-        .ok();
+    sqlx::query(
+        "DELETE FROM repo_packages WHERE filename = 'linux-patch-api_2.0.0_u2404_amd64.deb'",
+    )
+    .execute(&pool)
+    .await
+    .ok();
     sqlx::query("DELETE FROM hosts WHERE fqdn = 'test-avail.example.com'")
         .execute(&pool)
         .await

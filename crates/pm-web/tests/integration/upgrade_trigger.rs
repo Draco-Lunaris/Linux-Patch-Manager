@@ -22,8 +22,6 @@ use uuid::Uuid;
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Reporter role gets 403 on POST /upgrades/trigger.
-/// The authorization middleware rejects non-operator roles BEFORE any handler
-/// or database logic runs.
 #[tokio::test]
 async fn test_trigger_reporter_forbidden() {
     let state = setup_state_no_db().await;
@@ -50,7 +48,6 @@ async fn test_trigger_reporter_forbidden() {
 }
 
 /// POST with empty host_ids returns 400.
-/// The handler validates input BEFORE any database logic runs.
 #[tokio::test]
 async fn test_trigger_empty_host_ids_400() {
     let state = setup_state_no_db().await;
@@ -217,10 +214,12 @@ async fn test_trigger_unknown_version_skipped() {
         body
     );
 
-    sqlx::query("DELETE FROM repo_packages WHERE filename = 'linux-patch-api_2.0.0_u2404_amd64.deb'")
-        .execute(&pool)
-        .await
-        .ok();
+    sqlx::query(
+        "DELETE FROM repo_packages WHERE filename = 'linux-patch-api_2.0.0_u2404_amd64.deb'",
+    )
+    .execute(&pool)
+    .await
+    .ok();
     sqlx::query("DELETE FROM hosts WHERE id = $1")
         .bind(host_id)
         .execute(&pool)
