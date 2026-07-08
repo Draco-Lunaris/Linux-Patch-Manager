@@ -150,17 +150,7 @@ async fn run_manual_sync(
 async fn sync_status(
     State(state): State<AppState>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    type SyncLogRow = (
-        uuid::Uuid,
-        String,
-        String,
-        i32,
-        i32,
-        Option<String>,
-        chrono::DateTime<chrono::Utc>,
-        Option<chrono::DateTime<chrono::Utc>,
-    );
-    let sync_logs: Vec<Value> = sqlx::query_as::<_, SyncLogRow>(
+    let sync_logs: Vec<Value> = sqlx::query_as::<_, (uuid::Uuid, String, String, i32, i32, Option<String>, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>)>(
         "SELECT id, triggered_by, status, packages_synced, packages_skipped, error_message, started_at, finished_at
          FROM repo_sync_log ORDER BY started_at DESC LIMIT 10",
     )
@@ -208,18 +198,20 @@ async fn sync_status(
 async fn list_packages(
     State(state): State<AppState>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    type PackageRow = (
-        uuid::Uuid,
-        String,
-        String,
-        String,
-        Option<String>,
-        String,
-        i64,
-        String,
-        chrono::DateTime<chrono::Utc>,
-    );
-    let packages: Vec<Value> = sqlx::query_as::<_, PackageRow>(
+    let packages: Vec<Value> = sqlx::query_as::<
+        _,
+        (
+            uuid::Uuid,
+            String,
+            String,
+            String,
+            Option<String>,
+            String,
+            i64,
+            String,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(
         "SELECT id, filename, version, distro, distro_codename, arch, file_size, source, synced_at
          FROM repo_packages ORDER BY synced_at DESC LIMIT 200",
     )
