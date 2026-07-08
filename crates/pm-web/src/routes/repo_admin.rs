@@ -127,8 +127,16 @@ async fn run_manual_sync(
         .execute(pool).await;
     }
 
-    let status = if result.errors.is_empty() { "success" } else { "partial" };
-    let error_msg = if result.errors.is_empty() { None } else { Some(result.errors.join("; ")) };
+    let status = if result.errors.is_empty() {
+        "success"
+    } else {
+        "partial"
+    };
+    let error_msg = if result.errors.is_empty() {
+        None
+    } else {
+        Some(result.errors.join("; "))
+    };
 
     sqlx::query(
         "UPDATE repo_sync_log SET status = $2, packages_synced = $3, packages_skipped = $4, error_message = $5, finished_at = NOW() WHERE id = $1",
