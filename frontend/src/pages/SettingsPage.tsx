@@ -416,7 +416,7 @@ export default function SettingsPage() {
               }} disabled={!smtp.enabled || !notification.email_enabled}>Add Recipient</Button>
             </Grid>
             <Grid size={6}>
-              <Button variant="outlined" onClick={handleTestSmtp" disabled={testingSmtp || !smtp.host} startIcon={testingSmtp ? <CircularProgress size={20} /> : <EmailIcon />}>
+              <Button variant="outlined" onClick={handleTestSmtp} disabled={testingSmtp || !smtp.host} startIcon={testingSmtp ? <CircularProgress size={20} /> : <EmailIcon />}>
                 Send Test Email
               </Button>
               {smtpTestResult && (
