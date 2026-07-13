@@ -3,6 +3,7 @@ import JSZip from 'jszip'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Alert,
+  Autocomplete,
   Box,
   Button,
   Chip,
@@ -18,7 +19,6 @@ import {
   Grid,
   IconButton,
   InputLabel,
-  FormHelperText,
   MenuItem,
   Paper,
   Select,
@@ -292,16 +292,20 @@ function HealthCheckFormDialog({ open, title, initial, hosts, currentHostId, onC
           <>
             <TextField label="Service Name" value={form.service_name} onChange={e => set('service_name', e.target.value)} required fullWidth
               helperText="Systemd service unit name to check" />
-            <FormControl fullWidth>
-              <InputLabel>Target Host (optional)</InputLabel>
-              <Select label="Target Host (optional)" value={form.target_host_id} onChange={e => set('target_host_id', e.target.value)}>
-                <MenuItem value="">Own Host (default)</MenuItem>
-                {hosts.filter(h => h.id !== currentHostId).map(h => (
-                  <MenuItem key={h.id} value={h.id}>{h.display_name || h.fqdn}</MenuItem>
-                ))}
-              </Select>
-              <FormHelperText>Query a service on a different host's agent (for redundant services)</FormHelperText>
-            </FormControl>
+            <Autocomplete
+              options={hosts.filter(h => h.id !== currentHostId)}
+              getOptionLabel={(h) => h.display_name || h.fqdn}
+              isOptionEqualToValue={(a, b) => a.id === b.id}
+              value={hosts.find(h => h.id === form.target_host_id) ?? null}
+              onChange={(_e, val) => set('target_host_id', val ? val.id : '')}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Target Host (optional)"
+                  helperText="Type to search — query a service on a different host's agent (for redundant services)"
+                />
+              )}
+            />
           </>
         )}
         {form.check_type === 'http' && (
@@ -679,7 +683,7 @@ export default function HostDetailPage() {
 
   // ── Fetch hosts list (for target_host_id dropdown) ──────────────────────
   useEffect(() => {
-    hostsApi.list()
+    hostsApi.list({ limit: 10000 })
       .then(res => setHosts(res.data?.hosts ?? []))
       .catch(() => { /* ignore */ })
   }, [])
