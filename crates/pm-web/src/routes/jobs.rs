@@ -65,6 +65,7 @@ struct JobHostNames {
 struct JobHostRow {
     pub id: Uuid,
     pub host_id: Uuid,
+    #[serde(rename = "host_display_name")]
     pub display_name: String,
     pub status: String,
     pub agent_job_id: Option<String>,
