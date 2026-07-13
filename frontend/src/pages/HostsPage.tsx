@@ -58,13 +58,7 @@ export default function HostsPage() {
       setSortKey(key)
       setSortDir('asc')
     }
-  }
-
-  const getSortValue = (h: Host, key: SortKey): string => {
-    switch (key) {
-      case 'os': return (h.os_name ?? h.os_family ?? '').toLowerCase()
-      default: return String(h[key] ?? '').toLowerCase()
-    }
+    setPage(0)
   }
 
 
@@ -73,12 +67,17 @@ export default function HostsPage() {
     setLoading(true)
     try {
       const offset = page * rowsPerPage
-      const res = await apiClient.get('/hosts', { params: { limit: rowsPerPage, offset } })
+      const params: Record<string, string | number> = { limit: rowsPerPage, offset }
+      if (sortKey) {
+        params.sort_by = sortKey
+        params.order = sortDir
+      }
+      const res = await apiClient.get('/hosts', { params })
       setHosts(res.data.hosts)
       setTotal(res.data.total)
     } catch { /* handled by interceptor */ }
     finally { setLoading(false) }
-  }, [page, rowsPerPage])
+  }, [page, rowsPerPage, sortKey, sortDir])
 
   const loadPending = useCallback(async () => {
     try {
@@ -249,18 +248,6 @@ export default function HostsPage() {
     h.display_name.toLowerCase().includes(search.toLowerCase())
   )
 
-  const sortedHosts = (() => {
-    if (!sortKey) return filtered
-    const arr = [...filtered]
-    arr.sort((a, b) => {
-      const va = getSortValue(a, sortKey)
-      const vb = getSortValue(b, sortKey)
-      const cmp = va.localeCompare(vb, undefined, { numeric: true, sensitivity: 'base' })
-      return sortDir === 'asc' ? cmp : -cmp
-    })
-    return arr
-  })()
-
   const handleChangePage = (_event: React.MouseEvent<HTMLButtonElement> | null, newPage: number) => {
     setPage(newPage)
   }
@@ -377,7 +364,7 @@ export default function HostsPage() {
                   </TableRow>
                 ))
               ) : (
-                sortedHosts.map(h => (
+                filtered.map(h => (
                   <TableRow key={h.id} hover sx={{ cursor: 'pointer' }}
                     onClick={() => navigate(`/hosts/${h.id}`)}>
                     {canWrite && <TableCell padding="checkbox" onClick={e => e.stopPropagation()}>
