@@ -51,6 +51,33 @@ pub struct HostListQuery {
     pub search: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+    pub sort_by: Option<String>,
+    pub order: Option<String>,
+    /// Filter by patches missing: "missing" (>0) or "uptodate" (0).
+    pub patches_missing: Option<String>,
+}
+
+/// Maps a frontend sort key to a validated SQL ORDER BY fragment.
+/// Returns None for unknown columns to prevent SQL injection.
+fn resolve_sort_fragment(sort_by: &str, order: &str) -> Option<String> {
+    let column = match sort_by {
+        "fqdn" => "h.fqdn",
+        "display_name" => "h.display_name",
+        "ip_address" => "host(h.ip_address)",
+        "os" => "h.os_name",
+        "health_status" => "h.health_status",
+        "health_check_status" => "health_check_status",
+        "crl_status" => "h.crl_status",
+        "agent_version" => "h.agent_version",
+        "patches_missing" => "patches_missing",
+        _ => return None,
+    };
+    let dir = if order.eq_ignore_ascii_case("desc") {
+        "DESC"
+    } else {
+        "ASC"
+    };
+    Some(format!("{column} {dir}"))
 }
 
 // ── Response types ────────────────────────────────────────────────────────────
@@ -102,6 +129,12 @@ async fn operator_can_access_host(
 
 // ── GET /api/v1/hosts ─────────────────────────────────────────────────────────
 
+/// A filter condition: SQL template (with `${p}` placeholder) and its bind value.
+struct HostFilter {
+    sql: String,
+    bind: String,
+}
+
 async fn list_hosts(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -110,9 +143,77 @@ async fn list_hosts(
     let limit = q.limit.unwrap_or(50).min(200);
     let offset = q.offset.unwrap_or(0);
 
-    // For operators: only show hosts in their groups (or ungrouped)
-    let hosts: Vec<HostSummary> = if auth.role.is_admin() {
-        sqlx::query_as(
+    // Resolve sort: validated whitelist prevents SQL injection. Falls back to fqdn ASC.
+    let order_by = match (&q.sort_by, &q.order) {
+        (Some(field), Some(dir)) => resolve_sort_fragment(field, dir),
+        (Some(field), None) => resolve_sort_fragment(field, "asc"),
+        _ => None,
+    }
+    .unwrap_or_else(|| "h.fqdn ASC".to_string());
+
+    // ── Build dynamic filter conditions ──────────────────────────────────────
+    let mut filters: Vec<HostFilter> = Vec::new();
+
+    if let Some(ref search) = q.search {
+        if !search.is_empty() {
+            filters.push(HostFilter {
+                sql: "(h.fqdn ILIKE ${p} OR h.display_name ILIKE ${p})".to_string(),
+                bind: format!("%{search}%"),
+            });
+        }
+    }
+    if let Some(ref hs) = q.health_status {
+        if !hs.is_empty() {
+            filters.push(HostFilter {
+                sql: "h.health_status = ${p}".to_string(),
+                bind: hs.clone(),
+            });
+        }
+    }
+    if let Some(ref pm) = q.patches_missing {
+        match pm.as_str() {
+            "missing" => filters.push(HostFilter {
+                sql: "COALESCE(hpd.patch_count, 0) > 0".to_string(),
+                bind: String::new(),
+            }),
+            "uptodate" => filters.push(HostFilter {
+                sql: "COALESCE(hpd.patch_count, 0) = 0".to_string(),
+                bind: String::new(),
+            }),
+            _ => {},
+        }
+    }
+
+    let is_admin = auth.role.is_admin();
+
+    // Helper: assign placeholder numbers to filter SQL templates, starting at `start`.
+    // Returns (joined SQL fragment, number of placeholders used).
+    let assign_placeholders = |filters: &[HostFilter], start: usize| -> (String, usize) {
+        let mut idx = start;
+        let parts: Vec<String> = filters
+            .iter()
+            .map(|f| {
+                let s = f.sql.replace("${p}", &format!("${idx}"));
+                if f.sql.contains("${p}") {
+                    idx += 1;
+                }
+                s
+            })
+            .collect();
+        if parts.is_empty() {
+            (String::new(), 0)
+        } else {
+            (format!(" AND {}", parts.join(" AND ")), idx - start)
+        }
+    };
+
+    // ── Data query ───────────────────────────────────────────────────────────
+    let (filter_clause, n_filter_params) = assign_placeholders(&filters, 1);
+
+    let hosts: Vec<HostSummary> = if is_admin {
+        let limit_idx = 1 + n_filter_params;
+        let offset_idx = 2 + n_filter_params;
+        let sql = format!(
             r#"
             SELECT h.id, h.fqdn, host(h.ip_address)::text AS ip_address, h.display_name,
                    h.os_family, h.os_name, h.health_status, h.agent_version,
@@ -136,16 +237,25 @@ async fn list_hosts(
                    h.crl_status
             FROM hosts h
             LEFT JOIN host_patch_data hpd ON hpd.host_id = h.id
-            ORDER BY h.fqdn
-            LIMIT $1 OFFSET $2
-            "#,
-        )
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&state.db)
-        .await
+            WHERE 1=1{filter_clause}
+            ORDER BY {order_by}
+            LIMIT ${limit_idx} OFFSET ${offset_idx}
+            "#
+        );
+        let mut query = sqlx::query_as::<_, HostSummary>(&sql);
+        for f in &filters {
+            if f.sql.contains("${p}") {
+                query = query.bind(&f.bind);
+            }
+        }
+        query = query.bind(limit).bind(offset);
+        query.fetch_all(&state.db).await
     } else {
-        sqlx::query_as(
+        // Operator: user_id is the last param (after filters + limit + offset)
+        let user_idx = 3 + n_filter_params;
+        let limit_idx = 1 + n_filter_params;
+        let offset_idx = 2 + n_filter_params;
+        let sql = format!(
             r#"
             SELECT DISTINCT h.id, h.fqdn, host(h.ip_address)::text AS ip_address,
                    h.display_name, h.os_family, h.os_name,
@@ -175,19 +285,22 @@ async fn list_hosts(
                 EXISTS (
                     SELECT 1 FROM host_groups hg
                     JOIN user_groups ug ON ug.group_id = hg.group_id
-                    WHERE hg.host_id = h.id AND ug.user_id = $3
+                    WHERE hg.host_id = h.id AND ug.user_id = ${user_idx}
                 )
                 -- OR ungrouped hosts
-                OR NOT EXISTS (SELECT 1 FROM host_groups WHERE host_id = h.id)
-            ORDER BY h.fqdn
-            LIMIT $1 OFFSET $2
-            "#,
-        )
-        .bind(limit)
-        .bind(offset)
-        .bind(auth.user_id)
-        .fetch_all(&state.db)
-        .await
+                OR NOT EXISTS (SELECT 1 FROM host_groups WHERE host_id = h.id){filter_clause}
+            ORDER BY {order_by}
+            LIMIT ${limit_idx} OFFSET ${offset_idx}
+            "#
+        );
+        let mut query = sqlx::query_as::<_, HostSummary>(&sql);
+        for f in &filters {
+            if f.sql.contains("${p}") {
+                query = query.bind(&f.bind);
+            }
+        }
+        query = query.bind(limit).bind(offset).bind(auth.user_id);
+        query.fetch_all(&state.db).await
     }
     .map_err(|e| {
         tracing::error!(error = %e, "Failed to list hosts");
@@ -197,10 +310,39 @@ async fn list_hosts(
         )
     })?;
 
-    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM hosts")
-        .fetch_one(&state.db)
-        .await
-        .unwrap_or(0);
+    // ── Total count with the same filters ────────────────────────────────────
+    // Re-assign placeholders independently for the count query.
+    let total: i64 = if is_admin {
+        let (count_filter, n_count_params) = assign_placeholders(&filters, 1);
+        let sql = format!(
+            "SELECT COUNT(*) FROM hosts h LEFT JOIN host_patch_data hpd ON hpd.host_id = h.id WHERE 1=1{count_filter}"
+        );
+        let mut query = sqlx::query_scalar::<_, i64>(&sql);
+        for f in &filters {
+            if f.sql.contains("${p}") {
+                query = query.bind(&f.bind);
+            }
+        }
+        let _ = n_count_params;
+        query.fetch_one(&state.db).await.unwrap_or(0)
+    } else {
+        // Operator count: user_id is $1, filters start at $2
+        let (count_filter, _) = assign_placeholders(&filters, 2);
+        let sql = format!(
+            "SELECT COUNT(*) FROM hosts h LEFT JOIN host_patch_data hpd ON hpd.host_id = h.id \
+             WHERE (EXISTS (SELECT 1 FROM host_groups hg JOIN user_groups ug ON ug.group_id = hg.group_id \
+             WHERE hg.host_id = h.id AND ug.user_id = $1) \
+             OR NOT EXISTS (SELECT 1 FROM host_groups WHERE host_id = h.id)){count_filter}"
+        );
+        let mut query = sqlx::query_scalar::<_, i64>(&sql);
+        query = query.bind(auth.user_id);
+        for f in &filters {
+            if f.sql.contains("${p}") {
+                query = query.bind(&f.bind);
+            }
+        }
+        query.fetch_one(&state.db).await.unwrap_or(0)
+    };
 
     Ok(Json(HostListResponse {
         hosts,

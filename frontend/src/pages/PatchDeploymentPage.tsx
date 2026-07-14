@@ -19,6 +19,7 @@ import {
   TableCell,
   TableHead,
   TableRow,
+  TablePagination,
   TableSortLabel,
   TextField,
   Toolbar,
@@ -50,12 +51,16 @@ export default function PatchDeploymentPage() {
 
   // Step 0 state
   const [hosts, setHosts] = useState<Host[]>([])
+  const [totalHosts, setTotalHosts] = useState(0)
   const [hostsLoading, setHostsLoading] = useState(true)
   const [hostsError, setHostsError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [healthFilter, setHealthFilter] = useState<HostHealthStatus | ''>('')
   const [patchesFilter, setPatchesFilter] = useState<'all' | 'missing' | 'uptodate'>('all')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [selectedHostsMap, setSelectedHostsMap] = useState<Map<string, Host>>(new Map())
+  const [page, setPage] = useState(0)
+  const [rowsPerPage, setRowsPerPage] = useState(25)
 
   // ── Sorting state ────────────────────────────────────────────────────────
   type SortKey = 'display_name' | 'fqdn' | 'ip_address' | 'health_status' | 'health_check_status' | 'patches_missing' | 'os'
@@ -68,14 +73,6 @@ export default function PatchDeploymentPage() {
     } else {
       setSortKey(key)
       setSortDir('asc')
-    }
-  }
-
-  const getSortValue = (h: Host, key: SortKey): string | number => {
-    switch (key) {
-      case 'os': return (h.os_name ?? h.os_family ?? '').toLowerCase()
-      case 'patches_missing': return h.patches_missing
-      default: return String(h[key as keyof Host] ?? '').toLowerCase()
     }
   }
 
@@ -94,62 +91,80 @@ export default function PatchDeploymentPage() {
     setHostsLoading(true)
     setHostsError(null)
     try {
-      const res = await hostsApi.list()
-      const data = res.data as { hosts?: Host[] } | Host[]
-      setHosts(Array.isArray(data) ? data : (data.hosts ?? []))
+      const params: Record<string, string | number> = {
+        limit: rowsPerPage,
+        offset: page * rowsPerPage,
+      }
+      if (sortKey) {
+        params.sort_by = sortKey
+        params.order = sortDir
+      }
+      if (searchQuery) params.search = searchQuery
+      if (healthFilter) params.health_status = healthFilter
+      if (patchesFilter !== 'all') params.patches_missing = patchesFilter
+      const res = await hostsApi.list(params)
+      const data = res.data as { hosts?: Host[]; total?: number } | Host[]
+      if (Array.isArray(data)) {
+        setHosts(data)
+        setTotalHosts(data.length)
+      } else {
+        setHosts(data.hosts ?? [])
+        setTotalHosts(data.total ?? 0)
+      }
     } catch {
       setHostsError('Failed to load hosts')
     } finally {
       setHostsLoading(false)
     }
-  }, [])
+  }, [rowsPerPage, page, sortKey, sortDir, searchQuery, healthFilter, patchesFilter])
 
   useEffect(() => {
     loadHosts()
   }, [loadHosts])
 
-  const filteredHosts = hosts.filter((h) => {
-    const matchesSearch =
-      searchQuery === '' ||
-      h.display_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      h.fqdn.toLowerCase().includes(searchQuery.toLowerCase())
-    const matchesHealth = healthFilter === '' || h.health_status === healthFilter
-    const matchesPatches =
-      patchesFilter === 'all' ||
-      (patchesFilter === 'missing' && h.patches_missing > 0) ||
-      (patchesFilter === 'uptodate' && h.patches_missing === 0)
-    return matchesSearch && matchesHealth && matchesPatches
-  })
+  // Reset to first page when filters or sort change
+  useEffect(() => {
+    setPage(0)
+  }, [searchQuery, healthFilter, patchesFilter, sortKey, sortDir])
 
-  const sortedHosts = (() => {
-    if (!sortKey) return filteredHosts
-    const arr = [...filteredHosts]
-    arr.sort((a, b) => {
-      const va = getSortValue(a, sortKey)
-      const vb = getSortValue(b, sortKey)
-      if (typeof va === 'number' && typeof vb === 'number') {
-        return sortDir === 'asc' ? va - vb : vb - va
-      }
-      const cmp = String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: 'base' })
-      return sortDir === 'asc' ? cmp : -cmp
-    })
-    return arr
-  })()
-
-  const handleToggleHost = (id: string) => {
+  const handleToggleHost = (host: Host) => {
     setSelectedIds((prev) => {
       const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
+      if (next.has(host.id)) next.delete(host.id)
+      else next.add(host.id)
+      return next
+    })
+    setSelectedHostsMap((prev) => {
+      const next = new Map(prev)
+      if (next.has(host.id)) next.delete(host.id)
+      else next.set(host.id, host)
       return next
     })
   }
 
   const handleToggleAll = () => {
-    if (selectedIds.size === filteredHosts.length) {
-      setSelectedIds(new Set())
+    if (hosts.length > 0 && hosts.every((h) => selectedIds.has(h.id))) {
+      setSelectedIds((prev) => {
+        const next = new Set(prev)
+        hosts.forEach((h) => next.delete(h.id))
+        return next
+      })
+      setSelectedHostsMap((prev) => {
+        const next = new Map(prev)
+        hosts.forEach((h) => next.delete(h.id))
+        return next
+      })
     } else {
-      setSelectedIds(new Set(filteredHosts.map((h) => h.id)))
+      setSelectedIds((prev) => {
+        const next = new Set(prev)
+        hosts.forEach((h) => next.add(h.id))
+        return next
+      })
+      setSelectedHostsMap((prev) => {
+        const next = new Map(prev)
+        hosts.forEach((h) => next.set(h.id, h))
+        return next
+      })
     }
   }
 
@@ -184,6 +199,7 @@ export default function PatchDeploymentPage() {
   const handleReset = () => {
     setActiveStep(0)
     setSelectedIds(new Set())
+    setSelectedHostsMap(new Map())
     setImmediate(true)
     setAllowReboot(false)
     setNotes('')
@@ -192,7 +208,7 @@ export default function PatchDeploymentPage() {
     setCreatedJobId(null)
   }
 
-  const selectedHosts = hosts.filter((h) => selectedIds.has(h.id))
+  const selectedHosts = Array.from(selectedIds).map((id) => selectedHostsMap.get(id)).filter((h): h is Host => h !== undefined)
 
   return (
     <Container maxWidth="xl" sx={{ mt: 3 }}>
@@ -280,15 +296,15 @@ export default function PatchDeploymentPage() {
                     <TableCell padding="checkbox">
                       <Checkbox
                         checked={
-                          filteredHosts.length > 0 &&
-                          filteredHosts.every((h) => selectedIds.has(h.id))
+                          hosts.length > 0 &&
+                          hosts.every((h) => selectedIds.has(h.id))
                         }
                         indeterminate={
-                          filteredHosts.some((h) => selectedIds.has(h.id)) &&
-                          !filteredHosts.every((h) => selectedIds.has(h.id))
+                          hosts.some((h) => selectedIds.has(h.id)) &&
+                          !hosts.every((h) => selectedIds.has(h.id))
                         }
                         onChange={handleToggleAll}
-                        disabled={filteredHosts.length === 0}
+                        disabled={hosts.length === 0}
                       />
                     </TableCell>
                     <TableCell>
@@ -315,7 +331,7 @@ export default function PatchDeploymentPage() {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {filteredHosts.length === 0 ? (
+                  {hosts.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={8} align="center">
                         <Typography variant="body2" color="text.secondary" py={2}>
@@ -324,18 +340,18 @@ export default function PatchDeploymentPage() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    sortedHosts.map((host) => (
+                    hosts.map((host) => (
                       <TableRow
                         key={host.id}
                         hover
                         selected={selectedIds.has(host.id)}
                         sx={{ cursor: 'pointer' }}
-                        onClick={() => handleToggleHost(host.id)}
+                        onClick={() => handleToggleHost(host)}
                       >
                         <TableCell padding="checkbox">
                           <Checkbox
                             checked={selectedIds.has(host.id)}
-                            onChange={() => handleToggleHost(host.id)}
+                            onChange={() => handleToggleHost(host)}
                             onClick={(e) => e.stopPropagation()}
                           />
                         </TableCell>
@@ -372,6 +388,20 @@ export default function PatchDeploymentPage() {
             </Box>
           )}
 
+          <TablePagination
+            component="div"
+            count={totalHosts}
+            page={page}
+            onPageChange={(_e, newPage) => setPage(newPage)}
+            rowsPerPage={rowsPerPage}
+            onRowsPerPageChange={(e) => {
+              setRowsPerPage(parseInt(e.target.value, 10))
+              setPage(0)
+            }}
+            rowsPerPageOptions={[10, 25, 50, 100]}
+            sx={{ mt: 1 }}
+          />
+
           <Box display="flex" justifyContent="space-between" alignItems="center" mt={3}>
             <Typography variant="body2" color="text.secondary">
               {selectedIds.size} host{selectedIds.size !== 1 ? 's' : ''} selected
@@ -402,7 +432,7 @@ export default function PatchDeploymentPage() {
               <Chip
                 key={h.id}
                 label={h.display_name}
-                onDelete={() => handleToggleHost(h.id)}
+                onDelete={() => handleToggleHost(h)}
                 size="small"
               />
             ))}

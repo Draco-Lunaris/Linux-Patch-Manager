@@ -38,7 +38,12 @@ struct HostRow {
     crl_status: Option<String>,
     /// When the host was first registered (for enrollment age checks).
     registered_at: DateTime<Utc>,
+    /// Current consecutive failure count (for hysteresis).
+    consecutive_failures: i32,
 }
+
+/// Number of consecutive failures required before a host is marked unreachable.
+const FAILURE_THRESHOLD: i32 = 3;
 
 /// Run the health poller loop indefinitely.
 ///
@@ -69,7 +74,7 @@ pub async fn run_health_poller(pool: PgPool, config: Arc<AppConfig>) {
 
         // Fetch all hosts with CRL status and registration time.
         let hosts: Vec<HostRow> = match sqlx::query_as(
-            "SELECT id, host(ip_address)::text AS ip_address, agent_port, crl_status, registered_at FROM hosts ORDER BY id",
+            "SELECT id, host(ip_address)::text AS ip_address, agent_port, crl_status, registered_at, consecutive_failures FROM hosts ORDER BY id",
         )
         .fetch_all(&pool)
         .await
@@ -277,6 +282,24 @@ async fn poll_host_health(
     // Only apply when the agent reported a CRL status (non-NULL).
     let effective_status = apply_crl_health_rules(&natural_status, &crl_status, host.registered_at);
 
+    // ── Hysteresis: prevent flapping from transient failures ────────────
+    // A host is only marked Unreachable after FAILURE_THRESHOLD consecutive
+    // failures. Below the threshold, transient failures are reported as
+    // Degraded so the UI doesn't flap. Healthy polls reset the counter.
+    let (new_failure_count, hysteresis_status) =
+        apply_hysteresis(&natural_status, effective_status, host.consecutive_failures);
+
+    if new_failure_count != host.consecutive_failures {
+        tracing::debug!(
+            host_id = %host.id,
+            natural_status = ?natural_status,
+            hysteresis_status = ?hysteresis_status,
+            consecutive_failures = new_failure_count,
+            threshold = FAILURE_THRESHOLD,
+            "Health poller: hysteresis applied",
+        );
+    }
+
     // Insert into host_health_data with the natural (pre-aggregation) status.
     if let Err(e) = sqlx::query(
         r#"
@@ -310,8 +333,8 @@ async fn poll_host_health(
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|dt| dt.to_utc());
 
-    // Update hosts table with the effective (post-aggregation) health status,
-    // agent version, OS details, and CRL fields.
+    // Update hosts table with the hysteresis-adjusted health status,
+    // agent version, OS details, CRL fields, and consecutive failure count.
     // COALESCE preserves existing values when new data is unavailable.
     if let Err(e) = sqlx::query(
         r#"
@@ -325,12 +348,13 @@ async fn poll_host_health(
             crl_age_seconds = COALESCE($8, crl_age_seconds),
             crl_next_update = COALESCE($9, crl_next_update),
             gpg_key_status = COALESCE($10, gpg_key_status),
-            gpg_key_expires_at = COALESCE($11, gpg_key_expires_at)
+            gpg_key_expires_at = COALESCE($11, gpg_key_expires_at),
+            consecutive_failures = $12
         WHERE id = $1
         "#,
     )
     .bind(host.id)
-    .bind(&effective_status)
+    .bind(&hysteresis_status)
     .bind(&agent_version)
     .bind(sys_info.as_ref().map(|i| i.os.as_str()))
     .bind(os_name_from_sysinfo)
@@ -340,12 +364,13 @@ async fn poll_host_health(
     .bind(crl_next_update_dt)
     .bind(&gpg_key_status)
     .bind(gpg_key_expires_at_dt)
+    .bind(new_failure_count)
     .execute(&pool)
     .await
     {
         tracing::error!(host_id = %host.id, error = %e, "Health poller: failed to update host status");
         // Don't log audit events if the DB update failed.
-        return effective_status;
+        return hysteresis_status;
     }
 
     // Log CRL audit events after successful database update.
@@ -360,7 +385,43 @@ async fn poll_host_health(
         .await;
     }
 
-    effective_status
+    hysteresis_status
+}
+
+/// Apply hysteresis to prevent health status flapping.
+///
+/// Returns `(new_failure_count, adjusted_status)`:
+/// - **Healthy** poll → reset failures to 0, status unchanged
+/// - **Unreachable** poll → increment failures; if below threshold, suppress to Degraded
+/// - **Other** (Degraded/Pending) → leave failure count unchanged, status unchanged
+///
+/// The `effective_status` input is the post-CRL-aggregation status. The hysteresis
+/// only suppresses `Unreachable` → `Degraded` when failures haven't reached the
+/// threshold. It never suppresses CRL-forced `Unreachable` (e.g. `crl_status =
+/// "invalid"`) because those are set by `apply_crl_health_rules` from a *healthy*
+/// natural status, not from a connection failure.
+fn apply_hysteresis(
+    natural_status: &HostHealthStatus,
+    effective_status: HostHealthStatus,
+    current_failures: i32,
+) -> (i32, HostHealthStatus) {
+    let new_failures = match natural_status {
+        HostHealthStatus::Healthy => 0,
+        HostHealthStatus::Unreachable => current_failures + 1,
+        _ => current_failures,
+    };
+
+    let adjusted = if new_failures >= FAILURE_THRESHOLD {
+        effective_status
+    } else if *natural_status == HostHealthStatus::Unreachable
+        && effective_status == HostHealthStatus::Unreachable
+    {
+        HostHealthStatus::Degraded
+    } else {
+        effective_status
+    };
+
+    (new_failures, adjusted)
 }
 
 /// Apply CRL health aggregation rules to determine the effective health status.
@@ -701,5 +762,185 @@ mod tests_crl_health {
             hours_ago(0),
         );
         assert_eq!(result, HostHealthStatus::Unreachable);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests — Hysteresis logic
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests_hysteresis {
+    use super::*;
+
+    // ---- Healthy polls reset the failure counter ----
+
+    #[test]
+    fn healthy_poll_resets_failures_to_zero() {
+        let (failures, status) =
+            apply_hysteresis(&HostHealthStatus::Healthy, HostHealthStatus::Healthy, 5);
+        assert_eq!(failures, 0);
+        assert_eq!(status, HostHealthStatus::Healthy);
+    }
+
+    #[test]
+    fn healthy_poll_after_failures_clears_counter() {
+        // Host had 2 consecutive failures, now responds healthy
+        let (failures, status) =
+            apply_hysteresis(&HostHealthStatus::Healthy, HostHealthStatus::Healthy, 2);
+        assert_eq!(failures, 0);
+        assert_eq!(status, HostHealthStatus::Healthy);
+    }
+
+    // ---- First failure is suppressed to Degraded ----
+
+    #[test]
+    fn first_failure_suppressed_to_degraded() {
+        let (failures, status) = apply_hysteresis(
+            &HostHealthStatus::Unreachable,
+            HostHealthStatus::Unreachable,
+            0,
+        );
+        assert_eq!(failures, 1);
+        assert_eq!(status, HostHealthStatus::Degraded);
+    }
+
+    #[test]
+    fn second_failure_still_suppressed_to_degraded() {
+        let (failures, status) = apply_hysteresis(
+            &HostHealthStatus::Unreachable,
+            HostHealthStatus::Unreachable,
+            1,
+        );
+        assert_eq!(failures, 2);
+        assert_eq!(status, HostHealthStatus::Degraded);
+    }
+
+    // ---- Third failure reaches threshold → Unreachable ----
+
+    #[test]
+    fn third_failure_reaches_threshold_unreachable() {
+        let (failures, status) = apply_hysteresis(
+            &HostHealthStatus::Unreachable,
+            HostHealthStatus::Unreachable,
+            2,
+        );
+        assert_eq!(failures, 3);
+        assert_eq!(status, HostHealthStatus::Unreachable);
+    }
+
+    #[test]
+    fn fourth_failure_stays_unreachable() {
+        let (failures, status) = apply_hysteresis(
+            &HostHealthStatus::Unreachable,
+            HostHealthStatus::Unreachable,
+            3,
+        );
+        assert_eq!(failures, 4);
+        assert_eq!(status, HostHealthStatus::Unreachable);
+    }
+
+    // ---- Recovery: one healthy poll after failures resets to Healthy ----
+
+    #[test]
+    fn recovery_after_threshold_breach_resets_immediately() {
+        // Host was unreachable (4 failures), now responds healthy
+        let (failures, status) =
+            apply_hysteresis(&HostHealthStatus::Healthy, HostHealthStatus::Healthy, 4);
+        assert_eq!(failures, 0);
+        assert_eq!(status, HostHealthStatus::Healthy);
+    }
+
+    // ---- Degraded natural status doesn't change failure count ----
+
+    #[test]
+    fn degraded_poll_does_not_increment_failures() {
+        let (failures, status) =
+            apply_hysteresis(&HostHealthStatus::Degraded, HostHealthStatus::Degraded, 0);
+        assert_eq!(failures, 0);
+        assert_eq!(status, HostHealthStatus::Degraded);
+    }
+
+    #[test]
+    fn degraded_poll_preserves_existing_failure_count() {
+        let (failures, status) =
+            apply_hysteresis(&HostHealthStatus::Degraded, HostHealthStatus::Degraded, 2);
+        assert_eq!(failures, 2);
+        assert_eq!(status, HostHealthStatus::Degraded);
+    }
+
+    // ---- CRL-forced Unreachable from a Healthy natural status is not suppressed ----
+
+    #[test]
+    fn crl_invalid_unreachable_not_suppressed_by_hysteresis() {
+        // Agent responded (natural = Healthy) but CRL is invalid → effective = Unreachable.
+        // Hysteresis should NOT suppress this because it's not a connection failure.
+        let (failures, status) = apply_hysteresis(
+            &HostHealthStatus::Healthy,
+            HostHealthStatus::Unreachable, // CRL-forced
+            0,
+        );
+        assert_eq!(failures, 0);
+        assert_eq!(status, HostHealthStatus::Unreachable);
+    }
+
+    // ---- Flapping scenario: intermittent failures never reach threshold ----
+
+    #[test]
+    fn flapping_scenario_fail_success_fail_never_unreachable() {
+        // Simulate: fail, succeed, fail, succeed, fail
+        // The host should never reach Unreachable because each success resets the counter
+        let (f1, s1) = apply_hysteresis(
+            &HostHealthStatus::Unreachable,
+            HostHealthStatus::Unreachable,
+            0,
+        );
+        assert_eq!((f1, s1), (1, HostHealthStatus::Degraded));
+
+        let (f2, s2) = apply_hysteresis(&HostHealthStatus::Healthy, HostHealthStatus::Healthy, f1);
+        assert_eq!((f2, s2), (0, HostHealthStatus::Healthy));
+
+        let (f3, s3) = apply_hysteresis(
+            &HostHealthStatus::Unreachable,
+            HostHealthStatus::Unreachable,
+            f2,
+        );
+        assert_eq!((f3, s3), (1, HostHealthStatus::Degraded));
+
+        let (f4, s4) = apply_hysteresis(&HostHealthStatus::Healthy, HostHealthStatus::Healthy, f3);
+        assert_eq!((f4, s4), (0, HostHealthStatus::Healthy));
+
+        let (f5, s5) = apply_hysteresis(
+            &HostHealthStatus::Unreachable,
+            HostHealthStatus::Unreachable,
+            f4,
+        );
+        assert_eq!((f5, s5), (1, HostHealthStatus::Degraded));
+    }
+
+    // ---- Sustained failure scenario: 3 consecutive failures → Unreachable ----
+
+    #[test]
+    fn sustained_failures_reach_unreachable() {
+        let (f1, s1) = apply_hysteresis(
+            &HostHealthStatus::Unreachable,
+            HostHealthStatus::Unreachable,
+            0,
+        );
+        assert_eq!((f1, s1), (1, HostHealthStatus::Degraded));
+
+        let (f2, s2) = apply_hysteresis(
+            &HostHealthStatus::Unreachable,
+            HostHealthStatus::Unreachable,
+            f1,
+        );
+        assert_eq!((f2, s2), (2, HostHealthStatus::Degraded));
+
+        let (f3, s3) = apply_hysteresis(
+            &HostHealthStatus::Unreachable,
+            HostHealthStatus::Unreachable,
+            f2,
+        );
+        assert_eq!((f3, s3), (3, HostHealthStatus::Unreachable));
     }
 }
