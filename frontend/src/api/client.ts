@@ -18,10 +18,9 @@ import type {
   AdminResetPasswordRequest,
   UpdateUserRequest,
   CreateUserRequest,
-  AvailableVersion,
+  RepoAvailableVersion,
   TriggerUpgradeRequest,
   TriggerUpgradeResponse,
-  OsPackageMapping,
   CertHealthResponse,
   RegenerateCertsResponse,
 } from '../types'
@@ -419,11 +418,8 @@ export const enrollmentApi = {
 
 // ── Self-Upgrade API ────────────────────────────────────────────────────────
 export const upgradesApi = {
-  listAvailableVersions: () =>
-    apiClient.get<AvailableVersion[]>('/upgrades/available-versions'),
-
-  refreshVersions: () =>
-    apiClient.post<AvailableVersion[]>('/upgrades/refresh-versions'),
+  listAvailableVersions: (hostId: string) =>
+    apiClient.get<RepoAvailableVersion[]>(`/upgrades/available-versions?host_id=${hostId}`),
 
   triggerUpgrade: (req: TriggerUpgradeRequest) =>
     apiClient.post<TriggerUpgradeResponse>('/upgrades/trigger', req),
@@ -439,19 +435,4 @@ export const repoApi = {
 
   listPackages: () =>
     apiClient.get('/admin/repo/packages'),
-}
-
-// ── OS Package Mappings API ───────────────────────────────────────────────────
-export const osPackageMappingsApi = {
-  list: () =>
-    apiClient.get<OsPackageMapping[]>('/settings/os-package-mappings'),
-
-  create: (data: Omit<OsPackageMapping, 'id' | 'created_at' | 'updated_at' | 'is_default'>) =>
-    apiClient.post<OsPackageMapping>('/settings/os-package-mappings', data),
-
-  update: (id: string, data: Partial<OsPackageMapping>) =>
-    apiClient.put<OsPackageMapping>(`/settings/os-package-mappings/${id}`, data),
-
-  delete: (id: string) =>
-    apiClient.delete(`/settings/os-package-mappings/${id}`),
 }

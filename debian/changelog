@@ -1,6 +1,11 @@
 linux-patch-manager (1.3.12-1) unstable; urgency=low
 
   * Release v1.3.12
+  * fix: rewire self-upgrade to source from repo_packages, remove legacy tables
+  * fix: apt metadata codename token mapping (_u2404_ -> noble, etc)
+  * fix: version normalization in self-upgrade verification
+  * fix: fast-path version check prevents false success on no-op upgrades
+  * fix: server-side sorting, pagination, and health poller hysteresis
 
  -- git-echo <git-echo@moon-dragon.us>  Tue, 14 Jul 2026 00:25:00 -0500
 
