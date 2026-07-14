@@ -180,7 +180,7 @@ async fn list_hosts(
                 sql: "COALESCE(hpd.patch_count, 0) = 0".to_string(),
                 bind: String::new(),
             }),
-            _ => {}
+            _ => {},
         }
     }
 

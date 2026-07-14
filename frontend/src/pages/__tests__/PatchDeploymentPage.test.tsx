@@ -412,7 +412,7 @@ describe('PatchDeploymentPage cross-page selection', () => {
     // Delete the host-a chip from the review
     const alphaChip = screen.getByText('host-a').closest('.MuiChip-root')
     expect(alphaChip).toBeInTheDocument()
-    const deleteIcon = within(alphaChip!).getByTestId('CancelIcon')
+    const deleteIcon = within(alphaChip as HTMLElement).getByTestId('CancelIcon')
     await user.click(deleteIcon)
 
     // Should now show 1 host

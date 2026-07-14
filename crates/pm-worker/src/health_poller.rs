@@ -855,22 +855,16 @@ mod tests_hysteresis {
 
     #[test]
     fn degraded_poll_does_not_increment_failures() {
-        let (failures, status) = apply_hysteresis(
-            &HostHealthStatus::Degraded,
-            HostHealthStatus::Degraded,
-            0,
-        );
+        let (failures, status) =
+            apply_hysteresis(&HostHealthStatus::Degraded, HostHealthStatus::Degraded, 0);
         assert_eq!(failures, 0);
         assert_eq!(status, HostHealthStatus::Degraded);
     }
 
     #[test]
     fn degraded_poll_preserves_existing_failure_count() {
-        let (failures, status) = apply_hysteresis(
-            &HostHealthStatus::Degraded,
-            HostHealthStatus::Degraded,
-            2,
-        );
+        let (failures, status) =
+            apply_hysteresis(&HostHealthStatus::Degraded, HostHealthStatus::Degraded, 2);
         assert_eq!(failures, 2);
         assert_eq!(status, HostHealthStatus::Degraded);
     }
@@ -896,22 +890,31 @@ mod tests_hysteresis {
     fn flapping_scenario_fail_success_fail_never_unreachable() {
         // Simulate: fail, succeed, fail, succeed, fail
         // The host should never reach Unreachable because each success resets the counter
-        let (f1, s1) =
-            apply_hysteresis(&HostHealthStatus::Unreachable, HostHealthStatus::Unreachable, 0);
+        let (f1, s1) = apply_hysteresis(
+            &HostHealthStatus::Unreachable,
+            HostHealthStatus::Unreachable,
+            0,
+        );
         assert_eq!((f1, s1), (1, HostHealthStatus::Degraded));
 
         let (f2, s2) = apply_hysteresis(&HostHealthStatus::Healthy, HostHealthStatus::Healthy, f1);
         assert_eq!((f2, s2), (0, HostHealthStatus::Healthy));
 
-        let (f3, s3) =
-            apply_hysteresis(&HostHealthStatus::Unreachable, HostHealthStatus::Unreachable, f2);
+        let (f3, s3) = apply_hysteresis(
+            &HostHealthStatus::Unreachable,
+            HostHealthStatus::Unreachable,
+            f2,
+        );
         assert_eq!((f3, s3), (1, HostHealthStatus::Degraded));
 
         let (f4, s4) = apply_hysteresis(&HostHealthStatus::Healthy, HostHealthStatus::Healthy, f3);
         assert_eq!((f4, s4), (0, HostHealthStatus::Healthy));
 
-        let (f5, s5) =
-            apply_hysteresis(&HostHealthStatus::Unreachable, HostHealthStatus::Unreachable, f4);
+        let (f5, s5) = apply_hysteresis(
+            &HostHealthStatus::Unreachable,
+            HostHealthStatus::Unreachable,
+            f4,
+        );
         assert_eq!((f5, s5), (1, HostHealthStatus::Degraded));
     }
 
@@ -919,16 +922,25 @@ mod tests_hysteresis {
 
     #[test]
     fn sustained_failures_reach_unreachable() {
-        let (f1, s1) =
-            apply_hysteresis(&HostHealthStatus::Unreachable, HostHealthStatus::Unreachable, 0);
+        let (f1, s1) = apply_hysteresis(
+            &HostHealthStatus::Unreachable,
+            HostHealthStatus::Unreachable,
+            0,
+        );
         assert_eq!((f1, s1), (1, HostHealthStatus::Degraded));
 
-        let (f2, s2) =
-            apply_hysteresis(&HostHealthStatus::Unreachable, HostHealthStatus::Unreachable, f1);
+        let (f2, s2) = apply_hysteresis(
+            &HostHealthStatus::Unreachable,
+            HostHealthStatus::Unreachable,
+            f1,
+        );
         assert_eq!((f2, s2), (2, HostHealthStatus::Degraded));
 
-        let (f3, s3) =
-            apply_hysteresis(&HostHealthStatus::Unreachable, HostHealthStatus::Unreachable, f2);
+        let (f3, s3) = apply_hysteresis(
+            &HostHealthStatus::Unreachable,
+            HostHealthStatus::Unreachable,
+            f2,
+        );
         assert_eq!((f3, s3), (3, HostHealthStatus::Unreachable));
     }
 }
