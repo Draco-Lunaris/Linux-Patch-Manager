@@ -32,6 +32,8 @@ export interface Host {
   crl_next_update?: string
   gpg_key_status?: 'valid' | 'expired' | 'missing' | 'revoked'
   gpg_key_expires_at?: string
+  upgrade_available?: boolean
+  latest_version?: string
 }
 
 export interface CreateHostRequest {
@@ -452,27 +454,12 @@ export interface EnrollmentConflictResponse {
 
 // ── Self-Upgrade (Agent Upgrade) ──────────────────────────────────────────
 
-export interface AvailableVersion {
-  id: string
+export interface RepoAvailableVersion {
   version: string
-  download_url: string
-  checksum: string | null
+  distro: string
+  distro_codename: string | null
   file_name: string
-  source: string
-  prerelease: boolean
   published_at: string | null
-  fetched_at: string
-}
-
-export interface OsPackageMapping {
-  id: string
-  os_name: string
-  os_version: string
-  package_pattern: string
-  display_name: string
-  is_default: boolean
-  created_at: string
-  updated_at: string
 }
 
 export interface TriggerUpgradeRequest {

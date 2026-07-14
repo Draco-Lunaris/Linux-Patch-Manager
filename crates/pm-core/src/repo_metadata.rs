@@ -624,13 +624,30 @@ pub async fn generate_apt_metadata(repo_dir: &str, codename: &str) -> Result<(),
     std::fs::create_dir_all(&binary_dir)?;
 
     // Scan pool for .deb files matching this codename.
+    //
+    // The agent's .deb assets use filename tokens (`_u2404_`, `_u2204_`,
+    // `_u2604_`, `_debian12_`, `_debian13_`) rather than the apt suite
+    // codename. Map the codename back to its token(s) so the pool scan
+    // includes the file in the correct dists/<codename> index.
     let mut deb_files: Vec<String> = Vec::new();
+    let codename_lower = codename.to_ascii_lowercase();
+    let static_tokens: &[&str] = match codename_lower.as_str() {
+        "noble" => &["_u2404_", "noble"],
+        "jammy" => &["_u2204_", "jammy"],
+        "resolute" => &["_u2604_", "resolute"],
+        "bookworm" => &["_debian12_", "bookworm"],
+        "trixie" => &["_debian13_", "trixie"],
+        _ => &[],
+    };
     if let Ok(entries) = std::fs::read_dir(&pool_dir) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
             if name.ends_with(".deb") {
                 let lower = name.to_ascii_lowercase();
-                if lower.contains(codename) {
+                let matches_token =
+                    !static_tokens.is_empty() && static_tokens.iter().any(|t| lower.contains(t));
+                let matches_bare = lower.contains(&codename_lower);
+                if matches_token || matches_bare {
                     deb_files.push(entry.path().to_string_lossy().to_string());
                 }
             }

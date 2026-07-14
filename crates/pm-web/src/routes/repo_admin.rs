@@ -13,6 +13,29 @@ use axum::{
 };
 use serde_json::{json, Value};
 
+type SyncLogRow = (
+    uuid::Uuid,
+    String,
+    String,
+    i32,
+    i32,
+    Option<String>,
+    chrono::DateTime<chrono::Utc>,
+    Option<chrono::DateTime<chrono::Utc>>,
+);
+
+type PackageRow = (
+    uuid::Uuid,
+    String,
+    String,
+    String,
+    Option<String>,
+    String,
+    i64,
+    String,
+    chrono::DateTime<chrono::Utc>,
+);
+
 /// Admin-only repo management routes.
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -29,7 +52,6 @@ pub fn router() -> Router<AppState> {
 async fn trigger_sync(
     State(state): State<AppState>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    // Create a manual sync log entry.
     let sync_log_id: uuid::Uuid = match sqlx::query_scalar(
         "INSERT INTO repo_sync_log (triggered_by, status) VALUES ('manual', 'running') RETURNING id",
     )
@@ -46,7 +68,6 @@ async fn trigger_sync(
         }
     };
 
-    // Spawn the actual sync as a background task.
     let pool = state.db.clone();
     let config = state.config.clone();
     tokio::spawn(async move {
@@ -63,9 +84,6 @@ async fn trigger_sync(
 }
 
 /// Run a manual package sync cycle.
-///
-/// Fetches releases from GitHub API, downloads package assets, imports into
-/// reprepro/createrepo_c, and updates the sync_log entry.
 async fn run_manual_sync(
     pool: &sqlx::PgPool,
     config: &std::sync::Arc<pm_core::config::AppConfig>,
@@ -74,7 +92,6 @@ async fn run_manual_sync(
     let sync_config = &config.worker.package_sync;
     let repo_dir = &config.repo.dir;
 
-    // Run the shared sync logic (same code path as the scheduled worker).
     let result = match pm_core::repo_sync::run_sync_cycle(sync_config, repo_dir).await {
         Ok(r) => r,
         Err(e) => {
@@ -89,12 +106,15 @@ async fn run_manual_sync(
         },
     };
 
-    // Persist synced packages to repo_packages table.
     for pkg in &result.synced_packages {
         let _ = sqlx::query(
-            "INSERT INTO repo_packages (filename, version, distro, distro_codename, arch, file_size, sha256, source, sync_log_id)
-             VALUES ($1, $2, $3, $4, 'amd64', $5, $6, 'github', $7)
-             ON CONFLICT (filename, version, distro, arch) DO NOTHING",
+            "INSERT INTO repo_packages (filename, version, distro, distro_codename, arch, file_size, sha256, source, sync_log_id, published_at)
+             VALUES ($1, $2, $3, $4, 'amd64', $5, $6, 'github', $7, $8)
+             ON CONFLICT (filename, version, distro, arch) DO UPDATE SET
+                published_at = EXCLUDED.published_at,
+                distro_codename = EXCLUDED.distro_codename,
+                sha256 = EXCLUDED.sha256,
+                file_size = EXCLUDED.file_size",
         )
         .bind(&pkg.filename)
         .bind(&pkg.version)
@@ -103,10 +123,10 @@ async fn run_manual_sync(
         .bind(pkg.file_size)
         .bind(&pkg.sha256)
         .bind(sync_log_id)
+        .bind(pkg.published_at)
         .execute(pool).await;
     }
 
-    // Update sync_log with results.
     let status = if result.errors.is_empty() {
         "success"
     } else {
@@ -140,12 +160,10 @@ async fn run_manual_sync(
 }
 
 /// `GET /api/v1/admin/repo/sync-status`
-///
-/// Returns the status of the most recent sync operations.
 async fn sync_status(
     State(state): State<AppState>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let sync_logs: Vec<Value> = sqlx::query_as::<_, (uuid::Uuid, String, String, i32, i32, Option<String>, chrono::DateTime<chrono::Utc>, Option<chrono::DateTime<chrono::Utc>>)>(
+    let sync_logs: Vec<Value> = sqlx::query_as::<_, SyncLogRow>(
         "SELECT id, triggered_by, status, packages_synced, packages_skipped, error_message, started_at, finished_at
          FROM repo_sync_log ORDER BY started_at DESC LIMIT 10",
     )
@@ -175,7 +193,6 @@ async fn sync_status(
         )
     })?;
 
-    // Get total package count.
     let total_packages: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM repo_packages")
         .fetch_one(&state.db)
         .await
@@ -188,25 +205,10 @@ async fn sync_status(
 }
 
 /// `GET /api/v1/admin/repo/packages`
-///
-/// Lists all packages in the manager-hosted repo.
 async fn list_packages(
     State(state): State<AppState>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let packages: Vec<Value> = sqlx::query_as::<
-        _,
-        (
-            uuid::Uuid,
-            String,
-            String,
-            String,
-            Option<String>,
-            String,
-            i64,
-            String,
-            chrono::DateTime<chrono::Utc>,
-        ),
-    >(
+    let packages: Vec<Value> = sqlx::query_as::<_, PackageRow>(
         "SELECT id, filename, version, distro, distro_codename, arch, file_size, source, synced_at
          FROM repo_packages ORDER BY synced_at DESC LIMIT 200",
     )

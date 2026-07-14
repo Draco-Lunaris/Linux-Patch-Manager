@@ -210,7 +210,7 @@ async fn list_hosts(
     // ── Data query ───────────────────────────────────────────────────────────
     let (filter_clause, n_filter_params) = assign_placeholders(&filters, 1);
 
-    let hosts: Vec<HostSummary> = if is_admin {
+    let mut hosts: Vec<HostSummary> = if is_admin {
         let limit_idx = 1 + n_filter_params;
         let offset_idx = 2 + n_filter_params;
         let sql = format!(
@@ -234,7 +234,9 @@ async fn list_hosts(
                    ELSE 'all_healthy'
                  END AS health_check_status,
                    h.registered_at,
-                   h.crl_status
+                   h.crl_status,
+                   false AS upgrade_available,
+                   NULL::text AS latest_version
             FROM hosts h
             LEFT JOIN host_patch_data hpd ON hpd.host_id = h.id
             WHERE 1=1{filter_clause}
@@ -277,7 +279,9 @@ async fn list_hosts(
                    ELSE 'all_healthy'
                  END AS health_check_status,
                    h.registered_at,
-                   h.crl_status
+                   h.crl_status,
+                   false AS upgrade_available,
+                   NULL::text AS latest_version
             FROM hosts h
             LEFT JOIN host_patch_data hpd ON hpd.host_id = h.id
             WHERE
@@ -344,12 +348,80 @@ async fn list_hosts(
         query.fetch_one(&state.db).await.unwrap_or(0)
     };
 
+    // Compute upgrade_available and latest_version per host by querying
+    // repo_packages for each host's (distro, codename). Batch the distinct
+    // distro+codename pairs to avoid N+1 queries.
+    compute_upgrade_available(&mut hosts, &state.db).await;
+
     Ok(Json(HostListResponse {
         hosts,
         total,
         limit,
         offset,
     }))
+}
+
+/// Compute `upgrade_available` and `latest_version` for each host by
+/// querying `repo_packages` filtered by the host's OS → (distro, codename).
+///
+/// Batches the distinct (distro, codename) pairs to avoid N+1 queries.
+async fn compute_upgrade_available(hosts: &mut [HostSummary], pool: &sqlx::PgPool) {
+    use crate::routes::upgrades::map_os_to_distro;
+    use std::collections::HashMap;
+
+    // Collect distinct (distro, codename) pairs from the host list.
+    let mut distro_pairs: std::collections::HashSet<(String, Option<String>)> =
+        std::collections::HashSet::new();
+    for h in hosts.iter() {
+        if let Some(ref os_name) = h.os_name {
+            if let Some((distro, codename)) = map_os_to_distro(os_name) {
+                distro_pairs.insert((distro.to_string(), codename.map(String::from)));
+            }
+        }
+    }
+
+    // Batch-query the latest version for each (distro, codename) pair.
+    let mut latest_by_pair: HashMap<(String, Option<String>), String> = HashMap::new();
+    for (distro, codename) in &distro_pairs {
+        let latest: Option<(String,)> = sqlx::query_as(
+            r#"
+            SELECT version
+            FROM repo_packages
+            WHERE distro = $1
+              AND (distro_codename = $2 OR distro_codename IS NULL)
+            ORDER BY published_at DESC NULLS LAST, version DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(distro)
+        .bind(codename)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten();
+
+        if let Some((version,)) = latest {
+            latest_by_pair.insert((distro.clone(), codename.clone()), version);
+        }
+    }
+
+    // Set upgrade_available and latest_version on each host.
+    for h in hosts.iter_mut() {
+        if let Some(ref os_name) = h.os_name {
+            if let Some((distro, codename)) = map_os_to_distro(os_name) {
+                let key = (distro.to_string(), codename.map(String::from));
+                if let Some(latest) = latest_by_pair.get(&key) {
+                    h.latest_version = Some(latest.clone());
+                    // upgrade_available if agent_version is set and differs from latest.
+                    if let Some(ref current) = h.agent_version {
+                        let current_norm = current.split('-').next().unwrap_or(current);
+                        let latest_norm = latest.split('-').next().unwrap_or(latest);
+                        h.upgrade_available = current_norm != latest_norm;
+                    }
+                }
+            }
+        }
+    }
 }
 
 // ── POST /api/v1/hosts ────────────────────────────────────────────────────────
