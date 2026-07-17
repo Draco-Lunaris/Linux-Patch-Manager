@@ -382,8 +382,10 @@ pub async fn ensure_repo_directories(repo_dir: &str, _gpg_key_id: &str) -> Resul
     tracing::info!(repo_dir, "Package repo directory structure initialized");
 
     // Create apt pool directory structure for pure Rust metadata generation.
-    for codename in &["noble", "jammy", "bookworm", "trixie"] {
-        let pool_dir = format!("{repo_dir}/apt/dists/{codename}/main/binary-amd64");
+    // Suite names are the filename tokens (u2404, debian12, etc.) — no
+    // codename indirection. See repo_metadata::APT_SUITES.
+    for suite in crate::repo_metadata::APT_SUITES {
+        let pool_dir = format!("{repo_dir}/apt/dists/{suite}/main/binary-amd64");
         tokio::fs::create_dir_all(&pool_dir)
             .await
             .map_err(|e| GpgError::CommandFailed(format!("Failed to create {pool_dir}: {e}")))?;
@@ -629,14 +631,12 @@ mod tests {
         assert!(std::path::Path::new(&format!("{repo_dir}/pacman/x86_64")).exists());
         assert!(std::path::Path::new(&format!("{repo_dir}/tmp")).exists());
 
-        // Verify apt pool directories were created for all codenames.
-        for codename in &["noble", "jammy", "bookworm", "trixie"] {
+        // Verify apt pool directories were created for all suites.
+        for suite in crate::repo_metadata::APT_SUITES {
             assert!(
-                std::path::Path::new(&format!(
-                    "{repo_dir}/apt/dists/{codename}/main/binary-amd64"
-                ))
-                .exists(),
-                "apt pool directory should exist for {codename}"
+                std::path::Path::new(&format!("{repo_dir}/apt/dists/{suite}/main/binary-amd64"))
+                    .exists(),
+                "apt pool directory should exist for {suite}"
             );
         }
     }

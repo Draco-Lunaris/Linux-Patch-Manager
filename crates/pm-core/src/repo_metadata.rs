@@ -608,48 +608,37 @@ pub fn parse_pacman_pkg(file_path: &str) -> Result<PacmanInfo, anyhow::Error> {
 
 // ===== APT metadata generation =====
 
+/// All supported apt suite names. Each corresponds to a filename token in
+/// the .deb assets (e.g. `u2404` matches `_u2404_` in the filename).
+/// The suite name IS the token — no codename indirection.
+pub const APT_SUITES: &[&str] = &["u2404", "u2204", "u2604", "debian12", "debian13"];
+
 /// Generate apt repository metadata (Packages, Packages.gz, Release,
 /// InRelease, Release.gpg) in pure Rust.
 ///
-/// Replaces `reprepro includedeb`.
-pub async fn generate_apt_metadata(repo_dir: &str, codename: &str) -> Result<(), anyhow::Error> {
+/// `suite` is the apt suite name which also serves as the filename token.
+/// The pool is scanned for .deb files containing `_<suite>_` in their name.
+/// This direct match eliminates any codename-to-token mapping.
+pub async fn generate_apt_metadata(repo_dir: &str, suite: &str) -> Result<(), anyhow::Error> {
     use crate::gpg;
 
     let apt_root = format!("{repo_dir}/apt");
     let pool_dir = format!("{apt_root}/pool");
-    let dists_dir = format!("{apt_root}/dists/{codename}");
+    let dists_dir = format!("{apt_root}/dists/{suite}");
     let binary_dir = format!("{dists_dir}/main/binary-amd64");
 
     // Ensure directories exist.
     std::fs::create_dir_all(&binary_dir)?;
 
-    // Scan pool for .deb files matching this codename.
-    //
-    // The agent's .deb assets use filename tokens (`_u2404_`, `_u2204_`,
-    // `_u2604_`, `_debian12_`, `_debian13_`) rather than the apt suite
-    // codename. Map the codename back to its token(s) so the pool scan
-    // includes the file in the correct dists/<codename> index.
+    // Scan pool for .deb files matching this suite.
+    // The suite name appears in the filename as `_<suite>_` (e.g. `_u2404_`).
+    let token = format!("_{suite}_");
     let mut deb_files: Vec<String> = Vec::new();
-    let codename_lower = codename.to_ascii_lowercase();
-    let static_tokens: &[&str] = match codename_lower.as_str() {
-        "noble" => &["_u2404_", "noble"],
-        "jammy" => &["_u2204_", "jammy"],
-        "resolute" => &["_u2604_", "resolute"],
-        "bookworm" => &["_debian12_", "bookworm"],
-        "trixie" => &["_debian13_", "trixie"],
-        _ => &[],
-    };
     if let Ok(entries) = std::fs::read_dir(&pool_dir) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".deb") {
-                let lower = name.to_ascii_lowercase();
-                let matches_token =
-                    !static_tokens.is_empty() && static_tokens.iter().any(|t| lower.contains(t));
-                let matches_bare = lower.contains(&codename_lower);
-                if matches_token || matches_bare {
-                    deb_files.push(entry.path().to_string_lossy().to_string());
-                }
+            if name.ends_with(".deb") && name.to_ascii_lowercase().contains(&token) {
+                deb_files.push(entry.path().to_string_lossy().to_string());
             }
         }
     }
@@ -697,7 +686,7 @@ pub async fn generate_apt_metadata(repo_dir: &str, codename: &str) -> Result<(),
 
     // Generate Release file.
     let release_path = format!("{dists_dir}/Release");
-    let release_content = generate_apt_release(&binary_dir, codename)?;
+    let release_content = generate_apt_release(&binary_dir, suite)?;
     std::fs::write(&release_path, &release_content)?;
 
     // Sign Release → InRelease (clearsigned) and Release.gpg (detached).
@@ -714,8 +703,112 @@ pub async fn generate_apt_metadata(repo_dir: &str, codename: &str) -> Result<(),
     Ok(())
 }
 
-/// Generate the apt Release file content.
-fn generate_apt_release(binary_dir: &str, codename: &str) -> Result<String, anyhow::Error> {
+/// Regenerate apt metadata for all supported suites. Called after a sync
+/// cycle to ensure every `dists/<suite>/` index reflects the current pool.
+///
+/// Also prunes stale .deb files: removes files matching no known suite token
+/// and keeps only the latest version per (package, suite).
+pub async fn regenerate_all_apt_metadata(repo_dir: &str) -> Vec<(String, String)> {
+    // Prune stale packages first.
+    if let Err(e) = prune_stale_apt_packages(repo_dir).await {
+        tracing::warn!(error = %e, "Stale package cleanup failed (non-fatal)");
+    }
+
+    let mut errors = Vec::new();
+    for suite in APT_SUITES {
+        if let Err(e) = generate_apt_metadata(repo_dir, suite).await {
+            tracing::warn!(suite, error = %e, "Failed to regenerate apt metadata");
+            errors.push((suite.to_string(), e.to_string()));
+        }
+    }
+    errors
+}
+
+/// Prune stale .deb files from the apt pool. Removes files that don't match
+/// any known suite token and keeps only the latest version per
+/// (package_name, suite) — older versions are deleted to prevent the pool
+/// from growing unboundedly.
+pub async fn prune_stale_apt_packages(repo_dir: &str) -> Result<usize, anyhow::Error> {
+    let pool_dir = format!("{repo_dir}/apt/pool");
+
+    if !tokio::fs::try_exists(&pool_dir).await? {
+        return Ok(0);
+    }
+
+    // Collect .deb files: (path, package_name, version, suite_token)
+    let mut entries: Vec<(String, String, String, String)> = Vec::new();
+    let mut reader = tokio::fs::read_dir(&pool_dir).await?;
+
+    while let Some(entry) = reader.next_entry().await? {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.ends_with(".deb") {
+            continue;
+        }
+
+        let lower = name.to_ascii_lowercase();
+
+        // Find which suite token this file matches.
+        let suite = APT_SUITES
+            .iter()
+            .find(|s| lower.contains(&format!("_{s}_")));
+
+        let suite = match suite {
+            Some(s) => s.to_string(),
+            None => {
+                // Orphaned file — remove it.
+                let path = entry.path();
+                if let Err(e) = tokio::fs::remove_file(&path).await {
+                    tracing::warn!(file = %name, error = %e, "Failed to remove orphaned .deb");
+                } else {
+                    tracing::info!(file = %name, "Pruned orphaned .deb (no suite token match)");
+                }
+                continue;
+            },
+        };
+
+        // Parse the .deb for package name and version.
+        let path = entry.path().to_string_lossy().to_string();
+        let (package_name, version) = match parse_deb_control(&path) {
+            Ok(c) => (c.package, c.version),
+            Err(e) => {
+                tracing::warn!(file = %name, error = %e, "Failed to parse .deb for pruning");
+                continue;
+            },
+        };
+
+        entries.push((path, package_name, version, suite));
+    }
+
+    // Group by (package_name, suite) and keep only the latest version.
+    let mut groups: std::collections::BTreeMap<(String, String), Vec<(String, String)>> =
+        std::collections::BTreeMap::new();
+
+    for (path, pkg, version, suite) in &entries {
+        groups
+            .entry((pkg.clone(), suite.clone()))
+            .or_default()
+            .push((path.clone(), version.clone()));
+    }
+
+    let mut removed = 0usize;
+    for ((pkg, suite), mut versions) in groups {
+        if versions.len() <= 1 {
+            continue;
+        }
+        versions.sort_by(|a, b| b.1.cmp(&a.1));
+        for (path, version) in versions.iter().skip(1) {
+            if let Err(e) = tokio::fs::remove_file(path).await {
+                tracing::warn!(file = %path, error = %e, "Failed to prune stale .deb");
+            } else {
+                tracing::info!(package = %pkg, suite = %suite, version = %version, "Pruned stale .deb");
+                removed += 1;
+            }
+        }
+    }
+
+    Ok(removed)
+}
+fn generate_apt_release(binary_dir: &str, suite: &str) -> Result<String, anyhow::Error> {
     let date = chrono::Utc::now()
         .format("%a, %d %b %Y %H:%M:%S +0000")
         .to_string();
@@ -723,8 +816,8 @@ fn generate_apt_release(binary_dir: &str, codename: &str) -> Result<String, anyh
     let mut content = String::new();
     content.push_str("Origin: Linux Patch Manager\n");
     content.push_str("Label: Linux Patch Manager\n");
-    content.push_str(&format!("Suite: {codename}\n"));
-    content.push_str(&format!("Codename: {codename}\n"));
+    content.push_str(&format!("Suite: {suite}\n"));
+    content.push_str(&format!("Codename: {suite}\n"));
     content.push_str(&format!("Date: {date}\n"));
     content.push_str("Architectures: amd64\n");
     content.push_str("Components: main\n");

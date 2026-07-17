@@ -435,4 +435,7 @@ export const repoApi = {
 
   listPackages: () =>
     apiClient.get('/admin/repo/packages'),
+
+  regenerateMetadata: () =>
+    apiClient.post('/admin/repo/regenerate-metadata'),
 }

@@ -258,52 +258,59 @@ pub fn detect_distro_id(os_family: Option<&str>, os_name: Option<&str>) -> Optio
     }
 }
 
-/// Generate distro-specific sources_config and keyring_path for a given distro_id.
+/// Map an OS version string to the corresponding apt suite token.
 ///
-/// Returns `None` if the distro is not supported.
-/// Map an OS version string to the corresponding apt repo codename.
+/// The suite token is the same identifier that appears in the .deb filename
+/// (e.g. `u2404` for Ubuntu 24.04, `debian12` for Debian 12). It is used
+/// directly as the `dists/<suite>/` directory name and the apt suite in
+/// `sources.list` — no codename intermediary.
 ///
-/// Ubuntu and Debian use codename-based apt repos. This function maps
-/// the VERSION_ID from /etc/os-release to the codename used by reprepro.
 /// Returns None for unrecognized versions (caller falls back to None).
-pub fn detect_apt_codename(os_version: Option<&str>) -> Option<String> {
+pub fn detect_apt_suite(os_version: Option<&str>) -> Option<String> {
     let ver = os_version.unwrap_or_default().to_ascii_lowercase();
-    // Ubuntu codenames
+    // Ubuntu
     if ver == "24.04" || ver.contains("24.04") {
-        Some("noble".to_string())
+        Some("u2404".to_string())
     } else if ver == "22.04" || ver.contains("22.04") {
-        Some("jammy".to_string())
-    // Debian codenames
+        Some("u2204".to_string())
+    } else if ver == "26.04" || ver.contains("26.04") {
+        Some("u2604".to_string())
+    // Debian
     } else if ver == "12" || ver.starts_with("12.") {
-        Some("bookworm".to_string())
+        Some("debian12".to_string())
     } else if ver == "13" || ver.starts_with("13.") {
-        Some("trixie".to_string())
+        Some("debian13".to_string())
     } else {
         None
     }
 }
 
+/// Generate distro-specific sources_config and keyring_path for a given distro_id.
+///
+/// `suite` is the apt suite token (e.g. `u2404`, `debian12`) which is used
+/// directly in the `sources.list` line and matches the `dists/<suite>/`
+/// directory. For non-apt distros, this parameter is ignored.
+///
+/// Returns `None` if the distro is not supported.
 pub fn generate_distro_config(
     distro_id: &str,
     repo_url_base: &str,
-    codename: Option<&str>,
+    suite: Option<&str>,
 ) -> Option<(String, String)> {
     let base = repo_url_base.trim_end_matches('/');
     if distro_id == "ubuntu" || distro_id == "debian" {
-        // Use distro-appropriate default codename — never give Debian an
-        // Ubuntu suite name. (Gap analysis HIGH-3)
-        let suite = match codename {
-            Some(c) => c,
+        // Default to u2404 for Ubuntu, debian12 for Debian if not specified.
+        let s = match suite {
+            Some(s) => s,
             None => {
                 if distro_id == "debian" {
-                    "bookworm"
+                    "debian12"
                 } else {
-                    "noble"
+                    "u2404"
                 }
             },
         };
-        let sources =
-            format!("deb [signed-by=/etc/apt/keyrings/lpa-repo.gpg] {base}/apt {suite} main");
+        let sources = format!("deb [signed-by=/etc/apt/keyrings/lpa-repo.gpg] {base}/apt {s} main");
         let keyring = "/etc/apt/keyrings/lpa-repo.gpg".to_string();
         Some((sources, keyring))
     } else if distro_id == "fedora" || distro_id == "almalinux" {

@@ -6,6 +6,7 @@ import {
 } from '@mui/material'
 import {
   Sync as SyncIcon, Store as PackageIcon, CloudDownload as DownloadIcon,
+  Refresh as RefreshIcon,
 } from '@mui/icons-material'
 import { repoApi } from '../api/client'
 
@@ -42,6 +43,7 @@ export default function RepoManagementPage() {
   const [packages, setPackages] = useState<RepoPackage[]>([])
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
+  const [regenerating, setRegenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [syncDialogOpen, setSyncDialogOpen] = useState(false)
 
@@ -76,6 +78,17 @@ export default function RepoManagementPage() {
       setError(e instanceof Error ? e.message : 'Failed to trigger sync')
     } finally {
       setSyncing(false)
+    }
+  }
+
+  const handleRegenerateMetadata = async () => {
+    setRegenerating(true)
+    try {
+      await repoApi.regenerateMetadata()
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to trigger metadata regeneration')
+    } finally {
+      setRegenerating(false)
     }
   }
 
@@ -143,6 +156,14 @@ export default function RepoManagementPage() {
           disabled={syncing}
         >
           {syncing ? 'Syncing...' : 'Trigger Sync'}
+        </Button>
+        <Button
+          variant="outlined"
+          startIcon={regenerating ? <CircularProgress size={20} /> : <RefreshIcon />}
+          onClick={handleRegenerateMetadata}
+          disabled={regenerating}
+        >
+          {regenerating ? 'Regenerating...' : 'Regenerate Metadata'}
         </Button>
         <Button variant="outlined" startIcon={<DownloadIcon />} onClick={fetchData}>
           Refresh

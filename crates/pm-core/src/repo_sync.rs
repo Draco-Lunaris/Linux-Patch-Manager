@@ -138,7 +138,7 @@ pub async fn import_to_repo(
 
     match distro {
         "apt" => {
-            let codename = codename.unwrap_or("noble");
+            let suite = codename.unwrap_or("u2404");
 
             // Copy .deb to apt pool directory.
             let pool_dir = format!("{repo_dir}/apt/pool");
@@ -151,7 +151,7 @@ pub async fn import_to_repo(
             tokio::fs::copy(file_path, &dest).await?;
 
             // Generate apt metadata (Packages, Release, InRelease, Release.gpg).
-            repo_metadata::generate_apt_metadata(repo_dir, codename).await?;
+            repo_metadata::generate_apt_metadata(repo_dir, suite).await?;
         },
         "dnf" => {
             // Copy RPM to dnf repo Packages directory.
@@ -258,42 +258,23 @@ pub fn detect_distro_from_filename(name: &str) -> Option<String> {
     }
 }
 
-/// Detect codename from filename patterns.
+/// Detect the apt suite (filename token) from a .deb filename.
 ///
-/// Recognizes both Debian-suite codenames (`noble`, `jammy`, `bookworm`,
-/// `trixie`, `resolute`) and the `os_package_mappings` filename tokens
-/// (`_u2404_`, `_u2204_`, `_u2604_`, `_debian12_`, `_debian13_`) that the
-/// agent's .deb assets use. The token form is mapped to the corresponding
-/// apt suite so that `generate_apt_metadata` (which scans the pool by
-/// codename) includes the file in the correct
-/// `dists/<codename>/main/binary-amd64/Packages` index.
+/// The suite name IS the token that appears in the filename (e.g. `u2404`
+/// from `linux-patch-api_2.4.2_u2404_amd64.deb`). No codename mapping —
+/// the token is used directly as the `dists/<suite>/` directory name and
+/// the apt suite in `sources.list`.
 ///
-/// Expected patterns:
-/// - `*_noble_amd64.deb`, `*_jammy_amd64.deb`, `*_bookworm_amd64.deb`,
-///   `*_trixie_amd64.deb`, `*_resolute_amd64.deb`
-/// - `*_u2404_amd64.deb` → `noble`, `*_u2204_amd64.deb` → `jammy`,
-///   `*_u2604_amd64.deb` → `resolute`, `*_debian12_amd64.deb` → `bookworm`,
-///   `*_debian13_amd64.deb` → `trixie`
-/// - `*_el9.x86_64.rpm`, `*_fc43.x86_64.rpm`, etc.
+/// For non-apt distros, returns the sub-directory identifier (e.g. `el9`,
+/// `v3.21`, `x86_64`).
 pub fn detect_codename_from_filename(name: &str, distro: &str) -> Option<String> {
     let lower = name.to_ascii_lowercase();
     match distro {
         "apt" => {
-            let token_to_codename: &[(&str, &str)] = &[
-                ("_u2404_", "noble"),
-                ("_u2204_", "jammy"),
-                ("_u2604_", "resolute"),
-                ("_debian12_", "bookworm"),
-                ("_debian13_", "trixie"),
-            ];
-            for (token, codename) in token_to_codename {
-                if lower.contains(token) {
-                    return Some((*codename).to_string());
-                }
-            }
-            for codename in &["noble", "jammy", "bookworm", "trixie", "resolute"] {
-                if lower.contains(codename) {
-                    return Some((*codename).to_string());
+            // The token appears as _<token>_ in the filename.
+            for suite in crate::repo_metadata::APT_SUITES {
+                if lower.contains(&format!("_{suite}_")) {
+                    return Some(suite.to_string());
                 }
             }
             None
@@ -395,6 +376,15 @@ pub async fn run_sync_cycle(
         }
     }
 
+    // Regenerate apt metadata for all suites so every dists/<suite>/ index
+    // reflects the current pool contents. Also prunes stale .deb files.
+    let metadata_errors = crate::repo_metadata::regenerate_all_apt_metadata(repo_dir).await;
+    for (suite, error) in metadata_errors {
+        result.errors.push(format!(
+            "apt metadata regeneration failed for {suite}: {error}"
+        ));
+    }
+
     Ok(result)
 }
 
@@ -404,7 +394,7 @@ mod tests {
 
     #[test]
     fn test_is_package_file_recognizes_all_formats() {
-        assert!(is_package_file("linux-patch-api_1.0.0_noble_amd64.deb"));
+        assert!(is_package_file("linux-patch-api_1.0.0_u2404_amd64.deb"));
         assert!(is_package_file("linux-patch-api-1.0.0-1.el9.x86_64.rpm"));
         assert!(is_package_file("linux-patch-api-1.0.0-r0.apk"));
         assert!(is_package_file(
@@ -423,7 +413,7 @@ mod tests {
     #[test]
     fn test_detect_distro_deb() {
         assert_eq!(
-            detect_distro_from_filename("pkg_1.0_noble_amd64.deb"),
+            detect_distro_from_filename("pkg_1.0_u2404_amd64.deb"),
             Some("apt".to_string())
         );
     }
@@ -458,39 +448,47 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_codename_apt_noble() {
+    fn test_detect_suite_apt_u2404() {
         assert_eq!(
-            detect_codename_from_filename("pkg_1.0_noble_amd64.deb", "apt"),
-            Some("noble".to_string())
+            detect_codename_from_filename("linux-patch-api_1.5.6_u2404_amd64.deb", "apt"),
+            Some("u2404".to_string())
         );
     }
 
     #[test]
-    fn test_detect_codename_apt_jammy() {
+    fn test_detect_suite_apt_u2204() {
         assert_eq!(
-            detect_codename_from_filename("pkg_1.0_jammy_amd64.deb", "apt"),
-            Some("jammy".to_string())
+            detect_codename_from_filename("linux-patch-api_1.5.6_u2204_amd64.deb", "apt"),
+            Some("u2204".to_string())
         );
     }
 
     #[test]
-    fn test_detect_codename_apt_bookworm() {
+    fn test_detect_suite_apt_u2604() {
         assert_eq!(
-            detect_codename_from_filename("pkg_1.0_bookworm_amd64.deb", "apt"),
-            Some("bookworm".to_string())
+            detect_codename_from_filename("linux-patch-api_2.1.1_u2604_amd64.deb", "apt"),
+            Some("u2604".to_string())
         );
     }
 
     #[test]
-    fn test_detect_codename_apt_trixie() {
+    fn test_detect_suite_apt_debian12() {
         assert_eq!(
-            detect_codename_from_filename("pkg_1.0_trixie_amd64.deb", "apt"),
-            Some("trixie".to_string())
+            detect_codename_from_filename("linux-patch-api_1.5.6_debian12_amd64.deb", "apt"),
+            Some("debian12".to_string())
         );
     }
 
     #[test]
-    fn test_detect_codename_dnf_el9() {
+    fn test_detect_suite_apt_debian13() {
+        assert_eq!(
+            detect_codename_from_filename("linux-patch-api_1.5.6_debian13_amd64.deb", "apt"),
+            Some("debian13".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_suite_dnf_el9() {
         assert_eq!(
             detect_codename_from_filename("pkg-1.0.el9.x86_64.rpm", "dnf"),
             Some("el9".to_string())
@@ -498,7 +496,7 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_codename_apk_v321() {
+    fn test_detect_suite_apk_v321() {
         assert_eq!(
             detect_codename_from_filename("pkg-1.0-v3.21.apk", "apk"),
             Some("v3.21".to_string())
@@ -506,7 +504,7 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_codename_pacman() {
+    fn test_detect_suite_pacman() {
         assert_eq!(
             detect_codename_from_filename("pkg-1.0-1-x86_64.pkg.tar.zst", "pacman"),
             Some("x86_64".to_string())
@@ -514,55 +512,15 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_codename_unknown_distro() {
+    fn test_detect_suite_unknown_distro() {
         assert_eq!(detect_codename_from_filename("file.deb", "unknown"), None);
     }
 
     #[test]
-    fn test_detect_codename_apt_not_found() {
+    fn test_detect_suite_apt_not_found() {
         assert_eq!(
             detect_codename_from_filename("pkg_1.0_amd64.deb", "apt"),
             None
-        );
-    }
-
-    #[test]
-    fn test_detect_codename_apt_u2404_maps_to_noble() {
-        assert_eq!(
-            detect_codename_from_filename("linux-patch-api_1.5.6_u2404_amd64.deb", "apt"),
-            Some("noble".to_string())
-        );
-    }
-
-    #[test]
-    fn test_detect_codename_apt_u2204_maps_to_jammy() {
-        assert_eq!(
-            detect_codename_from_filename("linux-patch-api_1.5.6_u2204_amd64.deb", "apt"),
-            Some("jammy".to_string())
-        );
-    }
-
-    #[test]
-    fn test_detect_codename_apt_u2604_maps_to_resolute() {
-        assert_eq!(
-            detect_codename_from_filename("linux-patch-api_2.1.1_u2604_amd64.deb", "apt"),
-            Some("resolute".to_string())
-        );
-    }
-
-    #[test]
-    fn test_detect_codename_apt_debian12_maps_to_bookworm() {
-        assert_eq!(
-            detect_codename_from_filename("linux-patch-api_1.5.6_debian12_amd64.deb", "apt"),
-            Some("bookworm".to_string())
-        );
-    }
-
-    #[test]
-    fn test_detect_codename_apt_debian13_maps_to_trixie() {
-        assert_eq!(
-            detect_codename_from_filename("linux-patch-api_1.5.6_debian13_amd64.deb", "apt"),
-            Some("trixie".to_string())
         );
     }
 
@@ -572,7 +530,7 @@ mod tests {
             filename: "test.deb".to_string(),
             version: "v1.0.0".to_string(),
             distro: "apt".to_string(),
-            distro_codename: Some("noble".to_string()),
+            distro_codename: Some("u2404".to_string()),
             file_size: 1024,
             sha256: Some("abc123".to_string()),
             published_at: None,

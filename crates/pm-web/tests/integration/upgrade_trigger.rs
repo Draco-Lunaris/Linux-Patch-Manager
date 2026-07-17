@@ -100,7 +100,7 @@ async fn test_trigger_operator_allowed() {
 
     sqlx::query(
         r#"INSERT INTO repo_packages (filename, version, distro, distro_codename, arch, file_size, source)
-           VALUES ('linux-patch-api_2.0.0-test-op_u2404_amd64.deb', '2.0.0-test-op', 'apt', 'noble', 'amd64', 1000, 'test')
+           VALUES ('linux-patch-api_2.0.0-test-op_u2404_amd64.deb', '2.0.0-test-op', 'apt', 'u2404', 'amd64', 1000, 'test')
            ON CONFLICT (filename, version, distro, arch) DO NOTHING"#,
     )
     .execute(&pool)
@@ -177,7 +177,7 @@ async fn test_trigger_unknown_version_skipped() {
     // Seed a version that is NOT the target
     sqlx::query(
         r#"INSERT INTO repo_packages (filename, version, distro, distro_codename, arch, file_size, source)
-           VALUES ('linux-patch-api_2.0.0_u2404_amd64.deb', '2.0.0', 'apt', 'noble', 'amd64', 1000, 'test')
+           VALUES ('linux-patch-api_2.0.0_u2404_amd64.deb', '2.0.0', 'apt', 'u2404', 'amd64', 1000, 'test')
            ON CONFLICT (filename, version, distro, arch) DO NOTHING"#,
     )
     .execute(&pool)
@@ -250,7 +250,7 @@ async fn test_trigger_hosts_already_at_version_skipped() {
 
     sqlx::query(
         r#"INSERT INTO repo_packages (filename, version, distro, distro_codename, arch, file_size, source)
-           VALUES ('linux-patch-api_2.0.0-test-skip_u2404_amd64.deb', '2.0.0-test-skip', 'apt', 'noble', 'amd64', 1000, 'test')
+           VALUES ('linux-patch-api_2.0.0-test-skip_u2404_amd64.deb', '2.0.0-test-skip', 'apt', 'u2404', 'amd64', 1000, 'test')
            ON CONFLICT (filename, version, distro, arch) DO NOTHING"#,
     )
     .execute(&pool)
