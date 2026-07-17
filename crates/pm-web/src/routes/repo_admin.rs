@@ -42,6 +42,7 @@ pub fn router() -> Router<AppState> {
         .route("/repo/sync", post(trigger_sync))
         .route("/repo/sync-status", get(sync_status))
         .route("/repo/packages", get(list_packages))
+        .route("/repo/regenerate-metadata", post(regenerate_metadata))
 }
 
 /// `POST /api/v1/admin/repo/sync`
@@ -243,4 +244,32 @@ async fn list_packages(
         "packages": packages,
         "count": packages.len(),
     })))
+}
+
+/// `POST /api/v1/admin/repo/regenerate-metadata`
+///
+/// Regenerate apt repository metadata for all suites. Also prunes stale
+/// .deb files from the pool. Useful after manual package uploads or GPG
+/// key rotation.
+async fn regenerate_metadata(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let repo_dir = state.config.repo.dir.clone();
+
+    tokio::spawn(async move {
+        tracing::info!("Manual metadata regeneration started");
+        let errors = pm_core::repo_metadata::regenerate_all_apt_metadata(&repo_dir).await;
+        if errors.is_empty() {
+            tracing::info!("Manual metadata regeneration completed successfully");
+        } else {
+            tracing::warn!(
+                error_count = errors.len(),
+                "Metadata regeneration completed with errors"
+            );
+        }
+    });
+
+    Ok(Json(
+        json!({ "message": "Metadata regeneration triggered" }),
+    ))
 }

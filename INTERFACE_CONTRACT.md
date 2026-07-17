@@ -229,7 +229,7 @@ No custom scripts (`self-update.sh`), detached systemd units, marker files, heal
   "data": {
     "repo_config": {
       "gpg_public_key": "-----BEGIN PGP PUBLIC KEY BLOCK-----\n...\n-----END PGP PUBLIC KEY BLOCK-----",
-      "sources_config": "deb [signed-by=/etc/apt/keyrings/lpa-repo.gpg] http://manager.moon-dragon.us/apt noble main",
+      "sources_config": "deb [signed-by=/etc/apt/keyrings/lpa-repo.gpg] http://manager.moon-dragon.us/apt u2404 main",
       "distro_id": "ubuntu",
       "keyring_path": "/etc/apt/keyrings/lpa-repo.gpg"
     }

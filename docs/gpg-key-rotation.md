@@ -73,13 +73,10 @@ Store on the manager host at `/etc/patch-manager/ca/` (per-manager, NEVER in Vau
 ### 3. Update Repo Configuration
 
 ```bash
-# Re-sign apt metadata (pure Rust generation)
-# Edit /var/www/lpa-repo/apt/conf/distributions
-# Replace old key ID with new key ID in all SignWith lines
-
-# Re-sign all repo metadata
-# Re-run repo sync to regenerate signed metadata with new GPG key
-# Re-run repo sync to regenerate signed metadata with new GPG key
+# The manager's GPG key is configured in /etc/patch-manager/ca/lpa-repo-private-key.asc
+# After replacing the key files, trigger metadata regeneration:
+#   POST /api/v1/admin/repo/regenerate-metadata
+# Or trigger a repo sync which regenerates all metadata automatically.
 ```
 
 ### 4. Re-enroll Agents

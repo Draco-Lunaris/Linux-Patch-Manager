@@ -11,7 +11,7 @@ use pm_auth::AuthUser;
 use pm_core::{
     db,
     models::{
-        detect_apt_codename, detect_distro_id, generate_distro_config, ApprovedEntry,
+        detect_apt_suite, detect_distro_id, generate_distro_config, ApprovedEntry,
         CreateEnrollmentRequest, EnrollmentRequest, EnrollmentStatusResponse, Host, PkiBundle,
         RepoConfig,
     },
@@ -341,7 +341,7 @@ async fn approve_enrollment(
                     .get("codename")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string())
-                    .or_else(|| detect_apt_codename(os_version));
+                    .or_else(|| detect_apt_suite(os_version));
                 match generate_distro_config(&distro_id, &repo_cfg.url_base, codename.as_deref()) {
                     Some((sources_config, keyring_path)) => {
                         match std::fs::read_to_string(&repo_cfg.gpg_public_key_path) {

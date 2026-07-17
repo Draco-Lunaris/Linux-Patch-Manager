@@ -43,7 +43,7 @@ async fn test_available_versions_list() {
 
     sqlx::query(
         r#"INSERT INTO repo_packages (filename, version, distro, distro_codename, arch, file_size, source)
-           VALUES ('linux-patch-api_2.0.0_u2404_amd64.deb', '2.0.0', 'apt', 'noble', 'amd64', 1000, 'test')
+           VALUES ('linux-patch-api_2.0.0_u2404_amd64.deb', '2.0.0', 'apt', 'u2404', 'amd64', 1000, 'test')
            ON CONFLICT (filename, version, distro, arch) DO NOTHING"#,
     )
     .execute(&pool)

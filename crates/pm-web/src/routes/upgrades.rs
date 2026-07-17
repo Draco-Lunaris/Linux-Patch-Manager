@@ -68,33 +68,32 @@ pub struct TriggerUpgradeResponse {
 
 // ── OS → (distro, codename) mapping ──────────────────────────────────────────
 
-/// Map a host's `os_name` to `(distro, codename)` for `repo_packages` filtering.
+/// Map a host's `os_name` to `(distro, suite)` for `repo_packages` filtering.
 ///
-/// This replaces the legacy `os_package_mappings` table + `lookup_package_pattern`.
-/// The mapping is hardcoded — it matches the agent's .deb asset naming conventions
-/// and the apt suite codenames used in `generate_distro_config`.
+/// The suite is the filename token (e.g. `u2404`, `debian12`) used directly
+/// as the `dists/<suite>/` directory name. No codename intermediary.
 pub(crate) fn map_os_to_distro(os_name: &str) -> Option<(&'static str, Option<&'static str>)> {
     let lower = os_name.to_ascii_lowercase();
     if lower.starts_with("ubuntu") {
-        let codename = if lower.contains("24.04") {
-            "noble"
+        let suite = if lower.contains("24.04") {
+            "u2404"
         } else if lower.contains("22.04") {
-            "jammy"
+            "u2204"
         } else if lower.contains("26.04") {
-            "resolute"
+            "u2604"
         } else {
             return Some(("apt", None));
         };
-        Some(("apt", Some(codename)))
+        Some(("apt", Some(suite)))
     } else if lower.starts_with("debian") {
-        let codename = if lower.contains("12") || lower.contains("bookworm") {
-            "bookworm"
+        let suite = if lower.contains("12") || lower.contains("bookworm") {
+            "debian12"
         } else if lower.contains("13") || lower.contains("trixie") {
-            "trixie"
+            "debian13"
         } else {
             return Some(("apt", None));
         };
-        Some(("apt", Some(codename)))
+        Some(("apt", Some(suite)))
     } else if lower.starts_with("fedora") || lower.starts_with("almalinux") {
         Some(("dnf", Some("el9")))
     } else if lower.starts_with("alpine") {
