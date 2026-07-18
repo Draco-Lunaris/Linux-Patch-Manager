@@ -1,3 +1,12 @@
+linux-patch-manager (1.3.13-1) unstable; urgency=low
+
+  * Release v1.3.13
+  * fix: use filename token directly as apt suite name (issue #163, PR #164)
+  * fix: migration 033 normalize repo_packages codename to token (PR #165)
+  * fix: prune stale apt suite dirs on startup (PR #167)
+
+ -- git-echo <git-echo@moon-dragon.us>  Fri, 18 Jul 2026 00:00:00 -0500
+
 linux-patch-manager (1.3.12-1) unstable; urgency=low
 
   * Release v1.3.12
