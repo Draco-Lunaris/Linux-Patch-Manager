@@ -808,6 +808,61 @@ pub async fn prune_stale_apt_packages(repo_dir: &str) -> Result<usize, anyhow::E
 
     Ok(removed)
 }
+
+/// Remove stale `apt/dists/<suite>/` directories that are no longer part of
+/// the supported suite set.
+///
+/// Before PR #164 (issue #163), apt suites were named after distro codenames
+/// (`noble`, `jammy`, `resolute`, `bookworm`, `trixie`). PR #164 switched to
+/// using the filename token directly as the suite name (`u2404`, `u2204`,
+/// `u2604`, `debian12`, `debian13`). On upgrade, the old codename directories
+/// remain under `apt/dists/` and would otherwise linger forever, confusing
+/// clients and wasting space.
+///
+/// This function scans `apt/dists/` and removes any subdirectory whose name is
+/// not in [`APT_SUITES`]. It is idempotent: once the stale directories are
+/// gone, subsequent calls are a no-op. Called from `ensure_repo_directories`
+/// during manager startup so the cleanup runs once on the first boot after
+/// upgrading to a release that includes this change.
+pub async fn prune_stale_apt_suite_dirs(repo_dir: &str) -> Result<usize, anyhow::Error> {
+    let dists_dir = format!("{repo_dir}/apt/dists");
+
+    if !tokio::fs::try_exists(&dists_dir).await? {
+        return Ok(0);
+    }
+
+    let valid: std::collections::HashSet<&str> = APT_SUITES.iter().copied().collect();
+    let mut removed = 0usize;
+
+    let mut reader = tokio::fs::read_dir(&dists_dir).await?;
+    while let Some(entry) = reader.next_entry().await? {
+        let name = entry.file_name().to_string_lossy().to_string();
+
+        // Only consider directories.
+        let file_type = entry.file_type().await?;
+        if !file_type.is_dir() {
+            continue;
+        }
+
+        if valid.contains(name.as_str()) {
+            continue;
+        }
+
+        let path = entry.path();
+        tracing::info!(
+            dir = %path.display(),
+            name = %name,
+            "Removing stale apt suite directory (pre-#164 codename leftover)"
+        );
+        if let Err(e) = tokio::fs::remove_dir_all(&path).await {
+            tracing::warn!(dir = %path.display(), error = %e, "Failed to remove stale apt suite dir");
+        } else {
+            removed += 1;
+        }
+    }
+
+    Ok(removed)
+}
 fn generate_apt_release(binary_dir: &str, suite: &str) -> Result<String, anyhow::Error> {
     let date = chrono::Utc::now()
         .format("%a, %d %b %Y %H:%M:%S +0000")
@@ -1316,5 +1371,98 @@ mod tests {
         let mut decompressed = Vec::new();
         decoder.read_to_end(&mut decompressed).unwrap();
         assert_eq!(data.as_slice(), decompressed.as_slice());
+    }
+
+    #[tokio::test]
+    async fn test_prune_stale_apt_suite_dirs_removes_codename_leftovers() {
+        let temp = tempfile::tempdir().expect("Failed to create temp dir");
+        let repo_dir = temp.path().to_str().unwrap().to_string();
+        let dists = format!("{repo_dir}/apt/dists");
+
+        // Create valid suite dirs.
+        for suite in APT_SUITES {
+            tokio::fs::create_dir_all(format!("{dists}/{suite}/main/binary-amd64"))
+                .await
+                .unwrap();
+        }
+
+        // Create stale codename dirs (pre-#164 scheme).
+        for codename in ["noble", "jammy", "resolute", "bookworm", "trixie"] {
+            tokio::fs::create_dir_all(format!("{dists}/{codename}/main/binary-amd64"))
+                .await
+                .unwrap();
+            // Drop a sentinel file inside so we can confirm removal.
+            tokio::fs::write(format!("{dists}/{codename}/sentinel"), b"stale")
+                .await
+                .unwrap();
+        }
+
+        let removed = prune_stale_apt_suite_dirs(&repo_dir).await.unwrap();
+        assert_eq!(removed, 5, "should remove all 5 codename dirs");
+
+        // Valid suites survive.
+        for suite in APT_SUITES {
+            assert!(
+                std::path::Path::new(&format!("{dists}/{suite}")).exists(),
+                "valid suite {suite} should still exist"
+            );
+        }
+
+        // Stale dirs are gone.
+        for codename in ["noble", "jammy", "resolute", "bookworm", "trixie"] {
+            assert!(
+                !std::path::Path::new(&format!("{dists}/{codename}")).exists(),
+                "stale dir {codename} should have been removed"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_prune_stale_apt_suite_dirs_idempotent() {
+        let temp = tempfile::tempdir().expect("Failed to create temp dir");
+        let repo_dir = temp.path().to_str().unwrap().to_string();
+        let dists = format!("{repo_dir}/apt/dists");
+
+        // Only valid suites.
+        for suite in APT_SUITES {
+            tokio::fs::create_dir_all(format!("{dists}/{suite}/main/binary-amd64"))
+                .await
+                .unwrap();
+        }
+
+        let removed = prune_stale_apt_suite_dirs(&repo_dir).await.unwrap();
+        assert_eq!(removed, 0, "no stale dirs to remove");
+
+        // All valid suites still present.
+        for suite in APT_SUITES {
+            assert!(std::path::Path::new(&format!("{dists}/{suite}")).exists());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_prune_stale_apt_suite_dirs_missing_dists_dir() {
+        let temp = tempfile::tempdir().expect("Failed to create temp dir");
+        let repo_dir = temp.path().to_str().unwrap().to_string();
+
+        // No apt/dists dir at all — should return Ok(0), not error.
+        let removed = prune_stale_apt_suite_dirs(&repo_dir).await.unwrap();
+        assert_eq!(removed, 0);
+    }
+
+    #[tokio::test]
+    async fn test_prune_stale_apt_suite_dirs_ignores_files() {
+        let temp = tempfile::tempdir().expect("Failed to create temp dir");
+        let repo_dir = temp.path().to_str().unwrap().to_string();
+        let dists = format!("{repo_dir}/apt/dists");
+
+        tokio::fs::create_dir_all(&dists).await.unwrap();
+        // A stray file in dists/ should be ignored, not treated as a dir.
+        tokio::fs::write(format!("{dists}/stray.txt"), b"ignore me")
+            .await
+            .unwrap();
+
+        let removed = prune_stale_apt_suite_dirs(&repo_dir).await.unwrap();
+        assert_eq!(removed, 0, "files should not be counted as removed dirs");
+        assert!(std::path::Path::new(&format!("{dists}/stray.txt")).exists());
     }
 }

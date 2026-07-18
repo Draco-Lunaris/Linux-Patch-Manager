@@ -395,6 +395,13 @@ pub async fn ensure_repo_directories(repo_dir: &str, _gpg_key_id: &str) -> Resul
         .await
         .map_err(|e| GpgError::CommandFailed(format!("Failed to create repodata dir: {e}")))?;
 
+    // Remove stale apt suite directories left over from the pre-#164 codename
+    // scheme (noble/jammy/resolute/bookworm/trixie). Idempotent — no-op once
+    // the stale dirs are gone. See repo_metadata::prune_stale_apt_suite_dirs.
+    if let Err(e) = crate::repo_metadata::prune_stale_apt_suite_dirs(repo_dir).await {
+        tracing::warn!(error = %e, "Stale apt suite dir cleanup failed (non-fatal)");
+    }
+
     Ok(())
 }
 
@@ -637,6 +644,44 @@ mod tests {
                 std::path::Path::new(&format!("{repo_dir}/apt/dists/{suite}/main/binary-amd64"))
                     .exists(),
                 "apt pool directory should exist for {suite}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ensure_repo_directories_prunes_stale_codename_dirs() {
+        let _lock = GPG_TEST_LOCK.lock().await;
+        let _gnupg_home = setup_test_gnupg_home();
+
+        let temp = tempfile::tempdir().expect("Failed to create temp dir");
+        let repo_dir = temp.path().to_str().unwrap().to_string();
+
+        // Simulate a pre-#164 repo state: create stale codename dirs.
+        for codename in ["noble", "jammy", "resolute", "bookworm", "trixie"] {
+            let dir = format!("{repo_dir}/apt/dists/{codename}/main/binary-amd64");
+            std::fs::create_dir_all(&dir).unwrap();
+        }
+
+        // Run ensure_repo_directories — should create valid suites and prune
+        // the stale codename dirs in the same pass.
+        ensure_repo_directories(&repo_dir, "dummy-key-id")
+            .await
+            .expect("ensure_repo_directories should succeed");
+
+        // Stale codename dirs must be gone.
+        for codename in ["noble", "jammy", "resolute", "bookworm", "trixie"] {
+            assert!(
+                !std::path::Path::new(&format!("{repo_dir}/apt/dists/{codename}")).exists(),
+                "stale codename dir {codename} should have been pruned"
+            );
+        }
+
+        // Valid suite dirs must exist.
+        for suite in crate::repo_metadata::APT_SUITES {
+            assert!(
+                std::path::Path::new(&format!("{repo_dir}/apt/dists/{suite}/main/binary-amd64"))
+                    .exists(),
+                "valid suite dir {suite} should exist"
             );
         }
     }
