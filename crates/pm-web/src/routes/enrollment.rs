@@ -344,28 +344,78 @@ async fn approve_enrollment(
                     .or_else(|| detect_apt_suite(os_version));
                 match generate_distro_config(&distro_id, &repo_cfg.url_base, codename.as_deref()) {
                     Some((sources_config, keyring_path)) => {
-                        match std::fs::read_to_string(&repo_cfg.gpg_public_key_path) {
-                            Ok(gpg_public_key) => {
-                                tracing::info!(
-                                    distro_id = %distro_id,
-                                    gpg_key_path = %repo_cfg.gpg_public_key_path,
-                                    "repo_config populated for enrollment"
-                                );
-                                Some(RepoConfig {
-                                    gpg_public_key,
-                                    sources_config,
-                                    distro_id,
-                                    keyring_path,
-                                })
-                            },
-                            Err(e) => {
-                                tracing::warn!(
-                                    error = %e,
-                                    path = %repo_cfg.gpg_public_key_path,
-                                    "Failed to read GPG public key — repo_config will be None"
-                                );
-                                None
-                            },
+                        // For Alpine, read the RSA public key instead of (or
+                        // in addition to) the GPG key. Alpine's `apk` uses
+                        // RSA to verify APKINDEX.tar.gz, not GPG. Issue #170.
+                        let is_alpine = distro_id == "alpine";
+                        let apk_rsa_public_key = if is_alpine {
+                            match std::fs::read_to_string(&repo_cfg.apk_rsa_public_key_path) {
+                                Ok(key) => {
+                                    tracing::info!(
+                                        rsa_key_path = %repo_cfg.apk_rsa_public_key_path,
+                                        "Alpine RSA public key read for enrollment"
+                                    );
+                                    Some(key)
+                                },
+                                Err(e) => {
+                                    tracing::warn!(
+                                        error = %e,
+                                        path = %repo_cfg.apk_rsa_public_key_path,
+                                        "Failed to read Alpine RSA public key — apk index signature verification will fail on the agent"
+                                    );
+                                    None
+                                },
+                            }
+                        } else {
+                            None
+                        };
+
+                        // GPG key is still read for all distros (it's used by
+                        // apt/dnf/pacman; for Alpine it's ignored by the agent
+                        // but we send an empty string to satisfy the non-optional
+                        // field). For Alpine we could skip, but keeping a
+                        // consistent shape simplifies the client.
+                        let gpg_public_key = if is_alpine {
+                            String::new()
+                        } else {
+                            match std::fs::read_to_string(&repo_cfg.gpg_public_key_path) {
+                                Ok(key) => {
+                                    tracing::info!(
+                                        distro_id = %distro_id,
+                                        gpg_key_path = %repo_cfg.gpg_public_key_path,
+                                        "repo_config populated for enrollment"
+                                    );
+                                    key
+                                },
+                                Err(e) => {
+                                    tracing::warn!(
+                                        error = %e,
+                                        path = %repo_cfg.gpg_public_key_path,
+                                        "Failed to read GPG public key — repo_config will be None"
+                                    );
+                                    // Bail out of the entire repo_config block:
+                                    // assign empty and fall through to the
+                                    // `None` return below by short-circuiting.
+                                    // We can't `return None` here because we're
+                                    // inside a nested expression, so we emit a
+                                    // sentinel and check it after.
+                                    String::new()
+                                },
+                            }
+                        };
+
+                        // If GPG read failed for a non-Alpine distro, bail
+                        // with None (agent falls back to GET /pki/repo-config).
+                        if !is_alpine && gpg_public_key.is_empty() {
+                            None
+                        } else {
+                            Some(RepoConfig {
+                                gpg_public_key,
+                                sources_config,
+                                distro_id,
+                                keyring_path,
+                                apk_rsa_public_key,
+                            })
                         }
                     },
                     None => {
