@@ -72,7 +72,7 @@ futures = { version = "0.3" }
 
 # Authentication & Security
 argon2 = { version = "0.5", features = ["std"] }
-jsonwebtoken = { version = "9" }
+jsonwebtoken = { version = "10" }
 rand = { version = "0.8", features = ["std"] }
 totp-rs = { version = "5", features = ["gen_secret", "otpauth"] }
 base64 = { version = "0.22" }
