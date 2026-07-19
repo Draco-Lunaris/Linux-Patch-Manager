@@ -30,11 +30,21 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: false,
-    rollupOptions: {
+    rolldownOptions: {
       output: {
-        manualChunks: {
-          vendor: ['react', 'react-dom', 'react-router-dom'],
-          mui: ['@mui/material', '@mui/icons-material'],
+        codeSplitting: {
+          groups: [
+            {
+              name: 'vendor',
+              test: /node_modules[\\/](react|react-dom|react-router)/,
+              priority: 20,
+            },
+            {
+              name: 'mui',
+              test: /node_modules[\\/]@mui\//,
+              priority: 15,
+            },
+          ],
         },
       },
     },
