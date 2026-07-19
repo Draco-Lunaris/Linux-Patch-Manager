@@ -213,6 +213,8 @@ pub enum EnrollmentStatusResponse {
 pub struct RepoConfig {
     /// ASCII-armored GPG public key used to sign packages in the repo.
     /// The agent writes this to the distro-specific keyring path.
+    /// Used by apt, dnf, and pacman. Not used by apk (Alpine uses
+    /// `apk_rsa_public_key`).
     pub gpg_public_key: String,
     /// Distro-specific sources configuration string.
     /// For apt: a `deb [signed-by=...] ...` line.
@@ -229,6 +231,12 @@ pub struct RepoConfig {
     /// (e.g., `/etc/apt/keyrings/lpa-repo.gpg` for apt,
     /// `/etc/pki/rpm-gpg/lpa-repo.gpg` for dnf).
     pub keyring_path: String,
+    /// RSA public key (PEM-encoded) for Alpine apk repo index signing.
+    /// Alpine's `apk` uses RSA keys (not GPG) to verify `APKINDEX.tar.gz`.
+    /// The agent writes this to `/etc/apk/keys/lpa-repo.rsa.pub` on Alpine
+    /// hosts. `None` for non-Alpine distros. Added for issue #170.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub apk_rsa_public_key: Option<String>,
 }
 
 /// Detect distro_id from OS details fields extracted during enrollment.
@@ -314,8 +322,14 @@ pub fn generate_distro_config(
         let keyring = "/etc/apt/keyrings/lpa-repo.gpg".to_string();
         Some((sources, keyring))
     } else if distro_id == "fedora" || distro_id == "almalinux" {
+        // repo_gpgcheck=1 verifies the repomd.xml signature (which the
+        // manager produces via `gpg --detach-sign --armor repomd.xml`).
+        // gpgcheck=0 disables per-package RPM signature verification — the
+        // manager does not sign individual .rpm files, only the repo
+        // metadata. With gpgcheck=1 and unsigned RPMs, dnf would reject
+        // every package with UNTRUSTED/NOKEY errors. Issue #170.
         let sources = format!(
-            "[lpa-repo]\nname=Linux Patch API Repo\nbaseurl={base}/dnf/\nenabled=1\ngpgcheck=1\ngpgkey=file:///etc/pki/rpm-gpg/lpa-repo.gpg\n"
+            "[lpa-repo]\nname=Linux Patch API Repo\nbaseurl={base}/dnf/\nenabled=1\nrepo_gpgcheck=1\ngpgcheck=0\ngpgkey=file:///etc/pki/rpm-gpg/lpa-repo.gpg\n"
         );
         let keyring = "/etc/pki/rpm-gpg/lpa-repo.gpg".to_string();
         Some((sources, keyring))

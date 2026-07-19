@@ -93,7 +93,13 @@ async fn run_manual_sync(
     let sync_config = &config.worker.package_sync;
     let repo_dir = &config.repo.dir;
 
-    let result = match pm_core::repo_sync::run_sync_cycle(sync_config, repo_dir).await {
+    let result = match pm_core::repo_sync::run_sync_cycle(
+        sync_config,
+        repo_dir,
+        Some(&config.repo.apk_rsa_private_key_path),
+    )
+    .await
+    {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(sync_log_id = %sync_log_id, error = %e, "Manual sync failed");

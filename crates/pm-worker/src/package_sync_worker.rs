@@ -59,7 +59,13 @@ async fn run_scheduled_sync(pool: &PgPool, config: &Arc<AppConfig>) -> Result<()
     tracing::info!(sync_log_id = %sync_log_id, "Package sync cycle started");
 
     // Run the shared sync logic.
-    let result = match repo_sync::run_sync_cycle(sync_config, repo_dir).await {
+    let result = match repo_sync::run_sync_cycle(
+        sync_config,
+        repo_dir,
+        Some(&config.repo.apk_rsa_private_key_path),
+    )
+    .await
+    {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = %e, "Sync cycle failed");

@@ -133,6 +133,7 @@ pub async fn import_to_repo(
     distro: &str,
     codename: Option<&str>,
     repo_dir: &str,
+    apk_rsa_private_key_path: Option<&str>,
 ) -> Result<(), anyhow::Error> {
     use crate::repo_metadata;
 
@@ -192,14 +193,50 @@ pub async fn import_to_repo(
             // Generate APK index (APKINDEX.tar.gz) in pure Rust.
             repo_metadata::generate_apk_metadata(repo_dir).await?;
 
-            // Sign APKINDEX.tar.gz with detached GPG signature for apk verification.
+            // Sign APKINDEX.tar.gz with a detached RSA-SHA256 signature.
+            // Alpine's `apk` uses RSA (not GPG) to verify the repo index —
+            // this is the format `openssl dgst -sha256 -sign <key>` produces
+            // and what `apk` expects at `APKINDEX.tar.gz.sig`. Issue #170.
             let apkindex_path = format!("{dest_dir}/APKINDEX.tar.gz");
             let apkindex_sig_path = format!("{dest_dir}/APKINDEX.tar.gz.sig");
+            let rsa_priv_path = match apk_rsa_private_key_path {
+                Some(p) if !p.is_empty() => p.to_string(),
+                _ => std::env::var("LPA_APK_RSA_PRIVATE_KEY_PATH")
+                    .unwrap_or_else(|_| "/etc/patch-manager/ca/lpa-repo-rsa.pem".to_string()),
+            };
             if std::path::Path::new(&apkindex_path).exists() {
-                if let Err(e) =
-                    crate::gpg::sign_file_detached(&apkindex_path, &apkindex_sig_path, false).await
+                // Sign in a blocking task — RSA signing is CPU-bound.
+                let apkindex_path_clone = apkindex_path.clone();
+                let sig_path_clone = apkindex_sig_path.clone();
+                let priv_path_clone = rsa_priv_path.clone();
+                match tokio::task::spawn_blocking(move || {
+                    crate::rsa_signing::sign_file_detached(
+                        &apkindex_path_clone,
+                        &sig_path_clone,
+                        &priv_path_clone,
+                    )
+                })
+                .await
                 {
-                    tracing::warn!(error = %e, "GPG sign APKINDEX.tar.gz failed (non-fatal but clients will not trust this repo)");
+                    Ok(Ok(())) => {
+                        tracing::info!(
+                            apkindex = %apkindex_path,
+                            signature = %apkindex_sig_path,
+                            "APKINDEX.tar.gz signed with RSA-SHA256 for apk verification"
+                        );
+                    },
+                    Ok(Err(e)) => {
+                        tracing::warn!(
+                            error = %e,
+                            "RSA sign APKINDEX.tar.gz failed (non-fatal but Alpine clients will not trust this repo)"
+                        );
+                    },
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "RSA sign task panicked (non-fatal but Alpine clients will not trust this repo)"
+                        );
+                    },
                 }
             }
         },
@@ -308,6 +345,7 @@ pub fn detect_codename_from_filename(name: &str, distro: &str) -> Option<String>
 pub async fn run_sync_cycle(
     config: &PackageSyncConfig,
     repo_dir: &str,
+    apk_rsa_private_key_path: Option<&str>,
 ) -> Result<SyncResult, anyhow::Error> {
     let sync_config = config;
 
@@ -338,8 +376,14 @@ pub async fn run_sync_cycle(
             match download_asset(&asset.browser_download_url, &download_path, sync_config).await {
                 Ok(sha256) => {
                     // Import into repo.
-                    if let Err(e) =
-                        import_to_repo(&download_path, &distro, codename.as_deref(), repo_dir).await
+                    if let Err(e) = import_to_repo(
+                        &download_path,
+                        &distro,
+                        codename.as_deref(),
+                        repo_dir,
+                        apk_rsa_private_key_path,
+                    )
+                    .await
                     {
                         result
                             .errors

@@ -98,23 +98,59 @@ async fn get_repo_config(
 
     let repo_config = &state.config.repo;
 
-    // Read GPG public key from configured path.
-    let gpg_public_key = match tokio::fs::read_to_string(&repo_config.gpg_public_key_path).await {
-        Ok(key) => key,
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                path = %repo_config.gpg_public_key_path,
-                "GPG public key file not found or unreadable"
-            );
-            return (
-                StatusCode::NOT_FOUND,
-                axum::Json(serde_json::json!({
-                    "error": { "code": "repo_not_configured", "message": "GPG public key not available on this manager" }
-                })),
-            )
-                .into_response();
-        },
+    // For Alpine, read the RSA public key (apk uses RSA, not GPG).
+    // For all other distros, read the GPG public key. Issue #170.
+    let is_alpine = distro_id == "alpine";
+
+    let apk_rsa_public_key = if is_alpine {
+        match tokio::fs::read_to_string(&repo_config.apk_rsa_public_key_path).await {
+            Ok(key) => {
+                tracing::info!(
+                    rsa_key_path = %repo_config.apk_rsa_public_key_path,
+                    "Alpine RSA public key read for repo-config fallback"
+                );
+                Some(key)
+            },
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    path = %repo_config.apk_rsa_public_key_path,
+                    "Alpine RSA public key file not found or unreadable"
+                );
+                return (
+                    StatusCode::NOT_FOUND,
+                    axum::Json(serde_json::json!({
+                        "error": { "code": "repo_not_configured", "message": "Alpine RSA public key not available on this manager" }
+                    })),
+                )
+                    .into_response();
+            },
+        }
+    } else {
+        None
+    };
+
+    // GPG key: required for non-Alpine, empty string for Alpine (agent ignores it).
+    let gpg_public_key = if is_alpine {
+        String::new()
+    } else {
+        match tokio::fs::read_to_string(&repo_config.gpg_public_key_path).await {
+            Ok(key) => key,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    path = %repo_config.gpg_public_key_path,
+                    "GPG public key file not found or unreadable"
+                );
+                return (
+                    StatusCode::NOT_FOUND,
+                    axum::Json(serde_json::json!({
+                        "error": { "code": "repo_not_configured", "message": "GPG public key not available on this manager" }
+                    })),
+                )
+                    .into_response();
+            },
+        }
     };
 
     // Generate distro-specific sources_config and keyring_path.
@@ -140,6 +176,7 @@ async fn get_repo_config(
         sources_config,
         distro_id,
         keyring_path,
+        apk_rsa_public_key,
     };
 
     (

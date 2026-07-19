@@ -94,6 +94,29 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
+    // Bootstrap RSA signing keypair for Alpine apk repo index signing.
+    // Alpine's `apk` uses RSA (not GPG) to verify APKINDEX.tar.gz. The keypair
+    // is stored alongside the CA material and GPG key. Non-fatal on failure —
+    // Alpine repo signing will fail later if RSA is truly unavailable.
+    let rsa_key_info = pm_core::rsa_signing::ensure_rsa_keypair(
+        &config.repo.apk_rsa_public_key_path,
+        &config.repo.apk_rsa_private_key_path,
+    )
+    .unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "RSA keypair bootstrap failed (non-fatal for non-Alpine repos)");
+        pm_core::rsa_signing::RsaKeyInfo {
+            public_key_path: config.repo.apk_rsa_public_key_path.clone(),
+            private_key_path: config.repo.apk_rsa_private_key_path.clone(),
+            newly_generated: false,
+        }
+    });
+    if rsa_key_info.newly_generated {
+        tracing::info!(
+            public_key_path = %rsa_key_info.public_key_path,
+            "RSA signing keypair generated for Alpine apk repo"
+        );
+    }
+
     // Initialize the manager-hosted package repo directory structure.
     // Creates apt/dnf/apk/pacman dirs and reprepro conf/distributions with SignWith.
     if !gpg_key_info.key_id.is_empty() {
