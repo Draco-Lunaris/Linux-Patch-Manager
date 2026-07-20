@@ -502,7 +502,11 @@ fn compute_apk_control_checksum(file_path: &str) -> Result<String, anyhow::Error
 /// Parse an .apk file's .PKGINFO.
 pub fn parse_apk(file_path: &str) -> Result<ApkInfo, anyhow::Error> {
     let file = std::fs::File::open(file_path)?;
-    let decoder = flate2::read::GzDecoder::new(file);
+    // Alpine .apk files are concatenated gzip streams (signature section +
+    // control section + data section). GzDecoder only reads the first
+    // stream; MultiGzDecoder reads all streams so we can reach .PKGINFO
+    // in the second stream.
+    let decoder = flate2::read::MultiGzDecoder::new(file);
     let mut archive = tar::Archive::new(decoder);
 
     let mut pkginfo_content = String::new();
@@ -612,6 +616,18 @@ pub fn parse_pacman_pkg(file_path: &str) -> Result<PacmanInfo, anyhow::Error> {
 /// the .deb assets (e.g. `u2404` matches `_u2404_` in the filename).
 /// The suite name IS the token — no codename indirection.
 pub const APT_SUITES: &[&str] = &["u2404", "u2204", "u2604", "debian12", "debian13"];
+
+/// DNF (RPM) repo codename/subdirectory. The manager serves all RPMs under
+/// `dnf/<DNF_CODENAME>/` (e.g. `dnf/el9/`). This is the path component that
+/// `generate_distro_config` must include in the agent's `baseurl` so dnf can
+/// find `repodata/repomd.xml`. Issue #170 follow-up.
+pub const DNF_CODENAME: &str = "el9";
+
+/// Alpine apk repo codename/subdirectory. The manager serves all APKs under
+/// `apk/<APK_CODENAME>/` (e.g. `apk/v3.21/`). This is the path component that
+/// `generate_distro_config` must include in the agent's repositories line so
+/// `apk` can find `APKINDEX.tar.gz`. Issue #170 follow-up.
+pub const APK_CODENAME: &str = "v3.21";
 
 /// Generate apt repository metadata (Packages, Packages.gz, Release,
 /// InRelease, Release.gpg) in pure Rust.
@@ -1083,12 +1099,32 @@ pub async fn generate_dnf_metadata(repo_dir: &str) -> Result<(), anyhow::Error> 
 /// Generate APK repository index (APKINDEX.tar.gz) in pure Rust.
 ///
 /// Replaces `apk index`.
-pub async fn generate_apk_metadata(repo_dir: &str) -> Result<(), anyhow::Error> {
-    let apk_dir = format!("{repo_dir}/apk/v3.21");
+///
+/// **Signature format:** apk 3.x expects the RSA signature to be embedded
+/// in the tar as a `.SIGN.RSA.<keyname>.rsa.pub` entry (the first entry),
+/// NOT as a detached `.sig` file. The signature is computed over the
+/// remaining tar entries (DESCRIPTION + APKINDEX) using RSA-SHA256
+/// (PKCS#1 v1.5). The detached `.sig` approach used by earlier versions
+/// only works with apk 2.x; apk 3.x ignores it and reports UNTRUSTED.
+///
+/// `rsa_private_key_path` is the path to the PEM-encoded PKCS#8 RSA
+/// private key. If `None`, the APKINDEX is written unsigned (apk will
+/// report UNTRUSTED but `--allow-untrusted` still works).
+pub async fn generate_apk_metadata(
+    repo_dir: &str,
+    rsa_private_key_path: Option<&str>,
+) -> Result<(), anyhow::Error> {
+    // apk fetches APKINDEX.tar.gz from {repo}/apk/{codename}/{arch}/APKINDEX.tar.gz
+    // (the arch subdirectory is mandatory). We generate for x86_64 only
+    // since that's the only arch the manager currently builds for.
+    let apk_dir = format!("{repo_dir}/apk/{APK_CODENAME}/x86_64");
+    std::fs::create_dir_all(&apk_dir)?;
 
-    // Scan for .apk files.
+    // Scan for .apk files in the parent directory (apk/{codename}/).
+    // The .apk files live directly under apk/{codename}/, not under x86_64/.
+    let scan_dir = format!("{repo_dir}/apk/{APK_CODENAME}");
     let mut apk_files: Vec<String> = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&apk_dir) {
+    if let Ok(entries) = std::fs::read_dir(&scan_dir) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
             if name.ends_with(".apk") {
@@ -1130,20 +1166,22 @@ pub async fn generate_apk_metadata(repo_dir: &str) -> Result<(), anyhow::Error> 
         }
     }
 
-    // Create APKINDEX.tar.gz (tar with APKINDEX_DESCRIPTION and APKINDEX).
-    let mut tar_builder = tar::Builder::new(Vec::new());
+    // Create the inner tar (DESCRIPTION + APKINDEX) and gzip-compress it.
+    // This gzip file is what apk downloads as APKINDEX.tar.gz, and what
+    // the RSA signature is computed over.
+    let mut inner_tar = tar::Builder::new(Vec::new());
 
-    // Add APKINDEX_DESCRIPTION.
+    // Add DESCRIPTION.
     let desc = b"Linux Patch Manager Repository\n";
     let mut header = tar::Header::new_gnu();
-    header.set_path(Path::new("APKINDEX_DESCRIPTION"))?;
+    header.set_path(Path::new("DESCRIPTION"))?;
     header.set_size(desc.len() as u64);
     header.set_mode(0o644);
     header.set_entry_type(tar::EntryType::Regular);
     header.set_mtime(0);
     header.set_cksum();
     let mut desc_cursor = std::io::Cursor::new(desc);
-    tar_builder.append(&header, &mut desc_cursor)?;
+    inner_tar.append(&header, &mut desc_cursor)?;
 
     // Add APKINDEX.
     let mut header2 = tar::Header::new_gnu();
@@ -1154,17 +1192,118 @@ pub async fn generate_apk_metadata(repo_dir: &str) -> Result<(), anyhow::Error> 
     header2.set_mtime(0);
     header2.set_cksum();
     let mut index_cursor = std::io::Cursor::new(apkindex.as_bytes());
-    tar_builder.append(&header2, &mut index_cursor)?;
+    inner_tar.append(&header2, &mut index_cursor)?;
 
-    let tar_data = tar_builder.into_inner()?;
+    let inner_data = inner_tar.into_inner()?;
 
-    // Gzip compress.
-    let gz_data = gzip_compress(&tar_data)?;
+    // Gzip compress the inner tar — this becomes the APKINDEX.tar.gz that
+    // apk downloads. The RSA signature is computed over these gzip bytes.
+    let inner_gz = gzip_compress(&inner_data)?;
+
+    // Sign the gzip-compressed APKINDEX with RSA-SHA256 (PKCS#1 v1.5).
+    // This matches `openssl dgst -sha256 -sign <key> -out <sig> <APKINDEX.tar.gz>`,
+    // which is what `abuild-sign` does. The entry name is
+    // .SIGN.RSA256.<key_filename> — apk uses this to find the matching
+    // public key in /etc/apk/keys/. (RSA256 = RSA with SHA-256.)
+    let sign_entry_name = ".SIGN.RSA256.lpa-repo.rsa.pub";
+    let signature: Vec<u8> = match rsa_private_key_path {
+        Some(path) if !path.is_empty() => {
+            let path = path.to_string();
+            let inner_gz_clone = inner_gz.clone();
+            match tokio::task::spawn_blocking(move || {
+                crate::rsa_signing::sign_data(&inner_gz_clone, &path)
+            })
+            .await
+            {
+                Ok(Ok(sig)) => sig,
+                Ok(Err(e)) => {
+                    tracing::warn!(
+                        error = %e,
+                        "Failed to sign APKINDEX with RSA — apk will report UNTRUSTED"
+                    );
+                    return Err(anyhow::anyhow!("RSA signing failed: {}", e));
+                },
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "RSA signing task panicked — apk will report UNTRUSTED"
+                    );
+                    return Err(anyhow::anyhow!("RSA signing task failed: {}", e));
+                },
+            }
+        },
+        _ => {
+            tracing::warn!("No RSA private key path — APKINDEX will be unsigned (UNTRUSTED)");
+            return Err(anyhow::anyhow!(
+                "No RSA private key provided for APKINDEX signing"
+            ));
+        },
+    };
+
+    // Build the signature tar (contains just the .SIGN.RSA256.<keyname> entry),
+    // then gzip-compress it. The final APKINDEX.tar.gz is the concatenation of:
+    //   gzip(sig_tar) + inner_gz
+    // This matches the abuild-sign format: two concatenated gzip streams.
+    let mut sig_tar = tar::Builder::new(Vec::new());
+
+    // The signature entry data is the raw RSA signature bytes (256 bytes
+    // for a 2048-bit key). Tar pads to 512-byte blocks.
+    let mut sign_header = tar::Header::new_gnu();
+    sign_header.set_path(Path::new(sign_entry_name))?;
+    sign_header.set_size(signature.len() as u64);
+    sign_header.set_mode(0o644);
+    sign_header.set_entry_type(tar::EntryType::Regular);
+    sign_header.set_mtime(0);
+    sign_header.set_cksum();
+    let mut sign_cursor = std::io::Cursor::new(&signature[..]);
+    sig_tar.append(&sign_header, &mut sign_cursor)?;
+
+    let sig_tar_data = sig_tar.into_inner()?;
+
+    // Strip the end-of-file tar marker (two 512-byte zero blocks) from the
+    // signature tar. This replicates `abuild-tar --cut`: the first gzip
+    // stream is a tar WITHOUT the EOF marker, so when concatenated with
+    // the second gzip stream (the inner tar), tar sees them as one
+    // continuous archive. Without this cut, tar would see the EOF marker
+    // and stop reading before the DESCRIPTION/APKINDEX entries.
+    let sig_tar_cut = strip_tar_eof(&sig_tar_data);
+    let sig_gz = gzip_compress(&sig_tar_cut)?;
+
+    // Concatenate: gzip(sig_tar) + gzip(inner_tar) = APKINDEX.tar.gz
+    // This matches the abuild-sign format: two concatenated gzip streams.
+    let mut final_gz = sig_gz;
+    final_gz.extend_from_slice(&inner_gz);
 
     let apkindex_path = format!("{apk_dir}/APKINDEX.tar.gz");
-    std::fs::write(&apkindex_path, &gz_data)?;
+    std::fs::write(&apkindex_path, &final_gz)?;
 
     Ok(())
+}
+
+/// Strip the trailing end-of-file marker from a tar archive.
+///
+/// The tar format ends with two 512-byte zero blocks (1024 bytes of zeros).
+/// `abuild-tar --cut` removes these so the tar can be concatenated with
+/// another tar stream and appear as one continuous archive.
+fn strip_tar_eof(tar_data: &[u8]) -> Vec<u8> {
+    // The EOF marker is 1024 bytes of zeros (two 512-byte blocks).
+    // Some implementations add more padding, so we strip all trailing
+    // zero blocks.
+    const BLOCK_SIZE: usize = 512;
+    if tar_data.len() < BLOCK_SIZE * 2 {
+        return tar_data.to_vec();
+    }
+    // Find the start of the trailing zero blocks
+    let mut end = tar_data.len();
+    while end >= BLOCK_SIZE {
+        let block = &tar_data[end - BLOCK_SIZE..end];
+        if block.iter().all(|&b| b == 0) {
+            end -= BLOCK_SIZE;
+        } else {
+            break;
+        }
+    }
+    tar_data[..end].to_vec()
 }
 
 // ===== Pacman metadata generation =====

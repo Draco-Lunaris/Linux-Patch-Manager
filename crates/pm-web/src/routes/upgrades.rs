@@ -95,9 +95,9 @@ pub(crate) fn map_os_to_distro(os_name: &str) -> Option<(&'static str, Option<&'
         };
         Some(("apt", Some(suite)))
     } else if lower.starts_with("fedora") || lower.starts_with("almalinux") {
-        Some(("dnf", Some("el9")))
+        Some(("dnf", Some(pm_core::repo_metadata::DNF_CODENAME)))
     } else if lower.starts_with("alpine") {
-        Some(("apk", Some("v3.21")))
+        Some(("apk", Some(pm_core::repo_metadata::APK_CODENAME)))
     } else if lower.starts_with("arch") {
         Some(("pacman", Some("x86_64")))
     } else {
