@@ -204,6 +204,19 @@ pub fn sign_file_detached(
     Ok(())
 }
 
+/// Sign raw data with RSA-SHA256 (PKCS#1 v1.5) and return the signature bytes.
+///
+/// Used by `generate_apk_metadata` to embed the signature in the APKINDEX
+/// tar as a `.SIGN.RSA.<keyname>` entry (apk 3.x format). The signature is
+/// computed over the gzip-compressed inner tar (DESCRIPTION + APKINDEX).
+pub fn sign_data(data: &[u8], private_key_path: &str) -> Result<Vec<u8>, RsaError> {
+    let private_key = load_private_key(private_key_path)?;
+    use rsa::pkcs1v15::SigningKey;
+    let signing_key = SigningKey::<Sha256>::new(private_key);
+    let signature = signing_key.sign(data);
+    Ok(signature.to_bytes().to_vec())
+}
+
 /// Write the private key file with 0600 permissions (atomic: temp + rename).
 fn write_private_key(path: &str, contents: &[u8]) -> Result<(), RsaError> {
     let tmp_path = format!("{path}.tmp");

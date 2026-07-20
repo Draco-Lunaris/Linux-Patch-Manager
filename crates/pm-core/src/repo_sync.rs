@@ -156,7 +156,8 @@ pub async fn import_to_repo(
         },
         "dnf" => {
             // Copy RPM to dnf repo Packages directory.
-            let dest_dir = format!("{repo_dir}/dnf/el9/Packages");
+            let codename = crate::repo_metadata::DNF_CODENAME;
+            let dest_dir = format!("{repo_dir}/dnf/{codename}/Packages");
             tokio::fs::create_dir_all(&dest_dir).await?;
             let filename = std::path::Path::new(file_path)
                 .file_name()
@@ -169,8 +170,9 @@ pub async fn import_to_repo(
             repo_metadata::generate_dnf_metadata(repo_dir).await?;
 
             // Sign repomd.xml with detached GPG signature for dnf verification.
-            let repomd_path = format!("{repo_dir}/dnf/el9/repodata/repomd.xml");
-            let repomd_sig_path = format!("{repo_dir}/dnf/el9/repodata/repomd.xml.asc");
+            let codename = crate::repo_metadata::DNF_CODENAME;
+            let repomd_path = format!("{repo_dir}/dnf/{codename}/repodata/repomd.xml");
+            let repomd_sig_path = format!("{repo_dir}/dnf/{codename}/repodata/repomd.xml.asc");
             if std::path::Path::new(&repomd_path).exists() {
                 if let Err(e) =
                     crate::gpg::sign_file_detached(&repomd_path, &repomd_sig_path, true).await
@@ -181,7 +183,8 @@ pub async fn import_to_repo(
         },
         "apk" => {
             // Copy APK to apk repo directory.
-            let dest_dir = format!("{repo_dir}/apk/v3.21");
+            let codename = crate::repo_metadata::APK_CODENAME;
+            let dest_dir = format!("{repo_dir}/apk/{codename}");
             tokio::fs::create_dir_all(&dest_dir).await?;
             let filename = std::path::Path::new(file_path)
                 .file_name()
@@ -190,54 +193,30 @@ pub async fn import_to_repo(
             let dest = format!("{dest_dir}/{filename}");
             tokio::fs::copy(file_path, &dest).await?;
 
-            // Generate APK index (APKINDEX.tar.gz) in pure Rust.
-            repo_metadata::generate_apk_metadata(repo_dir).await?;
-
-            // Sign APKINDEX.tar.gz with a detached RSA-SHA256 signature.
-            // Alpine's `apk` uses RSA (not GPG) to verify the repo index —
-            // this is the format `openssl dgst -sha256 -sign <key>` produces
-            // and what `apk` expects at `APKINDEX.tar.gz.sig`. Issue #170.
-            let apkindex_path = format!("{dest_dir}/APKINDEX.tar.gz");
-            let apkindex_sig_path = format!("{dest_dir}/APKINDEX.tar.gz.sig");
+            // Generate APK index (APKINDEX.tar.gz) with embedded RSA signature.
+            // apk 3.x expects the signature as a .SIGN.RSA.<keyname> tar entry,
+            // not as a detached .sig file. The signing happens inside
+            // generate_apk_metadata using the RSA private key.
             let rsa_priv_path = match apk_rsa_private_key_path {
                 Some(p) if !p.is_empty() => p.to_string(),
                 _ => std::env::var("LPA_APK_RSA_PRIVATE_KEY_PATH")
                     .unwrap_or_else(|_| "/etc/patch-manager/ca/lpa-repo-rsa.pem".to_string()),
             };
-            if std::path::Path::new(&apkindex_path).exists() {
-                // Sign in a blocking task — RSA signing is CPU-bound.
-                let apkindex_path_clone = apkindex_path.clone();
-                let sig_path_clone = apkindex_sig_path.clone();
-                let priv_path_clone = rsa_priv_path.clone();
-                match tokio::task::spawn_blocking(move || {
-                    crate::rsa_signing::sign_file_detached(
-                        &apkindex_path_clone,
-                        &sig_path_clone,
-                        &priv_path_clone,
-                    )
-                })
-                .await
-                {
-                    Ok(Ok(())) => {
-                        tracing::info!(
-                            apkindex = %apkindex_path,
-                            signature = %apkindex_sig_path,
-                            "APKINDEX.tar.gz signed with RSA-SHA256 for apk verification"
-                        );
-                    },
-                    Ok(Err(e)) => {
-                        tracing::warn!(
-                            error = %e,
-                            "RSA sign APKINDEX.tar.gz failed (non-fatal but Alpine clients will not trust this repo)"
-                        );
-                    },
-                    Err(e) => {
-                        tracing::warn!(
-                            error = %e,
-                            "RSA sign task panicked (non-fatal but Alpine clients will not trust this repo)"
-                        );
-                    },
-                }
+            // generate_apk_metadata does RSA signing in a blocking task
+            // internally (RSA signing is CPU-bound).
+            match repo_metadata::generate_apk_metadata(repo_dir, Some(&rsa_priv_path)).await {
+                Ok(()) => {
+                    tracing::info!(
+                        dest_dir = %dest_dir,
+                        "APKINDEX.tar.gz generated with embedded RSA-SHA256 signature for apk 3.x"
+                    );
+                },
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "Failed to generate signed APKINDEX (Alpine clients will not trust this repo)"
+                    );
+                },
             }
         },
         "pacman" => {
@@ -317,15 +296,17 @@ pub fn detect_codename_from_filename(name: &str, distro: &str) -> Option<String>
             None
         },
         "dnf" => {
-            if lower.contains("el9") || lower.contains("fc") {
-                Some("el9".to_string())
+            let codename = crate::repo_metadata::DNF_CODENAME;
+            if lower.contains(codename) || lower.contains("fc") {
+                Some(codename.to_string())
             } else {
                 None
             }
         },
         "apk" => {
-            if lower.contains("v3.21") {
-                Some("v3.21".to_string())
+            let codename = crate::repo_metadata::APK_CODENAME;
+            if lower.contains(codename) {
+                Some(codename.to_string())
             } else {
                 None
             }
@@ -535,7 +516,7 @@ mod tests {
     fn test_detect_suite_dnf_el9() {
         assert_eq!(
             detect_codename_from_filename("pkg-1.0.el9.x86_64.rpm", "dnf"),
-            Some("el9".to_string())
+            Some(crate::repo_metadata::DNF_CODENAME.to_string())
         );
     }
 
@@ -543,7 +524,7 @@ mod tests {
     fn test_detect_suite_apk_v321() {
         assert_eq!(
             detect_codename_from_filename("pkg-1.0-v3.21.apk", "apk"),
-            Some("v3.21".to_string())
+            Some(crate::repo_metadata::APK_CODENAME.to_string())
         );
     }
 

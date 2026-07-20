@@ -362,12 +362,15 @@ pub async fn sign_file_clearsign(file_path: &str, output_path: &str) -> Result<(
 /// This must be called after `ensure_signing_key()` so the key ID is available.
 pub async fn ensure_repo_directories(repo_dir: &str, _gpg_key_id: &str) -> Result<(), GpgError> {
     // Base directories.
+    let dnf_codename = crate::repo_metadata::DNF_CODENAME;
+    let apk_codename = crate::repo_metadata::APK_CODENAME;
     let dirs = [
         format!("{repo_dir}/apt"),
         format!("{repo_dir}/dnf"),
-        format!("{repo_dir}/dnf/el9/Packages"),
+        format!("{repo_dir}/dnf/{dnf_codename}/Packages"),
         format!("{repo_dir}/apk"),
-        format!("{repo_dir}/apk/v3.21"),
+        format!("{repo_dir}/apk/{apk_codename}"),
+        format!("{repo_dir}/apk/{apk_codename}/x86_64"),
         format!("{repo_dir}/pacman"),
         format!("{repo_dir}/pacman/x86_64"),
         format!("{repo_dir}/tmp"),
@@ -631,10 +634,12 @@ mod tests {
         );
 
         // Verify all expected directories exist.
+        let dnf_codename = crate::repo_metadata::DNF_CODENAME;
+        let apk_codename = crate::repo_metadata::APK_CODENAME;
         assert!(std::path::Path::new(&format!("{repo_dir}/apt")).exists());
-        assert!(std::path::Path::new(&format!("{repo_dir}/dnf/el9/Packages")).exists());
-        assert!(std::path::Path::new(&format!("{repo_dir}/dnf/el9/repodata")).exists());
-        assert!(std::path::Path::new(&format!("{repo_dir}/apk/v3.21")).exists());
+        assert!(std::path::Path::new(&format!("{repo_dir}/dnf/{dnf_codename}/Packages")).exists());
+        assert!(std::path::Path::new(&format!("{repo_dir}/dnf/{dnf_codename}/repodata")).exists());
+        assert!(std::path::Path::new(&format!("{repo_dir}/apk/{apk_codename}")).exists());
         assert!(std::path::Path::new(&format!("{repo_dir}/pacman/x86_64")).exists());
         assert!(std::path::Path::new(&format!("{repo_dir}/tmp")).exists());
 

@@ -328,13 +328,23 @@ pub fn generate_distro_config(
         // manager does not sign individual .rpm files, only the repo
         // metadata. With gpgcheck=1 and unsigned RPMs, dnf would reject
         // every package with UNTRUSTED/NOKEY errors. Issue #170.
+        //
+        // The baseurl MUST include the codename subdirectory (e.g. `el9`)
+        // because the manager serves the repo at `{base}/dnf/{codename}/`,
+        // not `{base}/dnf/`. Without this, dnf gets a 404 on repomd.xml.
+        let codename = crate::repo_metadata::DNF_CODENAME;
         let sources = format!(
-            "[lpa-repo]\nname=Linux Patch API Repo\nbaseurl={base}/dnf/\nenabled=1\nrepo_gpgcheck=1\ngpgcheck=0\ngpgkey=file:///etc/pki/rpm-gpg/lpa-repo.gpg\n"
+            "[lpa-repo]\nname=Linux Patch API Repo\nbaseurl={base}/dnf/{codename}/\nenabled=1\nrepo_gpgcheck=1\ngpgcheck=0\ngpgkey=file:///etc/pki/rpm-gpg/lpa-repo.gpg\n"
         );
         let keyring = "/etc/pki/rpm-gpg/lpa-repo.gpg".to_string();
         Some((sources, keyring))
     } else if distro_id == "alpine" {
-        let sources = format!("{base}/apk/");
+        // The repo URL MUST include the codename subdirectory (e.g. `v3.21`)
+        // because the manager serves the repo at `{base}/apk/{codename}/`,
+        // not `{base}/apk/`. Without this, `apk update` gets a 404 on
+        // APKINDEX.tar.gz. Issue #170 follow-up.
+        let codename = crate::repo_metadata::APK_CODENAME;
+        let sources = format!("{base}/apk/{codename}");
         let keyring = "/etc/apk/keys/lpa-repo.rsa.pub".to_string();
         Some((sources, keyring))
     } else if distro_id == "arch" {
