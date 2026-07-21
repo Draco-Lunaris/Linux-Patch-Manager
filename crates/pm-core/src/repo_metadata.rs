@@ -1120,9 +1120,9 @@ pub async fn generate_apk_metadata(
     let apk_dir = format!("{repo_dir}/apk/{APK_CODENAME}/x86_64");
     std::fs::create_dir_all(&apk_dir)?;
 
-    // Scan for .apk files in the parent directory (apk/{codename}/).
-    // The .apk files live directly under apk/{codename}/, not under x86_64/.
-    let scan_dir = format!("{repo_dir}/apk/{APK_CODENAME}");
+    // Scan for .apk files in the arch subdirectory (apk/{codename}/x86_64/).
+    // The .apk files live under apk/{codename}/{arch}/, same as APKINDEX.
+    let scan_dir = format!("{repo_dir}/apk/{APK_CODENAME}/x86_64");
     let mut apk_files: Vec<String> = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&scan_dir) {
         for entry in entries.flatten() {
