@@ -606,6 +606,7 @@ async fn execute_patch_host_job(
     let req = ApplyPatchesRequest {
         packages,
         allow_reboot: true,
+        reboot_delay_seconds: 0,
     };
 
     match client.apply_patches(&req).await {
