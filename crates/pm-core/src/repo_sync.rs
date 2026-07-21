@@ -182,9 +182,11 @@ pub async fn import_to_repo(
             }
         },
         "apk" => {
-            // Copy APK to apk repo directory.
+            // Copy APK to apk repo directory (apk/{codename}/{arch}/).
+            // apk fetches packages from the arch subdirectory, same as
+            // generate_apk_metadata which writes APKINDEX there.
             let codename = crate::repo_metadata::APK_CODENAME;
-            let dest_dir = format!("{repo_dir}/apk/{codename}");
+            let dest_dir = format!("{repo_dir}/apk/{codename}/x86_64");
             tokio::fs::create_dir_all(&dest_dir).await?;
             let filename = std::path::Path::new(file_path)
                 .file_name()
