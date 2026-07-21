@@ -1146,11 +1146,14 @@ pub async fn generate_apk_metadata(
                 apkindex.push_str(&format!("A:{}\n", info.arch));
                 apkindex.push_str(&format!("S:{}\n", info.size));
                 apkindex.push_str(&format!("I:{}\n", info.installed_size));
+                if !info.description.is_empty() {
+                    apkindex.push_str(&format!("T:{}\n", info.description));
+                }
                 if !info.depends.is_empty() {
-                    apkindex.push_str(&format!("T:{}\n", info.depends));
+                    apkindex.push_str(&format!("D:{}\n", info.depends));
                 }
                 if !info.provides.is_empty() {
-                    apkindex.push_str(&format!("D:{}\n", info.provides));
+                    apkindex.push_str(&format!("p:{}\n", info.provides));
                 }
                 if !info.url.is_empty() {
                     apkindex.push_str(&format!("U:{}\n", info.url));
