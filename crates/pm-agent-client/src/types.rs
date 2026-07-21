@@ -196,6 +196,11 @@ pub struct ApplyPatchesRequest {
     pub packages: Vec<String>,
     /// If true, allow automatic reboot after patching if required.
     pub allow_reboot: bool,
+    /// Delay (in seconds) before the reboot is triggered. Only used
+    /// when `allow_reboot` is true and a reboot is actually needed.
+    /// 0 = immediate reboot. Defaults to 0 if omitted.
+    #[serde(default)]
+    pub reboot_delay_seconds: u64,
 }
 
 /// Response from `POST /api/v1/patches/apply`.
