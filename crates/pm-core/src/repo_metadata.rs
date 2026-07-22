@@ -440,7 +440,10 @@ fn parse_keyvalue(content: &str) -> BTreeMap<String, String> {
 /// data + padding) from the decompressed gzip stream.
 fn compute_apk_control_checksum(file_path: &str) -> Result<String, anyhow::Error> {
     let file = std::fs::File::open(file_path)?;
-    let decoder = flate2::read::GzDecoder::new(file);
+    // Alpine .apk files are concatenated gzip streams (signature + control +
+    // data). Must use MultiGzDecoder to reach the control section in the
+    // second stream. GzDecoder only reads the first (signature) stream.
+    let decoder = flate2::read::MultiGzDecoder::new(file);
     let mut reader = std::io::BufReader::new(decoder);
 
     let mut hasher = Sha256::new();
