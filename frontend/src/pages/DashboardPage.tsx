@@ -69,26 +69,33 @@ function StatCard({
 export default function DashboardPage() {
   const [status, setStatus] = useState<FleetStatus | null>(null)
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [certHealth, setCertHealth] = useState<CertHealthResponse | null>(null)
   const [certHealthOpen, setCertHealthOpen] = useState(false)
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError(null)
+  const load = useCallback(async (silent = false) => {
+    if (silent) {
+      setRefreshing(true)
+    } else {
+      setLoading(true)
+      setError(null)
+    }
     try {
-      const res = await fleetApi.getStatus()
-      setStatus(res.data)
+      const [fleetRes, certRes] = await Promise.all([
+        fleetApi.getStatus(),
+        certsApi.getCertHealth().catch(() => null),
+      ])
+      setStatus(fleetRes.data)
+      if (certRes) setCertHealth(certRes.data)
+      setLastUpdated(new Date())
     } catch {
-      setError('Failed to load fleet status')
+      if (!silent) setError('Failed to load fleet status')
     } finally {
       setLoading(false)
+      setRefreshing(false)
     }
-  }, [])
-
-  // Fetch cert health on mount
-  useEffect(() => {
-    certsApi.getCertHealth().then((res) => setCertHealth(res.data)).catch(() => {})
   }, [])
 
   // Initial load
@@ -96,9 +103,9 @@ export default function DashboardPage() {
     load()
   }, [load])
 
-  // Auto-refresh every 60 seconds
+  // Auto-refresh every 60 seconds (silent — no loading flash)
   useEffect(() => {
-    const t = setInterval(load, 60_000)
+    const t = setInterval(() => load(true), 60_000)
     return () => clearInterval(t)
   }, [load])
 
@@ -145,11 +152,16 @@ export default function DashboardPage() {
         </Tooltip>
         <Tooltip title="Refresh">
           <span>
-            <IconButton onClick={load} disabled={loading}>
-              {loading ? <CircularProgress size={20} /> : <RefreshIcon />}
+            <IconButton onClick={() => load(true)} disabled={refreshing}>
+              {refreshing ? <CircularProgress size={20} /> : <RefreshIcon />}
             </IconButton>
           </span>
         </Tooltip>
+        {lastUpdated && (
+          <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+            Updated {lastUpdated.toLocaleTimeString()}
+          </Typography>
+        )}
       </Toolbar>
 
       {error && (

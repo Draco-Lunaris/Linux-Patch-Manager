@@ -347,6 +347,11 @@ export default function JobsPage() {
     if (newOffset === 0) {
       setLoading(true)
       setError(null)
+      // Clear expanded detail state so stale data isn't shown after refresh
+      setExpandedId(null)
+      setDetails({})
+      setDetailLoading({})
+      setDetailError({})
     } else {
       setLoadingMore(true)
     }
