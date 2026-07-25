@@ -1289,6 +1289,163 @@ pub async fn generate_apk_metadata(
     Ok(())
 }
 
+/// Re-sign an .apk package with the manager's RSA key.
+///
+/// CI-built .apk files are signed by an ephemeral `abuild-keygen` key that
+/// agents do not have in `/etc/apk/keys/`. The manager must re-sign each
+/// .apk with its own `lpa-repo` RSA key (the same key used for APKINDEX
+/// signing) so that apk 3.x can verify the per-package signature.
+///
+/// An .apk file is three concatenated gzip streams:
+///   1. Signature tar (`.SIGN.RSA.<keyname>.rsa.pub` entry)
+///   2. Control tar (`.PKGINFO`, install scripts)
+///   3. Data tar (actual package files)
+///
+/// The signature in stream 1 is computed over the concatenation of streams
+/// 2+3 (the control + data gzip bytes). This function:
+///   1. Splits the .apk into its gzip streams
+///   2. Concatenates streams 2+3 (control + data)
+///   3. Signs that concatenation with RSA-SHA256 using the manager's key
+///   4. Builds a new signature tar with `.SIGN.RSA256.lpa-repo.rsa.pub`
+///   5. Writes the new .apk = gzip(sig_tar) + stream2 + stream3
+///
+/// The sign entry name uses `RSA256` (RSA with SHA-256) and matches the
+/// key filename `lpa-repo.rsa.pub` in `/etc/apk/keys/` on agents.
+pub fn resign_apk(apk_path: &str, rsa_private_key_path: &str) -> Result<(), anyhow::Error> {
+    let data = std::fs::read(apk_path)?;
+
+    // Split into gzip streams. Each gzip stream starts with the magic bytes
+    // 0x1f 0x8b. We find all stream boundaries by scanning for the magic
+    // bytes and validating the gzip header structure.
+    let stream_offsets = find_gzip_stream_boundaries(&data)?;
+    if stream_offsets.len() < 2 {
+        anyhow::bail!(
+            "Invalid .apk format: expected at least 2 gzip streams, found {}",
+            stream_offsets.len()
+        );
+    }
+
+    // Stream 0 = signature, Stream 1 = control, Stream 2 = data (if present).
+    // The signature covers streams 1..end concatenated.
+    let control_and_data = &data[stream_offsets[1]..];
+
+    // Sign the control+data concatenation with the manager's RSA key.
+    let signature = crate::rsa_signing::sign_data(control_and_data, rsa_private_key_path)?;
+
+    // Build the signature tar with the .SIGN.RSA256.lpa-repo.rsa.pub entry.
+    // This matches the key filename in /etc/apk/keys/ on agents.
+    let sign_entry_name = ".SIGN.RSA256.lpa-repo.rsa.pub";
+    let mut sig_tar = tar::Builder::new(Vec::new());
+    let mut sign_header = tar::Header::new_gnu();
+    sign_header.set_path(Path::new(sign_entry_name))?;
+    sign_header.set_size(signature.len() as u64);
+    sign_header.set_mode(0o644);
+    sign_header.set_entry_type(tar::EntryType::Regular);
+    sign_header.set_mtime(0);
+    sign_header.set_cksum();
+    let mut sign_cursor = std::io::Cursor::new(&signature[..]);
+    sig_tar.append(&sign_header, &mut sign_cursor)?;
+
+    let sig_tar_data = sig_tar.into_inner()?;
+
+    // Strip the tar EOF marker from the signature tar (abuild-tar --cut).
+    // Without this, tar sees the EOF and stops before the control/data streams.
+    let sig_tar_cut = strip_tar_eof(&sig_tar_data);
+    let sig_gz = gzip_compress(&sig_tar_cut)?;
+
+    // New .apk = gzip(sig_tar) + control_stream + data_stream
+    let mut new_apk = sig_gz;
+    new_apk.extend_from_slice(control_and_data);
+
+    // Atomic write: temp file + rename.
+    let tmp_path = format!("{apk_path}.tmp");
+    std::fs::write(&tmp_path, &new_apk)?;
+    std::fs::rename(&tmp_path, apk_path)?;
+
+    Ok(())
+}
+
+/// Find the byte offsets of each gzip stream in a concatenated gzip file.
+///
+/// Gzip streams start with the magic bytes 0x1f 0x8b. This function scans
+/// the file for valid gzip headers to find stream boundaries. A gzip header
+/// is at least 10 bytes: magic (2), CM (1), FLG (1), MTIME (4), XFL (1),
+/// OS (1). We validate the magic and compression method (must be 8=deflate)
+/// and check that reserved FLG bits are zero.
+///
+/// To find where each gzip stream ends, we decompress it through a
+/// `BufReader` wrapping a `Cursor`. After decompression, the `BufReader`'s
+/// buffer may contain bytes from the next stream (read-ahead). We compute
+/// the exact stream end as: cursor_position - bufreader_buffered_bytes.
+fn find_gzip_stream_boundaries(data: &[u8]) -> Result<Vec<usize>, anyhow::Error> {
+    let mut offsets = Vec::new();
+    let mut pos = 0;
+
+    while pos + 10 <= data.len() {
+        // Gzip magic: 0x1f 0x8b
+        if data[pos] == 0x1f && data[pos + 1] == 0x8b {
+            // Compression method must be 8 (deflate).
+            if data[pos + 2] != 8 {
+                pos += 1;
+                continue;
+            }
+            // Reserved FLG bits (bits 5-7) must be zero.
+            let flg = data[pos + 3];
+            if flg & 0b11100000 != 0 {
+                pos += 1;
+                continue;
+            }
+            offsets.push(pos);
+
+            // Decompress this gzip stream to find where it ends.
+            // We use flate2::bufread::GzDecoder which reads from a BufReader
+            // and properly stops at the end of each gzip stream (unlike
+            // flate2::read::GzDecoder which reads all available data).
+            // After decompression, the BufReader's buffer contains bytes
+            // from the next stream (read-ahead), so the exact stream end is:
+            // cursor_position - buffer_length.
+            let slice = &data[pos..];
+            let cursor = std::io::Cursor::new(slice);
+            let buf_reader = std::io::BufReader::new(cursor);
+            let mut decoder = flate2::bufread::GzDecoder::new(buf_reader);
+
+            use std::io::Read;
+            let mut buf = [0u8; 16384];
+            loop {
+                match decoder.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(_) => {},
+                    Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
+                    Err(_) => break,
+                }
+            }
+
+            // Get the inner BufReader and compute the exact stream end.
+            // The cursor position is how far we've read in the underlying
+            // data. The BufReader's buffer contains bytes read ahead but
+            // not consumed by the decoder. So:
+            // stream_end = cursor_pos - buffer_len
+            let inner = decoder.into_inner();
+            let cursor_pos = inner.get_ref().position() as usize;
+            let buffer_len = inner.buffer().len();
+            let consumed = cursor_pos.saturating_sub(buffer_len);
+
+            if consumed == 0 {
+                pos += 1;
+            } else {
+                pos += consumed;
+            }
+        } else {
+            pos += 1;
+        }
+    }
+
+    if offsets.is_empty() {
+        anyhow::bail!("No gzip streams found in data");
+    }
+    Ok(offsets)
+}
+
 /// Strip the trailing end-of-file marker from a tar archive.
 ///
 /// The tar format ends with two 512-byte zero blocks (1024 bytes of zeros).
@@ -1667,5 +1824,144 @@ mod tests {
         let removed = prune_stale_apt_suite_dirs(&repo_dir).await.unwrap();
         assert_eq!(removed, 0, "files should not be counted as removed dirs");
         assert!(std::path::Path::new(&format!("{dists}/stray.txt")).exists());
+    }
+
+    #[test]
+    fn test_find_gzip_stream_boundaries_finds_multiple_streams() {
+        // Create two concatenated gzip streams.
+        let mut data = Vec::new();
+        let stream1 = gzip_compress(b"hello").unwrap();
+        let stream2 = gzip_compress(b"world").unwrap();
+        data.extend_from_slice(&stream1);
+        data.extend_from_slice(&stream2);
+
+        let offsets = find_gzip_stream_boundaries(&data).unwrap();
+        assert_eq!(offsets.len(), 2);
+        assert_eq!(offsets[0], 0);
+        assert_eq!(offsets[1], stream1.len());
+    }
+
+    #[test]
+    fn test_find_gzip_stream_boundaries_single_stream() {
+        let data = gzip_compress(b"single stream").unwrap();
+        let offsets = find_gzip_stream_boundaries(&data).unwrap();
+        assert_eq!(offsets.len(), 1);
+        assert_eq!(offsets[0], 0);
+    }
+
+    #[test]
+    fn test_resign_apk_produces_valid_signature_entry() {
+        use crate::rsa_signing;
+
+        let dir = tempfile::tempdir().unwrap();
+        let pub_path = dir.path().join("test-rsa.pub");
+        let priv_path = dir.path().join("test-rsa.pem");
+        rsa_signing::ensure_rsa_keypair(pub_path.to_str().unwrap(), priv_path.to_str().unwrap())
+            .unwrap();
+
+        // Build a minimal .apk: 3 concatenated gzip streams (sig + control + data).
+        // Stream 1: signature tar with a dummy .SIGN.RSA.dummy.rsa.pub entry
+        // Stream 2: control tar with .PKGINFO
+        // Stream 3: data tar with a single file
+        let mut sig_tar = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_gnu();
+        header
+            .set_path(std::path::Path::new(".SIGN.RSA.dummy.rsa.pub"))
+            .unwrap();
+        header.set_size(256);
+        header.set_mode(0o644);
+        header.set_entry_type(tar::EntryType::Regular);
+        header.set_mtime(0);
+        header.set_cksum();
+        let dummy_sig = vec![0u8; 256];
+        let mut cursor = std::io::Cursor::new(&dummy_sig[..]);
+        sig_tar.append(&header, &mut cursor).unwrap();
+        let sig_tar_data = sig_tar.into_inner().unwrap();
+        let sig_tar_cut = strip_tar_eof(&sig_tar_data);
+        let sig_gz = gzip_compress(&sig_tar_cut).unwrap();
+
+        // Control tar with .PKGINFO
+        let mut control_tar = tar::Builder::new(Vec::new());
+        let pkginfo = b"P:linux-patch-api\nV:1.0.0-r1\n";
+        let mut header2 = tar::Header::new_gnu();
+        header2.set_path(std::path::Path::new(".PKGINFO")).unwrap();
+        header2.set_size(pkginfo.len() as u64);
+        header2.set_mode(0o644);
+        header2.set_entry_type(tar::EntryType::Regular);
+        header2.set_mtime(0);
+        header2.set_cksum();
+        let mut cursor2 = std::io::Cursor::new(&pkginfo[..]);
+        control_tar.append(&header2, &mut cursor2).unwrap();
+        let control_tar_data = control_tar.into_inner().unwrap();
+        let control_gz = gzip_compress(&control_tar_data).unwrap();
+
+        // Data tar with a single file
+        let mut data_tar = tar::Builder::new(Vec::new());
+        let file_content = b"binary content";
+        let mut header3 = tar::Header::new_gnu();
+        header3
+            .set_path(std::path::Path::new("usr/bin/test"))
+            .unwrap();
+        header3.set_size(file_content.len() as u64);
+        header3.set_mode(0o755);
+        header3.set_entry_type(tar::EntryType::Regular);
+        header3.set_mtime(0);
+        header3.set_cksum();
+        let mut cursor3 = std::io::Cursor::new(&file_content[..]);
+        data_tar.append(&header3, &mut cursor3).unwrap();
+        let data_tar_data = data_tar.into_inner().unwrap();
+        let data_gz = gzip_compress(&data_tar_data).unwrap();
+
+        // Assemble the .apk: sig + control + data
+        let mut apk = sig_gz;
+        apk.extend_from_slice(&control_gz);
+        apk.extend_from_slice(&data_gz);
+
+        let apk_path = dir.path().join("test.apk");
+        std::fs::write(&apk_path, &apk).unwrap();
+
+        // Re-sign the .apk
+        resign_apk(apk_path.to_str().unwrap(), priv_path.to_str().unwrap()).unwrap();
+
+        // Verify the re-signed .apk has the correct sign entry name
+        let signed_data = std::fs::read(&apk_path).unwrap();
+        let offsets = find_gzip_stream_boundaries(&signed_data).unwrap();
+        assert_eq!(offsets.len(), 3, "should have 3 gzip streams");
+
+        // Decompress the signature stream and check the entry name
+        let sig_stream = &signed_data[offsets[0]..offsets[1]];
+        let decoder = flate2::read::GzDecoder::new(sig_stream);
+        let mut archive = tar::Archive::new(decoder);
+        let entries = archive.entries().unwrap();
+        let mut found_sign_entry = false;
+        for entry in entries {
+            let mut entry = entry.unwrap();
+            let name = entry.path().unwrap().display().to_string();
+            if name.starts_with(".SIGN.RSA256.lpa-repo.rsa.pub") {
+                found_sign_entry = true;
+                // Verify the signature is 256 bytes (2048-bit RSA)
+                let mut sig_bytes = Vec::new();
+                entry.read_to_end(&mut sig_bytes).unwrap();
+                assert_eq!(sig_bytes.len(), 256, "RSA signature should be 256 bytes");
+            }
+        }
+        assert!(
+            found_sign_entry,
+            "re-signed .apk should have .SIGN.RSA256.lpa-repo.rsa.pub entry"
+        );
+
+        // Verify the control and data streams are preserved
+        let control_stream = &signed_data[offsets[1]..offsets[2]];
+        let decoder2 = flate2::read::GzDecoder::new(control_stream);
+        let mut archive2 = tar::Archive::new(decoder2);
+        let mut found_pkginfo = false;
+        for entry in archive2.entries().unwrap() {
+            let entry = entry.unwrap();
+            let name = entry.path().unwrap().display().to_string();
+            if name == ".PKGINFO" {
+                found_pkginfo = true;
+            }
+        }
+        assert!(found_pkginfo, "control stream should still have .PKGINFO");
     }
 }
