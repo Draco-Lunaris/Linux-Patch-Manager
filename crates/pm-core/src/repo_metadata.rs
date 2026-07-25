@@ -1289,6 +1289,33 @@ pub async fn generate_apk_metadata(
     Ok(())
 }
 
+/// Check if an .apk's control gzip stream contains a "datahash" key in PKGINFO.
+///
+/// When a datahash is present, the signature covers only the control section
+/// (not the data section). The data section is verified separately via the
+/// datahash. When there is no datahash, the signature covers control+data.
+///
+/// `control_gz` is the raw gzip-compressed control stream (stream 1 of the
+/// .apk file).
+fn apk_has_data_hash(control_gz: &[u8]) -> Result<bool, anyhow::Error> {
+    let decoder = flate2::read::GzDecoder::new(control_gz);
+    let mut archive = tar::Archive::new(decoder);
+    let entries = archive.entries()?;
+    for entry in entries {
+        let mut entry = entry?;
+        let path = entry.path()?.display().to_string();
+        if path == ".PKGINFO" {
+            let mut content = String::new();
+            entry.read_to_string(&mut content)?;
+            return Ok(content.lines().any(|line| {
+                let line = line.trim();
+                line.starts_with("datahash") && line.contains('=')
+            }));
+        }
+    }
+    Ok(false)
+}
+
 /// Re-sign an .apk package with the manager's RSA key.
 ///
 /// CI-built .apk files are signed by an ephemeral `abuild-keygen` key that
@@ -1326,23 +1353,36 @@ pub fn resign_apk(apk_path: &str, rsa_private_key_path: &str) -> Result<(), anyh
     }
 
     // Stream 0 = signature, Stream 1 = control, Stream 2 = data (if present).
-    // The signature covers streams 1..end concatenated.
-    let control_and_data = &data[stream_offsets[1]..];
+    // When PKGINFO contains a "datahash" key, the signature covers ONLY the
+    // control gzip stream (stream 1). The data section is verified separately
+    // via the datahash. When there is no datahash, the signature covers the
+    // concatenation of control+data (streams 1..end).
+    let control_gz = &data[stream_offsets[1]..stream_offsets.get(2).copied().unwrap_or(data.len())];
+    let has_data_hash = apk_has_data_hash(control_gz)?;
+    let signed_data: &[u8] = if has_data_hash {
+        // datahash present: sign only the control gzip stream
+        control_gz
+    } else {
+        // no datahash: sign control+data concatenated
+        &data[stream_offsets[1]..]
+    };
 
-    // Sign the control+data concatenation with the manager's RSA key.
-    let signature = crate::rsa_signing::sign_data(control_and_data, rsa_private_key_path)?;
+    // Sign the signed data with the manager's RSA key.
+    let signature = crate::rsa_signing::sign_data(signed_data, rsa_private_key_path)?;
 
     // Build the signature tar with the .SIGN.RSA256.lpa-repo.rsa.pub entry.
     // This matches the key filename in /etc/apk/keys/ on agents.
-    // apk 3.x requires ustar format with PAX extended headers for the
-    // signature tar (GNU format causes "v2 package format error").
+    // apk 3.x requires ustar format with a PAX extended header (type 'x')
+    // preceding the signature file entry, matching what abuild-tar produces.
+    // Without the PAX header, apk reports "v2 package format error".
     let sign_entry_name = ".SIGN.RSA256.lpa-repo.rsa.pub";
     let mut sig_tar = tar::Builder::new(Vec::new());
 
-    // Append an empty PAX extended header entry. apk 3.x expects the
-    // signature tar to be in PAX format (type 'x' header preceding the
-    // actual file entry). Without this, apk reports "v2 package format error".
-    sig_tar.append_pax_extensions(std::iter::empty::<(&str, &[u8])>())?;
+    // Append a PAX extended header entry. abuild-tar creates a PAX 'x' type
+    // header with the path ./PaxHeaders/.SIGN.<keyname> before each file entry.
+    // The tar crate's append_pax_extensions skips empty data, so we provide
+    // a harmless comment extension to force the PAX header to be written.
+    sig_tar.append_pax_extensions([("comment", b"" as &[u8])])?;
 
     let mut sign_header = tar::Header::new_ustar();
     sign_header.set_path(Path::new(sign_entry_name))?;
@@ -1363,7 +1403,7 @@ pub fn resign_apk(apk_path: &str, rsa_private_key_path: &str) -> Result<(), anyh
 
     // New .apk = gzip(sig_tar) + control_stream + data_stream
     let mut new_apk = sig_gz;
-    new_apk.extend_from_slice(control_and_data);
+    new_apk.extend_from_slice(&data[stream_offsets[1]..]);
 
     // Atomic write: temp file + rename.
     let tmp_path = format!("{apk_path}.tmp");
@@ -1936,8 +1976,44 @@ mod tests {
         let offsets = find_gzip_stream_boundaries(&signed_data).unwrap();
         assert_eq!(offsets.len(), 3, "should have 3 gzip streams");
 
-        // Decompress the signature stream and check the entry name
+        // Decompress the signature stream and check the raw tar structure.
+        // The tar crate's entries() iterator consumes PAX headers internally
+        // and applies them to the next entry, so we check the raw tar bytes
+        // for the PAX 'x' type flag.
         let sig_stream = &signed_data[offsets[0]..offsets[1]];
+        let decompressed_sig = {
+            use std::io::Read;
+            let mut d = flate2::read::GzDecoder::new(sig_stream);
+            let mut buf = Vec::new();
+            d.read_to_end(&mut buf).unwrap();
+            buf
+        };
+        // First tar block: check for PAX extended header (type 'x' = 0x78)
+        assert!(
+            decompressed_sig.len() >= 512,
+            "signature tar should have at least one 512-byte block"
+        );
+        let typeflag = decompressed_sig[156];
+        assert_eq!(
+            typeflag, b'x',
+            "first tar entry should be a PAX extended header (type 'x'), got {typeflag:#04x}"
+        );
+
+        // Second tar block: the PAX header's data (padded to 512 bytes).
+        // The actual signature file entry starts at the third 512-byte block.
+        assert!(
+            decompressed_sig.len() >= 1536,
+            "signature tar should have at least three 512-byte blocks (PAX header + PAX data + signature)"
+        );
+        let sig_name = String::from_utf8_lossy(&decompressed_sig[1024..1124])
+            .trim_end_matches('\0')
+            .to_string();
+        assert!(
+            sig_name.starts_with(".SIGN.RSA256.lpa-repo.rsa.pub"),
+            "third block should be the signature file, got {sig_name:?}"
+        );
+
+        // Also verify via the tar crate that the signature entry is present
         let decoder = flate2::read::GzDecoder::new(sig_stream);
         let mut archive = tar::Archive::new(decoder);
         let entries = archive.entries().unwrap();
@@ -1947,7 +2023,6 @@ mod tests {
             let name = entry.path().unwrap().display().to_string();
             if name.starts_with(".SIGN.RSA256.lpa-repo.rsa.pub") {
                 found_sign_entry = true;
-                // Verify the signature is 256 bytes (2048-bit RSA)
                 let mut sig_bytes = Vec::new();
                 entry.read_to_end(&mut sig_bytes).unwrap();
                 assert_eq!(sig_bytes.len(), 256, "RSA signature should be 256 bytes");
