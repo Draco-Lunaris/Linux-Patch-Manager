@@ -195,15 +195,52 @@ pub async fn import_to_repo(
             let dest = format!("{dest_dir}/{filename}");
             tokio::fs::copy(file_path, &dest).await?;
 
-            // Generate APK index (APKINDEX.tar.gz) with embedded RSA signature.
-            // apk 3.x expects the signature as a .SIGN.RSA.<keyname> tar entry,
-            // not as a detached .sig file. The signing happens inside
-            // generate_apk_metadata using the RSA private key.
+            // Re-sign the .apk with the manager's RSA key.
+            // CI-built .apk files are signed by an ephemeral abuild-keygen
+            // key that agents do not have in /etc/apk/keys/. The manager
+            // must re-sign each .apk with its own lpa-repo RSA key (the
+            // same key used for APKINDEX signing) so that apk 3.x can
+            // verify the per-package signature.
             let rsa_priv_path = match apk_rsa_private_key_path {
                 Some(p) if !p.is_empty() => p.to_string(),
                 _ => std::env::var("LPA_APK_RSA_PRIVATE_KEY_PATH")
                     .unwrap_or_else(|_| "/etc/patch-manager/ca/lpa-repo-rsa.pem".to_string()),
             };
+
+            // Re-sign the .apk in a blocking task (file I/O + RSA signing).
+            let dest_clone = dest.clone();
+            let rsa_priv_clone = rsa_priv_path.clone();
+            match tokio::task::spawn_blocking(move || {
+                crate::repo_metadata::resign_apk(&dest_clone, &rsa_priv_clone)
+            })
+            .await
+            {
+                Ok(Ok(())) => {
+                    tracing::info!(
+                        filename = %filename,
+                        "APK re-signed with manager RSA key"
+                    );
+                },
+                Ok(Err(e)) => {
+                    tracing::warn!(
+                        error = %e,
+                        filename = %filename,
+                        "Failed to re-sign APK — apk will report UNTRUSTED for this package"
+                    );
+                },
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        filename = %filename,
+                        "Re-sign task panicked — apk will report UNTRUSTED for this package"
+                    );
+                },
+            }
+
+            // Generate APK index (APKINDEX.tar.gz) with embedded RSA signature.
+            // apk 3.x expects the signature as a .SIGN.RSA.<keyname> tar entry,
+            // not as a detached .sig file. The signing happens inside
+            // generate_apk_metadata using the RSA private key.
             // generate_apk_metadata does RSA signing in a blocking task
             // internally (RSA signing is CPU-bound).
             match repo_metadata::generate_apk_metadata(repo_dir, Some(&rsa_priv_path)).await {

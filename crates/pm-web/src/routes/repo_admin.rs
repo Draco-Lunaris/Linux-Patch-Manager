@@ -296,13 +296,63 @@ async fn regenerate_metadata(
             }
         }
 
-        // APK — generate APKINDEX.tar.gz with embedded RSA signature.
+        // APK — re-sign all .apk packages with the manager's RSA key, then
+        // generate APKINDEX.tar.gz with embedded RSA signature.
         let rsa_priv_path = if rsa_key_path.is_empty() {
             std::env::var("LPA_APK_RSA_PRIVATE_KEY_PATH")
                 .unwrap_or_else(|_| "/etc/patch-manager/ca/lpa-repo-rsa.pem".to_string())
         } else {
             rsa_key_path
         };
+
+        // Re-sign all .apk files in the repo with the manager's RSA key.
+        // This ensures packages imported from CI (signed by an ephemeral
+        // abuild key) are re-signed with the manager's lpa-repo key that
+        // agents have in /etc/apk/keys/.
+        let apk_codename = pm_core::repo_metadata::APK_CODENAME;
+        let apk_dir = format!("{repo_dir}/apk/{apk_codename}/x86_64");
+        let apk_dir_clone = apk_dir.clone();
+        let rsa_priv_clone = rsa_priv_path.clone();
+        match tokio::task::spawn_blocking(move || {
+            let mut re_signed = 0u32;
+            let mut errors = 0u32;
+            if let Ok(entries) = std::fs::read_dir(&apk_dir_clone) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|e| e.to_str()) == Some("apk") {
+                        match pm_core::repo_metadata::resign_apk(
+                            &path.to_string_lossy(),
+                            &rsa_priv_clone,
+                        ) {
+                            Ok(()) => re_signed += 1,
+                            Err(e) => {
+                                tracing::warn!(
+                                    error = %e,
+                                    path = %path.display(),
+                                    "Failed to re-sign APK"
+                                );
+                                errors += 1;
+                            },
+                        }
+                    }
+                }
+            }
+            (re_signed, errors)
+        })
+        .await
+        {
+            Ok((re_signed, errors)) => {
+                tracing::info!(
+                    re_signed,
+                    errors,
+                    "APK packages re-signed with manager RSA key"
+                );
+            },
+            Err(e) => {
+                tracing::warn!(error = %e, "APK re-signing task panicked");
+            },
+        }
+
         if let Err(e) =
             pm_core::repo_metadata::generate_apk_metadata(&repo_dir, Some(&rsa_priv_path)).await
         {
