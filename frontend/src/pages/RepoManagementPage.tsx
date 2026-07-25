@@ -3,6 +3,7 @@ import {
   Box, Typography, Paper, Divider, Button, CircularProgress, Alert,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Chip, Card, CardContent, Grid, Dialog, DialogTitle, DialogContent, DialogActions,
+  Snackbar,
 } from '@mui/material'
 import {
   Sync as SyncIcon, Store as PackageIcon, CloudDownload as DownloadIcon,
@@ -46,6 +47,12 @@ export default function RepoManagementPage() {
   const [regenerating, setRegenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [syncDialogOpen, setSyncDialogOpen] = useState(false)
+  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
+    open: false, message: '', severity: 'success',
+  })
+
+  const showSnack = (message: string, severity: 'success' | 'error') =>
+    setSnackbar({ open: true, message, severity })
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -85,8 +92,11 @@ export default function RepoManagementPage() {
     setRegenerating(true)
     try {
       await repoApi.regenerateMetadata()
+      showSnack('Metadata regeneration triggered for all distro formats', 'success')
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to trigger metadata regeneration')
+      const msg = e instanceof Error ? e.message : 'Failed to trigger metadata regeneration'
+      setError(msg)
+      showSnack('Failed to trigger metadata regeneration', 'error')
     } finally {
       setRegenerating(false)
     }
@@ -274,6 +284,20 @@ export default function RepoManagementPage() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={4000}
+        onClose={() => setSnackbar((p) => ({ ...p, open: false }))}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          severity={snackbar.severity}
+          onClose={() => setSnackbar((p) => ({ ...p, open: false }))}
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </Box>
   )
 }

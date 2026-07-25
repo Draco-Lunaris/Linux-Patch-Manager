@@ -254,28 +254,83 @@ async fn list_packages(
 
 /// `POST /api/v1/admin/repo/regenerate-metadata`
 ///
-/// Regenerate apt repository metadata for all suites. Also prunes stale
-/// .deb files from the pool. Useful after manual package uploads or GPG
-/// key rotation.
+/// Regenerate repository metadata for all supported distro formats (apt,
+/// dnf, apk, pacman). Also prunes stale .deb files from the pool and
+/// re-signs dnf/pacman metadata with GPG. Useful after manual package
+/// uploads or GPG key rotation.
 async fn regenerate_metadata(
     State(state): State<AppState>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let repo_dir = state.config.repo.dir.clone();
+    let rsa_key_path = state.config.repo.apk_rsa_private_key_path.clone();
 
     tokio::spawn(async move {
-        tracing::info!("Manual metadata regeneration started");
-        let errors = pm_core::repo_metadata::regenerate_all_apt_metadata(&repo_dir).await;
-        if errors.is_empty() {
-            tracing::info!("Manual metadata regeneration completed successfully");
+        tracing::info!("Manual metadata regeneration started for all distro formats");
+
+        // APT — regenerate all suites (also prunes stale .deb files).
+        let apt_errors = pm_core::repo_metadata::regenerate_all_apt_metadata(&repo_dir).await;
+        if apt_errors.is_empty() {
+            tracing::info!("APT metadata regenerated successfully");
         } else {
             tracing::warn!(
-                error_count = errors.len(),
-                "Metadata regeneration completed with errors"
+                error_count = apt_errors.len(),
+                "APT metadata regeneration completed with errors"
             );
         }
+
+        // DNF — generate metadata and GPG-sign repomd.xml.
+        if let Err(e) = pm_core::repo_metadata::generate_dnf_metadata(&repo_dir).await {
+            tracing::warn!(error = %e, "Failed to regenerate dnf metadata");
+        }
+        let dnf_codename = pm_core::repo_metadata::DNF_CODENAME;
+        let repomd_path = format!("{repo_dir}/dnf/{dnf_codename}/repodata/repomd.xml");
+        let repomd_sig_path = format!("{repo_dir}/dnf/{dnf_codename}/repodata/repomd.xml.asc");
+        if std::path::Path::new(&repomd_path).exists() {
+            if let Err(e) =
+                pm_core::gpg::sign_file_detached(&repomd_path, &repomd_sig_path, true).await
+            {
+                tracing::warn!(
+                    error = %e,
+                    "GPG sign repomd.xml failed (non-fatal but dnf clients will not trust this repo)"
+                );
+            }
+        }
+
+        // APK — generate APKINDEX.tar.gz with embedded RSA signature.
+        let rsa_priv_path = if rsa_key_path.is_empty() {
+            std::env::var("LPA_APK_RSA_PRIVATE_KEY_PATH")
+                .unwrap_or_else(|_| "/etc/patch-manager/ca/lpa-repo-rsa.pem".to_string())
+        } else {
+            rsa_key_path
+        };
+        if let Err(e) =
+            pm_core::repo_metadata::generate_apk_metadata(&repo_dir, Some(&rsa_priv_path)).await
+        {
+            tracing::warn!(
+                error = %e,
+                "Failed to generate signed APKINDEX (Alpine clients will not trust this repo)"
+            );
+        }
+
+        // Pacman — generate repo database and GPG-sign lpa-repo.db.tar.zst.
+        if let Err(e) = pm_core::repo_metadata::generate_pacman_metadata(&repo_dir).await {
+            tracing::warn!(error = %e, "Failed to regenerate pacman metadata");
+        }
+        let db_path = format!("{repo_dir}/pacman/x86_64/lpa-repo.db.tar.zst");
+        let db_sig_path = format!("{repo_dir}/pacman/x86_64/lpa-repo.db.tar.zst.sig");
+        if std::path::Path::new(&db_path).exists() {
+            if let Err(e) = pm_core::gpg::sign_file_detached(&db_path, &db_sig_path, false).await {
+                tracing::warn!(
+                    error = %e,
+                    "GPG sign lpa-repo.db.tar.zst failed (non-fatal but pacman clients will not trust this repo)"
+                );
+            }
+        }
+
+        tracing::info!("Manual metadata regeneration completed for all distro formats");
     });
 
     Ok(Json(
-        json!({ "message": "Metadata regeneration triggered" }),
+        json!({ "message": "Metadata regeneration triggered for all distro formats" }),
     ))
 }
