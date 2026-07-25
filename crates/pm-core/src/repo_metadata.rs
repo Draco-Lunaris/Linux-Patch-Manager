@@ -1334,9 +1334,17 @@ pub fn resign_apk(apk_path: &str, rsa_private_key_path: &str) -> Result<(), anyh
 
     // Build the signature tar with the .SIGN.RSA256.lpa-repo.rsa.pub entry.
     // This matches the key filename in /etc/apk/keys/ on agents.
+    // apk 3.x requires ustar format with PAX extended headers for the
+    // signature tar (GNU format causes "v2 package format error").
     let sign_entry_name = ".SIGN.RSA256.lpa-repo.rsa.pub";
     let mut sig_tar = tar::Builder::new(Vec::new());
-    let mut sign_header = tar::Header::new_gnu();
+
+    // Append an empty PAX extended header entry. apk 3.x expects the
+    // signature tar to be in PAX format (type 'x' header preceding the
+    // actual file entry). Without this, apk reports "v2 package format error".
+    sig_tar.append_pax_extensions(std::iter::empty::<(&str, &[u8])>())?;
+
+    let mut sign_header = tar::Header::new_ustar();
     sign_header.set_path(Path::new(sign_entry_name))?;
     sign_header.set_size(signature.len() as u64);
     sign_header.set_mode(0o644);
