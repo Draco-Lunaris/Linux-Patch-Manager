@@ -12,6 +12,8 @@ use md5::Md5;
 use sha1::Sha1;
 use sha2::{Digest, Sha256};
 
+use base64::Engine;
+
 // ===== Helpers =====
 
 /// File checksums for apt Release and Packages files.
@@ -434,10 +436,11 @@ fn parse_keyvalue(content: &str) -> BTreeMap<String, String> {
     fields
 }
 
-/// Compute the APK control checksum (SHA256 of control tar entries).
+/// Compute the APK control checksum (SHA1 of control tar entries).
 /// The checksum covers all tar entries whose names start with `.` (control
 /// entries like .PKGINFO, .SIGN.*), accumulated as raw tar bytes (header +
 /// data + padding) from the decompressed gzip stream.
+/// apk's index format uses SHA1 base64 with a `Q1` prefix.
 fn compute_apk_control_checksum(file_path: &str) -> Result<String, anyhow::Error> {
     let file = std::fs::File::open(file_path)?;
     // Alpine .apk files are concatenated gzip streams (signature + control +
@@ -446,7 +449,7 @@ fn compute_apk_control_checksum(file_path: &str) -> Result<String, anyhow::Error
     let decoder = flate2::read::MultiGzDecoder::new(file);
     let mut reader = std::io::BufReader::new(decoder);
 
-    let mut hasher = Sha256::new();
+    let mut hasher = Sha1::new();
     let mut header_buf = [0u8; 512];
 
     loop {
@@ -499,7 +502,10 @@ fn compute_apk_control_checksum(file_path: &str) -> Result<String, anyhow::Error
         }
     }
 
-    Ok(format!("Q1{}", hex::encode(hasher.finalize())))
+    Ok(format!(
+        "Q1{}",
+        base64::engine::general_purpose::STANDARD.encode(hasher.finalize())
+    ))
 }
 
 /// Parse an .apk file's .PKGINFO.
@@ -537,10 +543,7 @@ pub fn parse_apk(file_path: &str) -> Result<ApkInfo, anyhow::Error> {
         pkgver: fields.get("pkgver").cloned().unwrap_or_default(),
         arch: fields.get("arch").cloned().unwrap_or_default(),
         size: file_size,
-        installed_size: fields
-            .get("installed_size")
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0),
+        installed_size: fields.get("size").and_then(|s| s.parse().ok()).unwrap_or(0),
         description: fields.get("pkgdesc").cloned().unwrap_or_default(),
         url: fields.get("url").cloned().unwrap_or_default(),
         license: fields.get("license").cloned().unwrap_or_default(),
