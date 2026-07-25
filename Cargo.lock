@@ -2851,6 +2851,7 @@ dependencies = [
  "aes-gcm",
  "anyhow",
  "axum",
+ "base64",
  "chrono",
  "config",
  "flate2",
