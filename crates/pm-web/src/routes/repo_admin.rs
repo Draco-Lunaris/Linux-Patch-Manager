@@ -312,17 +312,31 @@ async fn regenerate_metadata(
             );
         }
 
-        // Pacman — generate repo database and GPG-sign lpa-repo.db.tar.zst.
+        // Pacman — generate repo database and GPG-sign lpa-repo.db.tar.zst + lpa-repo.db.
         if let Err(e) = pm_core::repo_metadata::generate_pacman_metadata(&repo_dir).await {
             tracing::warn!(error = %e, "Failed to regenerate pacman metadata");
         }
-        let db_path = format!("{repo_dir}/pacman/x86_64/lpa-repo.db.tar.zst");
-        let db_sig_path = format!("{repo_dir}/pacman/x86_64/lpa-repo.db.tar.zst.sig");
-        if std::path::Path::new(&db_path).exists() {
-            if let Err(e) = pm_core::gpg::sign_file_detached(&db_path, &db_sig_path, false).await {
+        let db_zst_path = format!("{repo_dir}/pacman/x86_64/lpa-repo.db.tar.zst");
+        let db_zst_sig_path = format!("{repo_dir}/pacman/x86_64/lpa-repo.db.tar.zst.sig");
+        if std::path::Path::new(&db_zst_path).exists() {
+            if let Err(e) =
+                pm_core::gpg::sign_file_detached(&db_zst_path, &db_zst_sig_path, false).await
+            {
                 tracing::warn!(
                     error = %e,
                     "GPG sign lpa-repo.db.tar.zst failed (non-fatal but pacman clients will not trust this repo)"
+                );
+            }
+        }
+        let db_gz_path = format!("{repo_dir}/pacman/x86_64/lpa-repo.db");
+        let db_gz_sig_path = format!("{repo_dir}/pacman/x86_64/lpa-repo.db.sig");
+        if std::path::Path::new(&db_gz_path).exists() {
+            if let Err(e) =
+                pm_core::gpg::sign_file_detached(&db_gz_path, &db_gz_sig_path, false).await
+            {
+                tracing::warn!(
+                    error = %e,
+                    "GPG sign lpa-repo.db failed (non-fatal but pacman clients will not trust this repo)"
                 );
             }
         }

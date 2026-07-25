@@ -1317,9 +1317,22 @@ fn strip_tar_eof(tar_data: &[u8]) -> Vec<u8> {
 /// Generate pacman repo database (.db.tar.zst) in pure Rust.
 ///
 /// Replaces `repo-add`.
+///
+/// Generates both:
+/// - `lpa-repo.db.tar.zst` (zstd-compressed, for pacman clients that
+///   explicitly reference `.db.tar.zst`)
+/// - `lpa-repo.db` (gzip-compressed, for pacman clients that reference
+///   `.db` — the default when only the repo name is given in pacman.conf)
+///
+/// Pacman determines the decompression algorithm from the file extension.
+/// `.db` without `.tar.zst` is treated as gzip. If we serve a zstd file as
+/// `.db`, pacman fails with `unknown key '%SIZE%'` and `database is
+/// inconsistent` errors because it tries gzip decompression, gets garbage,
+/// and misparses the tar entries.
 pub async fn generate_pacman_metadata(repo_dir: &str) -> Result<(), anyhow::Error> {
     let pacman_dir = format!("{repo_dir}/pacman/x86_64");
-    let db_path = format!("{pacman_dir}/lpa-repo.db.tar.zst");
+    let db_zst_path = format!("{pacman_dir}/lpa-repo.db.tar.zst");
+    let db_gz_path = format!("{pacman_dir}/lpa-repo.db");
 
     // Scan for .pkg.tar.zst files (exclude .sig and .db.tar.zst).
     let mut pkg_files: Vec<String> = Vec::new();
@@ -1336,58 +1349,29 @@ pub async fn generate_pacman_metadata(repo_dir: &str) -> Result<(), anyhow::Erro
     }
     pkg_files.sort();
 
-    // Build tar archive with package database entries.
-    let mut tar_builder = tar::Builder::new(Vec::new());
+    // Parse all packages and keep only the latest version per package name.
+    // Pacman 7.x rejects databases with multiple entries for the same package
+    // name, reporting "database is inconsistent: version mismatch". The
+    // official Arch repo databases only contain the latest version of each
+    // package.
+    let mut latest_by_name: std::collections::BTreeMap<String, PacmanInfo> =
+        std::collections::BTreeMap::new();
+    let mut pkg_path_by_name: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
 
     for pkg_path in &pkg_files {
         match parse_pacman_pkg(pkg_path) {
             Ok(info) => {
-                let dir_name = format!("{}-{}", info.pkgname, info.pkgver);
-
-                // Add directory entry.
-                let mut dir_header = tar::Header::new_gnu();
-                dir_header.set_path(Path::new(&format!("{dir_name}/")))?;
-                dir_header.set_size(0);
-                dir_header.set_mode(0o755);
-                dir_header.set_entry_type(tar::EntryType::Directory);
-                dir_header.set_mtime(info.builddate);
-                dir_header.set_cksum();
-                let mut empty = std::io::empty();
-                tar_builder.append(&dir_header, &mut empty)?;
-
-                // Generate desc file content.
-                let mut desc = String::new();
-                desc.push_str(&format!("%NAME%\n{}\n\n", info.pkgname));
-                desc.push_str(&format!("%VERSION%\n{}\n\n", info.pkgver));
-                if !info.description.is_empty() {
-                    desc.push_str(&format!("%DESC%\n{}\n\n", info.description));
+                let name = info.pkgname.clone();
+                let ver = info.pkgver.clone();
+                let is_newer = match latest_by_name.get(&name) {
+                    Some(existing) => ver > existing.pkgver,
+                    None => true,
+                };
+                if is_newer {
+                    latest_by_name.insert(name.clone(), info);
+                    pkg_path_by_name.insert(name, pkg_path.clone());
                 }
-                desc.push_str(&format!("%ARCH%\n{}\n\n", info.arch));
-                if !info.url.is_empty() {
-                    desc.push_str(&format!("%URL%\n{}\n\n", info.url));
-                }
-                if !info.license.is_empty() {
-                    desc.push_str(&format!("%LICENSE%\n{}\n\n", info.license));
-                }
-                desc.push_str(&format!("%BUILDDATE%\n{}\n\n", info.builddate));
-                desc.push_str(&format!("%SIZE%\n{}\n\n", info.size));
-                desc.push_str(&format!("%CSIZE%\n{}\n\n", info.csize));
-                desc.push_str(&format!("%ISIZE%\n{}\n\n", info.size));
-                desc.push_str(&format!("%SHA256SUM%\n{}\n\n", info.sha256));
-                if !info.depends.is_empty() {
-                    desc.push_str(&format!("%DEPENDS%\n{}\n\n", info.depends));
-                }
-
-                // Add desc file entry.
-                let mut file_header = tar::Header::new_gnu();
-                file_header.set_path(Path::new(&format!("{dir_name}/desc")))?;
-                file_header.set_size(desc.len() as u64);
-                file_header.set_mode(0o644);
-                file_header.set_entry_type(tar::EntryType::Regular);
-                file_header.set_mtime(info.builddate);
-                file_header.set_cksum();
-                let mut desc_cursor = std::io::Cursor::new(desc.as_bytes());
-                tar_builder.append(&file_header, &mut desc_cursor)?;
             },
             Err(e) => {
                 tracing::warn!(error = %e, "Failed to parse pacman package");
@@ -1395,12 +1379,83 @@ pub async fn generate_pacman_metadata(repo_dir: &str) -> Result<(), anyhow::Erro
         }
     }
 
+    // Build tar archive with package database entries (latest version only).
+    let mut tar_builder = tar::Builder::new(Vec::new());
+
+    for (pkgname, info) in &latest_by_name {
+        let pkg_path = &pkg_path_by_name[pkgname];
+        let dir_name = format!("{}-{}", info.pkgname, info.pkgver);
+
+        // Add directory entry.
+        let mut dir_header = tar::Header::new_gnu();
+        dir_header.set_path(Path::new(&format!("{dir_name}/")))?;
+        dir_header.set_size(0);
+        dir_header.set_mode(0o755);
+        dir_header.set_entry_type(tar::EntryType::Directory);
+        dir_header.set_mtime(info.builddate);
+        dir_header.set_cksum();
+        let mut empty = std::io::empty();
+        tar_builder.append(&dir_header, &mut empty)?;
+
+        // Generate desc file content.
+        // Pacman desc format requires %FILENAME% as the first field
+        // (the actual package filename on the server). Without it,
+        // pacman cannot locate the package file for download.
+        // %SIZE% is NOT a valid pacman desc key — pacman uses %CSIZE%
+        // (compressed size) and %ISIZE% (installed size). Writing
+        // %SIZE% causes "unknown key '%SIZE%'" warnings and "database
+        // is inconsistent: version mismatch" errors on pacman 7.x.
+        let filename = std::path::Path::new(pkg_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        let mut desc = String::new();
+        desc.push_str(&format!("%FILENAME%\n{filename}\n\n"));
+        desc.push_str(&format!("%NAME%\n{}\n\n", info.pkgname));
+        desc.push_str(&format!("%VERSION%\n{}\n\n", info.pkgver));
+        if !info.description.is_empty() {
+            desc.push_str(&format!("%DESC%\n{}\n\n", info.description));
+        }
+        desc.push_str(&format!("%CSIZE%\n{}\n\n", info.csize));
+        desc.push_str(&format!("%ISIZE%\n{}\n\n", info.size));
+        desc.push_str(&format!("%SHA256SUM%\n{}\n\n", info.sha256));
+        desc.push_str(&format!("%ARCH%\n{}\n\n", info.arch));
+        if !info.url.is_empty() {
+            desc.push_str(&format!("%URL%\n{}\n\n", info.url));
+        }
+        if !info.license.is_empty() {
+            desc.push_str(&format!("%LICENSE%\n{}\n\n", info.license));
+        }
+        desc.push_str(&format!("%BUILDDATE%\n{}\n\n", info.builddate));
+        if !info.depends.is_empty() {
+            desc.push_str(&format!("%DEPENDS%\n{}\n\n", info.depends));
+        }
+
+        // Add desc file entry.
+        let mut file_header = tar::Header::new_gnu();
+        file_header.set_path(Path::new(&format!("{dir_name}/desc")))?;
+        file_header.set_size(desc.len() as u64);
+        file_header.set_mode(0o644);
+        file_header.set_entry_type(tar::EntryType::Regular);
+        file_header.set_mtime(info.builddate);
+        file_header.set_cksum();
+        let mut desc_cursor = std::io::Cursor::new(desc.as_bytes());
+        tar_builder.append(&file_header, &mut desc_cursor)?;
+    }
+
     let tar_data = tar_builder.into_inner()?;
 
     // Compress with zstd (level 19, matching repo-add default).
     let zstd_data = zstd::encode_all(tar_data.as_slice(), 19)?;
 
-    std::fs::write(&db_path, &zstd_data)?;
+    std::fs::write(&db_zst_path, &zstd_data)?;
+
+    // Also write a gzip-compressed .db file. Pacman determines the
+    // decompression algorithm from the file extension: `.db` (without
+    // `.tar.zst`) is expected to be gzip-compressed. Agents configured with
+    // just the repo name in pacman.conf download `lpa-repo.db` and need gzip.
+    let gz_data = gzip_compress(tar_data.as_slice())?;
+    std::fs::write(&db_gz_path, &gz_data)?;
 
     Ok(())
 }
