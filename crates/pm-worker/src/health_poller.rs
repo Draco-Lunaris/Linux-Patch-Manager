@@ -333,9 +333,13 @@ async fn poll_host_health(
         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
         .map(|dt| dt.to_utc());
 
+    // Extract pending_reboot from system info (false when unavailable).
+    let pending_reboot = sys_info.as_ref().is_some_and(|i| i.pending_reboot);
+
     // Update hosts table with the hysteresis-adjusted health status,
-    // agent version, OS details, CRL fields, and consecutive failure count.
-    // COALESCE preserves existing values when new data is unavailable.
+    // agent version, OS details, CRL fields, pending reboot, and consecutive
+    // failure count.  COALESCE preserves existing values when new data is
+    // unavailable — except pending_reboot which is always authoritative.
     if let Err(e) = sqlx::query(
         r#"
         UPDATE hosts
@@ -349,6 +353,7 @@ async fn poll_host_health(
             crl_next_update = COALESCE($9, crl_next_update),
             gpg_key_status = COALESCE($10, gpg_key_status),
             gpg_key_expires_at = COALESCE($11, gpg_key_expires_at),
+            pending_reboot = $13,
             consecutive_failures = $12
         WHERE id = $1
         "#,
@@ -365,6 +370,7 @@ async fn poll_host_health(
     .bind(&gpg_key_status)
     .bind(gpg_key_expires_at_dt)
     .bind(new_failure_count)
+    .bind(pending_reboot)
     .execute(&pool)
     .await
     {

@@ -86,16 +86,10 @@ pub async fn fleet_status(
         )
     })?;
 
-    // ── 3. Hosts requiring a reboot (latest patch row per host) ───────────
+    // ── 3. Hosts requiring a reboot (from system info pending_reboot flag) ──
     let hosts_requiring_reboot: i64 = sqlx::query_scalar(
         r#"
-        SELECT COUNT(*)
-        FROM (
-            SELECT DISTINCT ON (host_id) available_patches
-            FROM host_patch_data
-            ORDER BY host_id, polled_at DESC
-        ) latest
-        WHERE available_patches @> '[{"requires_reboot": true}]'
+        SELECT COUNT(*) FROM hosts WHERE pending_reboot = true
         "#,
     )
     .fetch_one(&state.db)
@@ -108,19 +102,20 @@ pub async fn fleet_status(
         )
     })?;
 
-    // ── 4. Compliance: hosts with zero pending patches / total hosts ───────
+    // ── 4. Compliance: hosts with zero pending patches / hosts with patch data
     // Hosts that have been polled and have patch_count == 0 are considered
     // compliant. Hosts with no patch data at all are excluded from the
-    // compliance calculation.
-    let compliant_hosts: i64 = sqlx::query_scalar(
+    // compliance calculation (neither compliant nor non-compliant).
+    let (compliant_hosts, polled_hosts): (i64, i64) = sqlx::query_as(
         r#"
-        SELECT COUNT(*)
+        SELECT
+            COUNT(*) FILTER (WHERE patch_count = 0) AS compliant,
+            COUNT(*)                                          AS polled
         FROM (
             SELECT DISTINCT ON (host_id) patch_count
             FROM host_patch_data
             ORDER BY host_id, polled_at DESC
         ) latest
-        WHERE patch_count = 0
         "#,
     )
     .fetch_one(&state.db)
@@ -133,10 +128,10 @@ pub async fn fleet_status(
         )
     })?;
 
-    let compliance_pct = if total_hosts == 0 {
+    let compliance_pct = if polled_hosts == 0 {
         100.0_f64
     } else {
-        (compliant_hosts as f64 / total_hosts as f64) * 100.0
+        (compliant_hosts as f64 / polled_hosts as f64) * 100.0
     };
 
     // Round to one decimal place.
