@@ -232,16 +232,28 @@ pub async fn import_to_repo(
             let dest = format!("{dest_dir}/{filename}");
             tokio::fs::copy(file_path, &dest).await?;
 
-            // Generate pacman repo database (lpa-repo.db.tar.zst) in pure Rust.
+            // Generate pacman repo database (lpa-repo.db.tar.zst + lpa-repo.db) in pure Rust.
             repo_metadata::generate_pacman_metadata(repo_dir).await?;
 
             // Sign lpa-repo.db.tar.zst with detached GPG signature for pacman verification.
-            let db_path = format!("{dest_dir}/lpa-repo.db.tar.zst");
-            let db_sig_path = format!("{dest_dir}/lpa-repo.db.tar.zst.sig");
-            if std::path::Path::new(&db_path).exists() {
-                if let Err(e) = crate::gpg::sign_file_detached(&db_path, &db_sig_path, false).await
+            let db_zst_path = format!("{dest_dir}/lpa-repo.db.tar.zst");
+            let db_zst_sig_path = format!("{dest_dir}/lpa-repo.db.tar.zst.sig");
+            if std::path::Path::new(&db_zst_path).exists() {
+                if let Err(e) =
+                    crate::gpg::sign_file_detached(&db_zst_path, &db_zst_sig_path, false).await
                 {
                     tracing::warn!(error = %e, "GPG sign lpa-repo.db.tar.zst failed (non-fatal but clients will not trust this repo)");
+                }
+            }
+
+            // Also sign lpa-repo.db (gzip variant) for clients that download .db
+            let db_gz_path = format!("{dest_dir}/lpa-repo.db");
+            let db_gz_sig_path = format!("{dest_dir}/lpa-repo.db.sig");
+            if std::path::Path::new(&db_gz_path).exists() {
+                if let Err(e) =
+                    crate::gpg::sign_file_detached(&db_gz_path, &db_gz_sig_path, false).await
+                {
+                    tracing::warn!(error = %e, "GPG sign lpa-repo.db failed (non-fatal but clients will not trust this repo)");
                 }
             }
         },
