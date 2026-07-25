@@ -1289,6 +1289,33 @@ pub async fn generate_apk_metadata(
     Ok(())
 }
 
+/// Check if an .apk's control gzip stream contains a "datahash" key in PKGINFO.
+///
+/// When a datahash is present, the signature covers only the control section
+/// (not the data section). The data section is verified separately via the
+/// datahash. When there is no datahash, the signature covers control+data.
+///
+/// `control_gz` is the raw gzip-compressed control stream (stream 1 of the
+/// .apk file).
+fn apk_has_data_hash(control_gz: &[u8]) -> Result<bool, anyhow::Error> {
+    let decoder = flate2::read::GzDecoder::new(control_gz);
+    let mut archive = tar::Archive::new(decoder);
+    let entries = archive.entries()?;
+    for entry in entries {
+        let mut entry = entry?;
+        let path = entry.path()?.display().to_string();
+        if path == ".PKGINFO" {
+            let mut content = String::new();
+            entry.read_to_string(&mut content)?;
+            return Ok(content.lines().any(|line| {
+                let line = line.trim();
+                line.starts_with("datahash") && line.contains('=')
+            }));
+        }
+    }
+    Ok(false)
+}
+
 /// Re-sign an .apk package with the manager's RSA key.
 ///
 /// CI-built .apk files are signed by an ephemeral `abuild-keygen` key that
@@ -1326,11 +1353,22 @@ pub fn resign_apk(apk_path: &str, rsa_private_key_path: &str) -> Result<(), anyh
     }
 
     // Stream 0 = signature, Stream 1 = control, Stream 2 = data (if present).
-    // The signature covers streams 1..end concatenated.
-    let control_and_data = &data[stream_offsets[1]..];
+    // When PKGINFO contains a "datahash" key, the signature covers ONLY the
+    // control gzip stream (stream 1). The data section is verified separately
+    // via the datahash. When there is no datahash, the signature covers the
+    // concatenation of control+data (streams 1..end).
+    let control_gz = &data[stream_offsets[1]..stream_offsets.get(2).copied().unwrap_or(data.len())];
+    let has_data_hash = apk_has_data_hash(control_gz)?;
+    let signed_data: &[u8] = if has_data_hash {
+        // datahash present: sign only the control gzip stream
+        control_gz
+    } else {
+        // no datahash: sign control+data concatenated
+        &data[stream_offsets[1]..]
+    };
 
-    // Sign the control+data concatenation with the manager's RSA key.
-    let signature = crate::rsa_signing::sign_data(control_and_data, rsa_private_key_path)?;
+    // Sign the signed data with the manager's RSA key.
+    let signature = crate::rsa_signing::sign_data(signed_data, rsa_private_key_path)?;
 
     // Build the signature tar with the .SIGN.RSA256.lpa-repo.rsa.pub entry.
     // This matches the key filename in /etc/apk/keys/ on agents.
@@ -1365,7 +1403,7 @@ pub fn resign_apk(apk_path: &str, rsa_private_key_path: &str) -> Result<(), anyh
 
     // New .apk = gzip(sig_tar) + control_stream + data_stream
     let mut new_apk = sig_gz;
-    new_apk.extend_from_slice(control_and_data);
+    new_apk.extend_from_slice(&data[stream_offsets[1]..]);
 
     // Atomic write: temp file + rename.
     let tmp_path = format!("{apk_path}.tmp");
