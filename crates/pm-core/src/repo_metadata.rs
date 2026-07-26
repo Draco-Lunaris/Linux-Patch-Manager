@@ -496,6 +496,24 @@ fn compute_apk_control_checksum(file_path: &str) -> Result<String, anyhow::Error
                 reader.read_exact(&mut pad)?;
                 hasher.update(&pad);
             }
+        } else if name.starts_with("PaxHeaders/") || header_buf[156] == b'x' {
+            // PAX extended header (type 'x'): skip it but continue reading.
+            // The PAX header is tar metadata, not a control entry. Its name
+            // starts with "PaxHeaders/" (the tar crate strips the "./" prefix),
+            // so the name.starts_with('.') check above doesn't match. We need
+            // to skip past its data + padding and continue to the next entry.
+            let mut remaining = size;
+            let mut buf = [0u8; 8192];
+            while remaining > 0 {
+                let to_read = std::cmp::min(remaining as usize, buf.len());
+                reader.read_exact(&mut buf[..to_read])?;
+                remaining -= to_read as u64;
+            }
+            let padding = (512 - (size % 512)) % 512;
+            if padding > 0 {
+                let mut pad = vec![0u8; padding as usize];
+                reader.read_exact(&mut pad)?;
+            }
         } else {
             // Non-control entry: stop.
             break;
