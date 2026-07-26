@@ -1374,15 +1374,26 @@ pub fn resign_apk(apk_path: &str, rsa_private_key_path: &str) -> Result<(), anyh
     // This matches the key filename in /etc/apk/keys/ on agents.
     // apk 3.x requires ustar format with a PAX extended header (type 'x')
     // preceding the signature file entry, matching what abuild-tar produces.
-    // Without the PAX header, apk reports "v2 package format error".
+    // The PAX header name must be non-empty (apk's tar parser treats a
+    // name starting with '\0' as an end-of-archive marker and skips it).
     let sign_entry_name = ".SIGN.RSA256.lpa-repo.rsa.pub";
+    let pax_entry_name = "./PaxHeaders/.SIGN.RSA256.lpa-repo.rsa.pub";
     let mut sig_tar = tar::Builder::new(Vec::new());
 
-    // Append a PAX extended header entry. abuild-tar creates a PAX 'x' type
-    // header with the path ./PaxHeaders/.SIGN.<keyname> before each file entry.
-    // The tar crate's append_pax_extensions skips empty data, so we provide
-    // a harmless comment extension to force the PAX header to be written.
-    sig_tar.append_pax_extensions([("comment", b"" as &[u8])])?;
+    // Build the PAX extended header entry manually. The tar crate's
+    // append_pax_extensions creates a header with an empty name, which
+    // apk's tar parser interprets as end-of-archive. We need the name
+    // to be ./PaxHeaders/.SIGN.<keyname> matching abuild-tar output.
+    let pax_data = b"12 comment=\n";
+    let mut pax_header = tar::Header::new_ustar();
+    pax_header.set_path(Path::new(pax_entry_name))?;
+    pax_header.set_size(pax_data.len() as u64);
+    pax_header.set_mode(0o644);
+    pax_header.set_entry_type(tar::EntryType::XHeader);
+    pax_header.set_mtime(0);
+    pax_header.set_cksum();
+    let mut pax_cursor = std::io::Cursor::new(&pax_data[..]);
+    sig_tar.append(&pax_header, &mut pax_cursor)?;
 
     let mut sign_header = tar::Header::new_ustar();
     sign_header.set_path(Path::new(sign_entry_name))?;
