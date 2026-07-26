@@ -436,89 +436,31 @@ fn parse_keyvalue(content: &str) -> BTreeMap<String, String> {
     fields
 }
 
-/// Compute the APK control checksum (SHA1 of control tar entries).
-/// The checksum covers all tar entries whose names start with `.` (control
-/// entries like .PKGINFO, .SIGN.*), accumulated as raw tar bytes (header +
-/// data + padding) from the decompressed gzip stream.
-/// apk's index format uses SHA1 base64 with a `Q1` prefix.
+/// Compute the APK control checksum (SHA1 of the control gzip stream).
+///
+/// The `C:` field in APKINDEX is the SHA-1 of the raw gzip-compressed
+/// control section (stream 1 of the .apk file). This is NOT the SHA-1
+/// of the decompressed tar entries — it is the SHA-1 of the raw gzip
+/// bytes as they appear in the .apk file.
+///
+/// Verified against Alpine's own APKINDEX: `SHA1(control_gz_bytes)`
+/// matches the `C:` field for stock Alpine packages.
 fn compute_apk_control_checksum(file_path: &str) -> Result<String, anyhow::Error> {
-    let file = std::fs::File::open(file_path)?;
-    // Alpine .apk files are concatenated gzip streams (signature + control +
-    // data). Must use MultiGzDecoder to reach the control section in the
-    // second stream. GzDecoder only reads the first (signature) stream.
-    let decoder = flate2::read::MultiGzDecoder::new(file);
-    let mut reader = std::io::BufReader::new(decoder);
+    let data = std::fs::read(file_path)?;
+
+    // Find gzip stream boundaries. Stream 0 = signature, stream 1 = control.
+    let stream_offsets = find_gzip_stream_boundaries(&data)?;
+    if stream_offsets.len() < 2 {
+        anyhow::bail!("Invalid .apk: expected at least 2 gzip streams");
+    }
+
+    // The control stream is stream 1 (from end of stream 0 to start of stream 2).
+    let control_start = stream_offsets[1];
+    let control_end = stream_offsets.get(2).copied().unwrap_or(data.len());
+    let control_gz = &data[control_start..control_end];
 
     let mut hasher = Sha1::new();
-    let mut header_buf = [0u8; 512];
-
-    loop {
-        match reader.read_exact(&mut header_buf) {
-            Ok(()) => {},
-            Err(ref e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-            Err(e) => return Err(e.into()),
-        }
-
-        // End of archive marker.
-        if header_buf.iter().all(|&b| b == 0) {
-            break;
-        }
-
-        // Parse entry name (first 100 bytes, null-terminated).
-        let name_end = header_buf[..100]
-            .iter()
-            .position(|&b| b == 0)
-            .unwrap_or(100);
-        let name = String::from_utf8_lossy(&header_buf[..name_end]);
-
-        // Parse entry size (octal ASCII at offset 124, 12 bytes).
-        let size_raw = String::from_utf8_lossy(&header_buf[124..136]);
-        let size_str = size_raw.trim_matches('\0').trim();
-        let size = u64::from_str_radix(size_str, 8).unwrap_or(0);
-
-        if name.starts_with('.') {
-            // Control entry: accumulate raw bytes into checksum.
-            hasher.update(header_buf);
-
-            let mut remaining = size;
-            let mut buf = [0u8; 8192];
-            while remaining > 0 {
-                let to_read = std::cmp::min(remaining as usize, buf.len());
-                reader.read_exact(&mut buf[..to_read])?;
-                hasher.update(&buf[..to_read]);
-                remaining -= to_read as u64;
-            }
-
-            // Include tar padding.
-            let padding = (512 - (size % 512)) % 512;
-            if padding > 0 {
-                let mut pad = vec![0u8; padding as usize];
-                reader.read_exact(&mut pad)?;
-                hasher.update(&pad);
-            }
-        } else if name.starts_with("PaxHeaders/") || header_buf[156] == b'x' {
-            // PAX extended header (type 'x'): skip it but continue reading.
-            // The PAX header is tar metadata, not a control entry. Its name
-            // starts with "PaxHeaders/" (the tar crate strips the "./" prefix),
-            // so the name.starts_with('.') check above doesn't match. We need
-            // to skip past its data + padding and continue to the next entry.
-            let mut remaining = size;
-            let mut buf = [0u8; 8192];
-            while remaining > 0 {
-                let to_read = std::cmp::min(remaining as usize, buf.len());
-                reader.read_exact(&mut buf[..to_read])?;
-                remaining -= to_read as u64;
-            }
-            let padding = (512 - (size % 512)) % 512;
-            if padding > 0 {
-                let mut pad = vec![0u8; padding as usize];
-                reader.read_exact(&mut pad)?;
-            }
-        } else {
-            // Non-control entry: stop.
-            break;
-        }
-    }
+    hasher.update(control_gz);
 
     Ok(format!(
         "Q1{}",
