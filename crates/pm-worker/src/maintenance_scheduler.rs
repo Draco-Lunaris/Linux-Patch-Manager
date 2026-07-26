@@ -233,10 +233,10 @@ async fn auto_create_patch_jobs(pool: PgPool, _config: Arc<AppConfig>) {
             WITH new_job AS (
                 INSERT INTO patch_jobs
                     (kind, status, maintenance_window_id, immediate,
-                     patch_selection, notes, auto_host_id)
+                     patch_selection, notes, auto_host_id, allow_reboot)
                 VALUES
                     ('patch_apply', 'queued', $1, FALSE, '[]'::jsonb,
-                     'Auto-created by maintenance window scheduler', $2)
+                     'Auto-created by maintenance window scheduler', $2, TRUE)
                 RETURNING id AS job_id
             )
             INSERT INTO patch_job_hosts (job_id, host_id, status)

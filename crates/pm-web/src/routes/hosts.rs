@@ -232,11 +232,12 @@ async fn list_hosts(
                    )
                      THEN 'some_unhealthy'
                    ELSE 'all_healthy'
-                 END AS health_check_status,
-                   h.registered_at,
-                   h.crl_status,
-                   false AS upgrade_available,
-                   NULL::text AS latest_version
+                   END AS health_check_status,
+                    h.registered_at,
+                    h.crl_status,
+                    false AS upgrade_available,
+                    NULL::text AS latest_version,
+                    COALESCE(h.pending_reboot, false) AS pending_reboot
             FROM hosts h
             LEFT JOIN host_patch_data hpd ON hpd.host_id = h.id
             WHERE 1=1{filter_clause}
@@ -277,11 +278,12 @@ async fn list_hosts(
                    )
                      THEN 'some_unhealthy'
                    ELSE 'all_healthy'
-                 END AS health_check_status,
-                   h.registered_at,
-                   h.crl_status,
-                   false AS upgrade_available,
-                   NULL::text AS latest_version
+                   END AS health_check_status,
+                    h.registered_at,
+                    h.crl_status,
+                    false AS upgrade_available,
+                    NULL::text AS latest_version,
+                    COALESCE(h.pending_reboot, false) AS pending_reboot
             FROM hosts h
             LEFT JOIN host_patch_data hpd ON hpd.host_id = h.id
             WHERE
@@ -537,7 +539,8 @@ async fn get_host(
                    last_health_at, last_patch_at, agent_port, notes,
                    registered_at, updated_at,
                    crl_status, crl_age_seconds, crl_next_update,
-                   gpg_key_status, gpg_key_expires_at
+                   gpg_key_status, gpg_key_expires_at,
+                   COALESCE(pending_reboot, false) AS pending_reboot
             FROM hosts WHERE id = $1
         ) h
         "#,

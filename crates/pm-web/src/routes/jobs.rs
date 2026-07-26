@@ -16,7 +16,7 @@ use axum::{
 use pm_auth::rbac::AuthUser;
 use pm_core::{
     audit::{log_event, AuditAction},
-    models::{CreateJobRequest, PatchJobSummary},
+    models::{CreateJobRequest, JobKind, PatchJobSummary},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -143,6 +143,7 @@ async fn create_job(
     // Encode package list as JSONB.
     let patch_selection = serde_json::to_value(&req.packages).unwrap_or(json!([]));
     let notes = req.notes.clone().unwrap_or_default();
+    let job_kind = req.kind.unwrap_or(JobKind::PatchApply);
 
     // Insert the parent job row; the DB NOTIFY trigger fires automatically
     // when immediate = TRUE (see migration 003_jobs_scheduling.sql).
@@ -150,17 +151,19 @@ async fn create_job(
         r#"
         INSERT INTO patch_jobs
             (kind, status, created_by_user_id, maintenance_window_id,
-             immediate, patch_selection, notes)
+             immediate, patch_selection, notes, allow_reboot)
         VALUES
-            ('patch_apply'::job_kind, 'queued'::job_status, $1, $2, $3, $4, $5)
+            ($1::job_kind, 'queued'::job_status, $2, $3, $4, $5, $6, $7)
         RETURNING id
         "#,
     )
+    .bind(&job_kind)
     .bind(auth.user_id)
     .bind(req.maintenance_window_id)
     .bind(req.immediate)
     .bind(&patch_selection)
     .bind(&notes)
+    .bind(req.allow_reboot)
     .fetch_one(&state.db)
     .await
     .map_err(|e| {
@@ -206,10 +209,11 @@ async fn create_job(
         Some("job"),
         Some(&job_id.to_string()),
         json!({
-            "kind": "patch_apply",
+            "kind": job_kind,
             "immediate": req.immediate,
             "host_count": req.host_ids.len(),
             "packages": req.packages,
+            "allow_reboot": req.allow_reboot,
             "notes": notes,
         }),
         None,

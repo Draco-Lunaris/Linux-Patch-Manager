@@ -34,6 +34,7 @@ export interface Host {
   gpg_key_expires_at?: string
   upgrade_available?: boolean
   latest_version?: string
+  pending_reboot?: boolean
 }
 
 export interface CreateHostRequest {
@@ -172,6 +173,7 @@ export interface CreateJobRequest {
   maintenance_window_id?: string
   allow_reboot?: boolean
   notes?: string
+  kind?: JobKind
 }
 
 // ── Maintenance Windows ───────────────────────────────────────────────────────

@@ -46,16 +46,18 @@ import {
   Remove as RemoveIcon,
   Schedule as ScheduleIcon,
   SystemUpdate as SystemUpdateIcon,
+  RestartAlt as RestartAltIcon,
   VpnKey as VpnKeyIcon,
   ContentCopy as CopyIcon,
   VerifiedUser as VerifiedUserIcon,
   Security as SecurityIcon,
   WarningAmber as WarningAmberIcon,
 } from '@mui/icons-material'
-import { apiClient, hostsApi, maintenanceWindowsApi, healthChecksApi, certsApi, upgradesApi } from '../api/client'
+import { apiClient, hostsApi, maintenanceWindowsApi, healthChecksApi, certsApi, upgradesApi, jobsApi } from '../api/client'
 import { useAuthStore } from '../store/authStore'
 import type {
   CreateHostRequest,
+  CreateJobRequest,
   IssuedCert,
   MaintenanceWindow,
   WindowRecurrence,
@@ -639,6 +641,10 @@ export default function HostDetailPage() {
   const [upgradeImmediate, setUpgradeImmediate] = useState(true)
   const [upgradeLoading, setUpgradeLoading] = useState(false)
 
+  // ── Reboot state ────────────────────────────────────────────────────────
+  const [rebootDialogOpen, setRebootDialogOpen] = useState(false)
+  const [rebootLoading, setRebootLoading] = useState(false)
+
   const enterEdit = () => {
     setEditFqdn(String(host?.fqdn ?? ''))
     setEditIp(String(host?.ip_address ?? ''))
@@ -747,6 +753,31 @@ export default function HostDetailPage() {
       showSnack(msg, 'error')
     } finally {
       setUpgradeLoading(false)
+    }
+  }
+
+  // ── Reboot handler ────────────────────────────────────────────────────────
+  const handleTriggerReboot = async () => {
+    if (!id || id === 'new') return
+    setRebootLoading(true)
+    try {
+      const req: CreateJobRequest = {
+        host_ids: [id],
+        packages: [],
+        immediate: true,
+        kind: 'reboot',
+        notes: 'Manual reboot triggered from host detail',
+      }
+      const res = await jobsApi.create(req)
+      const job = res.data as { id: string }
+      showSnack(`Reboot job ${job.id} created`, 'success')
+      setRebootDialogOpen(false)
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: { message?: string } } } })
+        ?.response?.data?.error?.message ?? 'Failed to trigger reboot'
+      showSnack(msg, 'error')
+    } finally {
+      setRebootLoading(false)
     }
   }
 
@@ -1071,6 +1102,17 @@ export default function HostDetailPage() {
                 Upgrade Agent
               </Button>
             )}
+            {!editing && canWrite && (
+              <Button
+                variant="outlined"
+                size="small"
+                color="warning"
+                startIcon={<RestartAltIcon />}
+                onClick={() => setRebootDialogOpen(true)}
+              >
+                Reboot Host
+              </Button>
+            )}
           </Box>
         </Box>
         <Divider sx={{ mb: 2 }} />
@@ -1126,6 +1168,16 @@ export default function HostDetailPage() {
                       onClick={canWrite ? () => openUpgradeDialog() : undefined}
                     />
                   </Tooltip>
+                )}
+              </Box>
+            </Grid>
+            <Grid size={{ xs: 12, sm: 6, md: 4 }}>
+              <Typography variant="caption" color="text.secondary" display="block">REBOOT STATUS</Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                {host?.pending_reboot ? (
+                  <Chip size="small" icon={<RestartAltIcon />} label="Reboot Required" color="warning" variant="outlined" />
+                ) : (
+                  <Typography variant="body2">No reboot pending</Typography>
                 )}
               </Box>
             </Grid>
@@ -1589,6 +1641,32 @@ export default function HostDetailPage() {
             disabled={upgradeLoading}
           >
             {upgradeLoading ? <CircularProgress size={20} /> : 'Upgrade'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* ── Reboot Confirmation Dialog ──────────────────────────────────── */}
+      <Dialog open={rebootDialogOpen} onClose={() => setRebootDialogOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <RestartAltIcon color="warning" /> Confirm Reboot
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" gutterBottom>
+            You are about to reboot <strong>{String(host?.fqdn ?? 'this host')}</strong> immediately.
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            The host will be unavailable during the reboot. Any active sessions will be terminated.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRebootDialogOpen(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            color="warning"
+            onClick={handleTriggerReboot}
+            disabled={rebootLoading}
+          >
+            {rebootLoading ? <CircularProgress size={20} /> : 'Reboot Now'}
           </Button>
         </DialogActions>
       </Dialog>

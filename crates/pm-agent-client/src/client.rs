@@ -35,8 +35,8 @@ use crate::{
     error::AgentClientError,
     types::{
         AgentEnvelope, AgentJobStatus, ApplyPatchesRequest, ApplyPatchesResponse, HealthData,
-        PackagesData, PatchesData, RollbackResponse, ServiceStatusData, SystemInfoData,
-        UpdatePackageResponse,
+        PackagesData, PatchesData, RebootRequest, RebootResponse, RollbackResponse,
+        ServiceStatusData, SystemInfoData, UpdatePackageResponse,
     },
 };
 
@@ -225,6 +225,12 @@ impl AgentClient {
         let empty: serde_json::Value = serde_json::json!({});
         self.post(&format!("jobs/{}/rollback", job_id), &empty)
             .await
+    }
+
+    /// `POST /api/v1/system/reboot` — trigger a reboot on the agent.
+    #[instrument(skip(self, req), fields(base_url = %self.base_url))]
+    pub async fn reboot(&self, req: &RebootRequest) -> Result<RebootResponse, AgentClientError> {
+        self.post("system/reboot", req).await
     }
 
     /// `GET /api/v1/system/services/{name}` — check status of a specific service on the agent.
