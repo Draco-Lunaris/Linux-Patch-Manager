@@ -1,3 +1,17 @@
+linux-patch-manager (1.4.0-1) unstable; urgency=low
+
+  * Release v1.4.0
+  * feat: add reboot visibility, manual reboot trigger, and honor allow_reboot
+  * feat: pending_reboot column shown in host list and host detail (PR #211)
+  * feat: per-host and bulk reboot buttons with confirmation dialogs
+  * feat: POST /api/v1/jobs accepts kind=reboot to create reboot jobs
+  * feat: AgentClient::reboot() calls POST /system/reboot on agent
+  * fix: store allow_reboot from UI checkbox in patch_jobs; worker honors it
+  * fix: maintenance window auto-apply explicitly sets allow_reboot=TRUE
+  * migration 035: add allow_reboot column to patch_jobs
+
+ -- Echo AI Agent <echo@moon-dragon.us>  Sun, 26 Jul 2026 00:00:00 -0500
+
 linux-patch-manager (1.3.13-1) unstable; urgency=low
 
   * Release v1.3.13
