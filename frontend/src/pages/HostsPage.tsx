@@ -6,11 +6,11 @@ import {
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   TablePagination, TableSortLabel, TextField, Toolbar, Tooltip, Typography,
 } from '@mui/material'
-import { Add as AddIcon, Refresh as RefreshIcon, Delete as DeleteIcon, CheckCircle as CheckCircleIcon, Cancel as CancelIcon, Remove as RemoveIcon, Pending as PendingIcon, GppMaybe as GppMaybeIcon, CheckCircleOutline as CheckCircleOutlineIcon, WarningAmber as WarningAmberIcon, VerifiedUser as VerifiedUserIcon, Security as SecurityIcon, SystemUpdate as SystemUpdateIcon, NewReleases as NewReleasesIcon } from '@mui/icons-material'
+import { Add as AddIcon, Refresh as RefreshIcon, Delete as DeleteIcon, CheckCircle as CheckCircleIcon, Cancel as CancelIcon, Remove as RemoveIcon, Pending as PendingIcon, GppMaybe as GppMaybeIcon, CheckCircleOutline as CheckCircleOutlineIcon, WarningAmber as WarningAmberIcon, VerifiedUser as VerifiedUserIcon, Security as SecurityIcon, SystemUpdate as SystemUpdateIcon, NewReleases as NewReleasesIcon, RestartAlt as RestartAltIcon } from '@mui/icons-material'
 import { useNavigate } from 'react-router-dom'
-import { apiClient, hostsApi, enrollmentApi, upgradesApi } from '../api/client'
+import { apiClient, hostsApi, enrollmentApi, upgradesApi, jobsApi } from '../api/client'
 import { useAuthStore } from '../store/authStore'
-import type { Host, HostHealthStatus, EnrollmentRequest, EnrollmentConflictResponse, RepoAvailableVersion, TriggerUpgradeRequest } from '../types'
+import type { Host, HostHealthStatus, EnrollmentRequest, EnrollmentConflictResponse, RepoAvailableVersion, TriggerUpgradeRequest, CreateJobRequest } from '../types'
 
 const statusColor = (s: HostHealthStatus) =>
   s === 'healthy' ? 'success' : s === 'degraded' ? 'warning' : s === 'unreachable' ? 'error' : 'default'
@@ -45,6 +45,11 @@ export default function HostsPage() {
   const [upgradeImmediate, setUpgradeImmediate] = useState(true)
   const [upgradeLoading, setUpgradeLoading] = useState(false)
   const [canaryWarningOpen, setCanaryWarningOpen] = useState(false)
+
+  // ── Reboot state ────────────────────────────────────────────────────────
+  const [rebootDialogOpen, setRebootDialogOpen] = useState(false)
+  const [rebootHostIds, setRebootHostIds] = useState<string[]>([])
+  const [rebootLoading, setRebootLoading] = useState(false)
 
   // ── Sorting state ────────────────────────────────────────────────────────
   type SortKey = 'fqdn' | 'display_name' | 'ip_address' | 'os' | 'health_status' | 'health_check_status' | 'crl_status' | 'agent_version'
@@ -227,6 +232,37 @@ export default function HostsPage() {
     })
   }
 
+  // ── Reboot handlers ──────────────────────────────────────────────────────
+  const handleOpenRebootDialog = (hostIds: string[]) => {
+    setRebootHostIds(hostIds)
+    setRebootDialogOpen(true)
+  }
+
+  const handleTriggerReboot = async () => {
+    if (rebootHostIds.length === 0) return
+    setRebootLoading(true)
+    try {
+      const req: CreateJobRequest = {
+        host_ids: rebootHostIds,
+        packages: [],
+        immediate: true,
+        kind: 'reboot',
+        notes: 'Manual reboot triggered from host list',
+      }
+      const res = await jobsApi.create(req)
+      const job = res.data as { id: string }
+      setSnackbar({ open: true, message: `Reboot job ${job.id} created for ${rebootHostIds.length} host(s)`, severity: 'success' })
+      setRebootDialogOpen(false)
+      setRebootHostIds([])
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: { message?: string } } } })
+        ?.response?.data?.error?.message ?? 'Failed to trigger reboot'
+      setSnackbar({ open: true, message: msg, severity: 'error' })
+    } finally {
+      setRebootLoading(false)
+    }
+  }
+
   const handleToggleSelectAll = () => {
     if (selectedHostIds.size === filtered.length) {
       setSelectedHostIds(new Set())
@@ -286,6 +322,17 @@ export default function HostsPage() {
             Upgrade {selectedHostIds.size} Agent{selectedHostIds.size > 1 ? 's' : ''}
           </Button>
         )}
+        {canWrite && selectedHostIds.size > 0 && (
+          <Button
+            variant="outlined"
+            color="warning"
+            startIcon={<RestartAltIcon />}
+            onClick={() => handleOpenRebootDialog(Array.from(selectedHostIds))}
+            sx={{ ml: 1 }}
+          >
+            Reboot {selectedHostIds.size} Host{selectedHostIds.size > 1 ? 's' : ''}
+          </Button>
+        )}
         {canWrite && <Button variant="contained" startIcon={<AddIcon />} onClick={() => navigate('/hosts/new')} sx={{ ml: 1 }}>Add Host</Button>}
       </Toolbar>
       {loading ? <Box display="flex" justifyContent="center" mt="4"><CircularProgress /></Box> : (
@@ -324,6 +371,7 @@ export default function HostsPage() {
                 <TableCell>
                   <TableSortLabel active={sortKey === 'agent_version'} direction={sortKey === 'agent_version' ? sortDir : 'asc'} onClick={() => handleSortChange('agent_version')}>Agent</TableSortLabel>
                 </TableCell>
+                <TableCell>Reboot</TableCell>
                 {canWrite && <TableCell>Actions</TableCell>}
               </TableRow>
             </TableHead>
@@ -344,6 +392,7 @@ export default function HostsPage() {
                     <TableCell></TableCell>
                     <TableCell></TableCell>
                     <TableCell>—</TableCell>
+                    <TableCell></TableCell>
                     {canWrite && <TableCell onClick={e => e.stopPropagation()}>
                       <Tooltip title="Approve">
                         <IconButton size="small" color="success"
@@ -411,11 +460,26 @@ export default function HostsPage() {
                         )}
                       </Box>
                     </TableCell>
+                    <TableCell>
+                      {h.pending_reboot ? (
+                        <Tooltip title="Reboot required">
+                          <WarningAmberIcon color="warning" fontSize="small" />
+                        </Tooltip>
+                      ) : (
+                        <Tooltip title="No reboot required"><RemoveIcon color="disabled" fontSize="small" /></Tooltip>
+                      )}
+                    </TableCell>
                     {canWrite && <TableCell onClick={e => e.stopPropagation()}>
                       <Tooltip title="Upgrade agent">
                         <IconButton size="small" color="secondary"
                           onClick={(e) => { e.stopPropagation(); handleOpenUpgradeDialog([h.id]) }}>
                           <SystemUpdateIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="Reboot host">
+                        <IconButton size="small" color="warning"
+                          onClick={(e) => { e.stopPropagation(); handleOpenRebootDialog([h.id]) }}>
+                          <RestartAltIcon fontSize="small" />
                         </IconButton>
                       </Tooltip>
                       <Tooltip title="Request refresh">
@@ -585,6 +649,32 @@ export default function HostsPage() {
             disabled={upgradeLoading}
           >
             Upgrade All Anyway
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* ── Reboot Confirmation Dialog ──────────────────────────────────── */}
+      <Dialog open={rebootDialogOpen} onClose={() => setRebootDialogOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <RestartAltIcon color="warning" /> Confirm Reboot
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" gutterBottom>
+            You are about to reboot <strong>{rebootHostIds.length}</strong> host{rebootHostIds.length > 1 ? 's' : ''} immediately.
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            The host(s) will be unavailable during the reboot. Any active sessions will be terminated.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRebootDialogOpen(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            color="warning"
+            onClick={handleTriggerReboot}
+            disabled={rebootLoading}
+          >
+            {rebootLoading ? <CircularProgress size={20} /> : 'Reboot Now'}
           </Button>
         </DialogActions>
       </Dialog>

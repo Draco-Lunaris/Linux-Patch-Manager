@@ -15,7 +15,10 @@
 use std::sync::Arc;
 
 use chrono::{Duration as ChronoDuration, Utc};
-use pm_agent_client::{types::ApplyPatchesRequest, AgentClient, AgentClientError};
+use pm_agent_client::{
+    types::{ApplyPatchesRequest, RebootRequest},
+    AgentClient, AgentClientError,
+};
 use pm_core::config::AppConfig;
 use pm_core::models::JobKind;
 use serde_json::json;
@@ -67,6 +70,8 @@ struct HostRow {
 struct JobInfo {
     kind: JobKind,
     patch_selection: serde_json::Value,
+    #[sqlx(default)]
+    allow_reboot: bool,
 }
 
 #[derive(Debug, FromRow)]
@@ -459,24 +464,25 @@ async fn execute_host_job(
     }
 
     // ── 2. Fetch the job's kind and patch_selection ──────────────────────────
-    let job_info: JobInfo =
-        match sqlx::query_as("SELECT kind, patch_selection FROM patch_jobs WHERE id = $1")
-            .bind(job_id)
-            .fetch_optional(&pool)
-            .await
-        {
-            Ok(Some(row)) => row,
-            Ok(None) => {
-                tracing::error!(%job_id, "execute_host_job: parent job not found");
-                handle_host_failure(pool, pjh_id, format!("Parent job {job_id} not found")).await;
-                return;
-            },
-            Err(e) => {
-                tracing::error!(%job_id, error = %e, "execute_host_job: DB error fetching job");
-                handle_host_failure(pool, pjh_id, format!("DB error fetching job: {e}")).await;
-                return;
-            },
-        };
+    let job_info: JobInfo = match sqlx::query_as(
+        "SELECT kind, patch_selection, allow_reboot FROM patch_jobs WHERE id = $1",
+    )
+    .bind(job_id)
+    .fetch_optional(&pool)
+    .await
+    {
+        Ok(Some(row)) => row,
+        Ok(None) => {
+            tracing::error!(%job_id, "execute_host_job: parent job not found");
+            handle_host_failure(pool, pjh_id, format!("Parent job {job_id} not found")).await;
+            return;
+        },
+        Err(e) => {
+            tracing::error!(%job_id, error = %e, "execute_host_job: DB error fetching job");
+            handle_host_failure(pool, pjh_id, format!("DB error fetching job: {e}")).await;
+            return;
+        },
+    };
 
     // ── 3. Load mTLS certs ───────────────────────────────────────────────────
     let certs = match load_agent_certs(&config.security) {
@@ -533,9 +539,12 @@ async fn execute_host_job(
             )
             .await;
         },
+        JobKind::Reboot => {
+            execute_reboot_host_job(pool, pjh_id, host_id, &client).await;
+        },
         _ => {
-            // PatchApply, PatchRemove, Reboot, Rollback — all use the
-            // existing patch-apply path (agent dispatches by kind internally).
+            // PatchApply, PatchRemove, Rollback — use the existing
+            // patch-apply path (agent dispatches by kind internally).
             execute_patch_host_job(
                 pool,
                 config,
@@ -543,6 +552,7 @@ async fn execute_host_job(
                 host_id,
                 &client,
                 &job_info.patch_selection,
+                job_info.allow_reboot,
             )
             .await;
         },
@@ -560,6 +570,7 @@ async fn execute_patch_host_job(
     host_id: Uuid,
     client: &AgentClient,
     patch_selection: &serde_json::Value,
+    allow_reboot: bool,
 ) {
     let mut packages: Vec<String> =
         serde_json::from_value(patch_selection.clone()).unwrap_or_default();
@@ -605,7 +616,7 @@ async fn execute_patch_host_job(
 
     let req = ApplyPatchesRequest {
         packages,
-        allow_reboot: true,
+        allow_reboot,
         reboot_delay_seconds: 0,
     };
 
@@ -632,6 +643,47 @@ async fn execute_patch_host_job(
         },
         Err(e) => {
             tracing::warn!(%pjh_id, error = %e, "execute_patch_host_job: agent rejected job");
+            handle_host_failure(pool, pjh_id, format!("Agent error: {e}")).await;
+        },
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// execute_reboot_host_job — explicit reboot dispatch
+// ─────────────────────────────────────────────────────────────────────────────
+
+async fn execute_reboot_host_job(pool: PgPool, pjh_id: Uuid, host_id: Uuid, client: &AgentClient) {
+    tracing::info!(%pjh_id, %host_id, "execute_reboot_host_job: triggering reboot");
+
+    let req = RebootRequest {
+        delay_seconds: 0,
+        force: false,
+    };
+
+    match client.reboot(&req).await {
+        Ok(resp) => {
+            tracing::info!(
+                %pjh_id,
+                %host_id,
+                agent_job_id = %resp.job_id,
+                "execute_reboot_host_job: agent accepted reboot job"
+            );
+            if let Err(e) =
+                sqlx::query("UPDATE patch_job_hosts SET agent_job_id = $1 WHERE id = $2")
+                    .bind(&resp.job_id)
+                    .bind(pjh_id)
+                    .execute(&pool)
+                    .await
+            {
+                tracing::error!(
+                    %pjh_id,
+                    error = %e,
+                    "execute_reboot_host_job: failed to store agent_job_id"
+                );
+            }
+        },
+        Err(e) => {
+            tracing::warn!(%pjh_id, %host_id, error = %e, "execute_reboot_host_job: agent rejected reboot");
             handle_host_failure(pool, pjh_id, format!("Agent error: {e}")).await;
         },
     }

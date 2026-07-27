@@ -109,6 +109,10 @@ pub struct Host {
     /// When the agent's GPG key expires (if reported).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gpg_key_expires_at: Option<DateTime<Utc>>,
+    /// True when the agent reports a pending reboot.  Populated by the
+    /// health poller from the agent's /system/info response.
+    #[serde(default)]
+    pub pending_reboot: bool,
 }
 
 /// Payload for registering a new host.
@@ -155,6 +159,11 @@ pub struct HostSummary {
     /// host's OS, or None if no packages are available.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_version: Option<String>,
+    /// True when the agent reports a pending reboot (kernel/glibc/etc.
+    /// updated but host not yet rebooted).  Populated by the health
+    /// poller from the agent's /system/info response.
+    #[serde(default)]
+    pub pending_reboot: bool,
 }
 
 // ============================================================
@@ -682,6 +691,8 @@ pub struct PatchJob {
     pub created_at: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,
     pub completed_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub allow_reboot: bool,
 }
 
 /// Full `patch_job_hosts` row (includes columns added in migration 003).
@@ -712,10 +723,16 @@ pub struct CreateJobRequest {
     pub immediate: bool,
     /// Optional maintenance window to bind to.
     pub maintenance_window_id: Option<Uuid>,
-    /// Allow reboot if required by patches.
-    pub allow_reboot: Option<bool>,
+    /// Allow reboot if required by patches.  Defaults to true (preserves
+    /// historical behavior) when omitted.
+    #[serde(default = "default_true")]
+    pub allow_reboot: bool,
     /// Optional operator notes.
     pub notes: Option<String>,
+    /// Job kind.  Defaults to `patch_apply`.  Use `reboot` to trigger an
+    /// explicit reboot of the selected hosts.
+    #[serde(default)]
+    pub kind: Option<JobKind>,
 }
 
 /// Summary row for job list view (aggregates per-host counts).

@@ -264,3 +264,27 @@ pub struct RollbackResponse {
     pub job_id: String,
     pub status: String,
 }
+
+// ============================================================
+// POST /api/v1/system/reboot
+// ============================================================
+
+/// Request body for `POST /api/v1/system/reboot`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RebootRequest {
+    /// Delay in seconds before triggering the reboot. 0 = immediate.
+    #[serde(default)]
+    pub delay_seconds: u64,
+    /// If true, force reboot even if other users are logged in.
+    #[serde(default)]
+    pub force: bool,
+}
+
+/// Response from `POST /api/v1/system/reboot`.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RebootResponse {
+    /// Agent-assigned async job ID for status polling.
+    pub job_id: String,
+    /// Initial status: typically `"running"` or `"queued"`.
+    pub status: String,
+}
