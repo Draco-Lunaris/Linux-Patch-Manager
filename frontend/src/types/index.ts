@@ -193,6 +193,10 @@ export interface MaintenanceWindow {
   recurrence_day?: number | null
   enabled: boolean
   auto_apply: boolean
+  /** Whether to automatically reboot the host after patching if patches require it */
+  auto_reboot: boolean
+  /** Delay in minutes before automatic reboot after patching. 0 = immediate. */
+  reboot_delay_minutes: number
   created_at: string
   updated_at: string
 }
@@ -205,6 +209,8 @@ export interface CreateMaintenanceWindowRequest {
   recurrence_day?: number | null
   enabled?: boolean
   auto_apply?: boolean
+  auto_reboot?: boolean
+  reboot_delay_minutes?: number
 }
 
 export interface UpdateMaintenanceWindowRequest {
@@ -215,6 +221,8 @@ export interface UpdateMaintenanceWindowRequest {
   recurrence_day?: number | null
   enabled?: boolean
   auto_apply?: boolean
+  auto_reboot?: boolean
+  reboot_delay_minutes?: number
 }
 
 // ── WebSocket event types (M7) ────────────────────────────────────────────────
