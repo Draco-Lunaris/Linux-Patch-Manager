@@ -42,6 +42,8 @@ struct QueuedJobId {
 struct AutoApplyWindow {
     window_id: Uuid,
     host_id: Uuid,
+    auto_reboot: bool,
+    reboot_delay_minutes: i32,
 }
 
 #[derive(Debug, FromRow)]
@@ -90,12 +92,13 @@ pub async fn run_maintenance_scheduler(pool: PgPool, config: Arc<AppConfig>) {
 /// existing patch_apply job for this window cycle. If so, create one.
 async fn auto_create_patch_jobs(pool: PgPool, _config: Arc<AppConfig>) {
     // Find all open windows with auto_apply=true
-    let auto_windows: Vec<AutoApplyWindow> = match sqlx::query_as(
+let auto_windows: Vec<AutoApplyWindow> = match sqlx::query_as(
         r#"
-        SELECT mw.id AS window_id, mw.host_id
+        SELECT mw.id AS window_id, mw.host_id, mw.auto_reboot, mw.reboot_delay_minutes
         FROM   maintenance_windows mw
         WHERE  mw.enabled = TRUE
           AND  mw.auto_apply = TRUE
+          AND  mw.auto_reboot = TRUE
           AND (
             (   mw.recurrence = 'once'
              AND mw.start_at <= NOW()
@@ -228,15 +231,17 @@ async fn auto_create_patch_jobs(pool: PgPool, _config: Arc<AppConfig>) {
         }
 
         // Create a new patch_apply job for this host, linked to the window.
+        // Include auto_reboot and reboot_delay_seconds from the maintenance window config.
+        let reboot_delay_seconds = (win.reboot_delay_minutes as i64) * 60;
         let job: Option<InsertedJobId> = match sqlx::query_as(
             r#"
             WITH new_job AS (
                 INSERT INTO patch_jobs
                     (kind, status, maintenance_window_id, immediate,
-                     patch_selection, notes, auto_host_id, allow_reboot)
+                     patch_selection, notes, auto_host_id, allow_reboot, reboot_delay_seconds)
                 VALUES
                     ('patch_apply', 'queued', $1, FALSE, '[]'::jsonb,
-                     'Auto-created by maintenance window scheduler', $2, TRUE)
+                     'Auto-created by maintenance window scheduler', $2, $3, $4)
                 RETURNING id AS job_id
             )
             INSERT INTO patch_job_hosts (job_id, host_id, status)
@@ -247,6 +252,8 @@ async fn auto_create_patch_jobs(pool: PgPool, _config: Arc<AppConfig>) {
         )
         .bind(win.window_id)
         .bind(win.host_id)
+        .bind(win.auto_reboot)
+        .bind(reboot_delay_seconds)
         .fetch_optional(&pool)
         .await
         {

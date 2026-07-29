@@ -151,9 +151,9 @@ async fn create_job(
         r#"
         INSERT INTO patch_jobs
             (kind, status, created_by_user_id, maintenance_window_id,
-             immediate, patch_selection, notes, allow_reboot)
+             immediate, patch_selection, notes, allow_reboot, reboot_delay_seconds)
         VALUES
-            ($1::job_kind, 'queued'::job_status, $2, $3, $4, $5, $6, $7)
+            ($1::job_kind, 'queued'::job_status, $2, $3, $4, $5, $6, $7, $8)
         RETURNING id
         "#,
     )
@@ -164,6 +164,7 @@ async fn create_job(
     .bind(&patch_selection)
     .bind(&notes)
     .bind(req.allow_reboot)
+    .bind(req.reboot_delay_seconds)
     .fetch_one(&state.db)
     .await
     .map_err(|e| {
