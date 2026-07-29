@@ -92,7 +92,7 @@ pub async fn run_maintenance_scheduler(pool: PgPool, config: Arc<AppConfig>) {
 /// existing patch_apply job for this window cycle. If so, create one.
 async fn auto_create_patch_jobs(pool: PgPool, _config: Arc<AppConfig>) {
     // Find all open windows with auto_apply=true
-let auto_windows: Vec<AutoApplyWindow> = match sqlx::query_as(
+    let auto_windows: Vec<AutoApplyWindow> = match sqlx::query_as(
         r#"
         SELECT mw.id AS window_id, mw.host_id, mw.auto_reboot, mw.reboot_delay_minutes
         FROM   maintenance_windows mw

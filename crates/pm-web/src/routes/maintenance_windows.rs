@@ -311,7 +311,9 @@ async fn update_window(
     let new_enabled = req.enabled.unwrap_or(existing.enabled);
     let new_auto_apply = req.auto_apply.unwrap_or(existing.auto_apply);
     let new_auto_reboot = req.auto_reboot.unwrap_or(existing.auto_reboot);
-    let new_reboot_delay_minutes = req.reboot_delay_minutes.unwrap_or(existing.reboot_delay_minutes);
+    let new_reboot_delay_minutes = req
+        .reboot_delay_minutes
+        .unwrap_or(existing.reboot_delay_minutes);
 
     // Validate recurrence_day for the final recurrence type.
     if new_recurrence == pm_core::models::WindowRecurrence::Weekly {
@@ -339,7 +341,7 @@ async fn update_window(
         }
     }
 
-let updated: MaintenanceWindow = sqlx::query_as(
+    let updated: MaintenanceWindow = sqlx::query_as(
         r#"
         UPDATE maintenance_windows
         SET    label               = $3,
