@@ -49,7 +49,7 @@ async fn list_all_windows(
     let windows: Vec<MaintenanceWindow> = sqlx::query_as(
         r#"
         SELECT id, host_id, label, recurrence, start_at, duration_minutes,
-               recurrence_day, enabled, auto_apply, created_at, updated_at
+               recurrence_day, enabled, auto_apply, auto_reboot, reboot_delay_minutes, created_at, updated_at
         FROM   maintenance_windows
         ORDER  BY host_id, created_at ASC
         "#,
@@ -110,7 +110,7 @@ async fn list_windows(
     let windows: Vec<MaintenanceWindow> = sqlx::query_as(
         r#"
         SELECT id, host_id, label, recurrence, start_at, duration_minutes,
-               recurrence_day, enabled, auto_apply, created_at, updated_at
+               recurrence_day, enabled, auto_apply, auto_reboot, reboot_delay_minutes, created_at, updated_at
         FROM   maintenance_windows
         WHERE  host_id = $1
         ORDER  BY created_at ASC
@@ -195,15 +195,17 @@ async fn create_window(
     let duration = req.duration_minutes.unwrap_or(60);
     let enabled = req.enabled.unwrap_or(true);
     let auto_apply = req.auto_apply.unwrap_or(true);
+    let auto_reboot = req.auto_reboot.unwrap_or(true);
+    let reboot_delay_minutes = req.reboot_delay_minutes.unwrap_or(0);
 
     let window: MaintenanceWindow = sqlx::query_as(
         r#"
         INSERT INTO maintenance_windows
-            (host_id, label, recurrence, start_at, duration_minutes, recurrence_day, enabled, auto_apply)
+            (host_id, label, recurrence, start_at, duration_minutes, recurrence_day, enabled, auto_apply, auto_reboot, reboot_delay_minutes)
         VALUES
-            ($1, $2, $3, $4, $5, $6, $7, $8)
+            ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING id, host_id, label, recurrence, start_at, duration_minutes,
-                  recurrence_day, enabled, auto_apply, created_at, updated_at
+                  recurrence_day, enabled, auto_apply, auto_reboot, reboot_delay_minutes, created_at, updated_at
         "#,
     )
     .bind(host_id)
@@ -214,6 +216,8 @@ async fn create_window(
     .bind(req.recurrence_day)
     .bind(enabled)
     .bind(auto_apply)
+    .bind(auto_reboot)
+    .bind(reboot_delay_minutes)
     .fetch_one(&state.db)
     .await
     .map_err(|e| {
@@ -272,7 +276,7 @@ async fn update_window(
     let existing: Option<MaintenanceWindow> = sqlx::query_as(
         r#"
         SELECT id, host_id, label, recurrence, start_at, duration_minutes,
-               recurrence_day, enabled, auto_apply, created_at, updated_at
+               recurrence_day, enabled, auto_apply, auto_reboot, reboot_delay_minutes, created_at, updated_at
         FROM   maintenance_windows
         WHERE  id = $1 AND host_id = $2
         "#,
@@ -306,6 +310,10 @@ async fn update_window(
     let new_rec_day = req.recurrence_day.or(existing.recurrence_day);
     let new_enabled = req.enabled.unwrap_or(existing.enabled);
     let new_auto_apply = req.auto_apply.unwrap_or(existing.auto_apply);
+    let new_auto_reboot = req.auto_reboot.unwrap_or(existing.auto_reboot);
+    let new_reboot_delay_minutes = req
+        .reboot_delay_minutes
+        .unwrap_or(existing.reboot_delay_minutes);
 
     // Validate recurrence_day for the final recurrence type.
     if new_recurrence == pm_core::models::WindowRecurrence::Weekly {
@@ -336,28 +344,32 @@ async fn update_window(
     let updated: MaintenanceWindow = sqlx::query_as(
         r#"
         UPDATE maintenance_windows
-        SET    label          = $3,
-               recurrence     = $4,
-               start_at       = $5,
-               duration_minutes = $6,
-               recurrence_day = $7,
-               enabled        = $8,
-               auto_apply     = $9,
-               updated_at     = NOW()
+        SET    label               = $3,
+               recurrence          = $4,
+               start_at            = $5,
+               duration_minutes    = $6,
+               recurrence_day      = $7,
+               enabled             = $8,
+               auto_apply          = $9,
+               auto_reboot         = $10,
+               reboot_delay_minutes = $11,
+               updated_at          = NOW()
         WHERE  id = $1 AND host_id = $2
         RETURNING id, host_id, label, recurrence, start_at, duration_minutes,
-                  recurrence_day, enabled, auto_apply, created_at, updated_at
+                  recurrence_day, enabled, auto_apply, auto_reboot, reboot_delay_minutes, created_at, updated_at
         "#,
     )
     .bind(win_id)
     .bind(host_id)
-    .bind(&new_label)
+    .bind(new_label)
     .bind(&new_recurrence)
     .bind(new_start_at)
     .bind(new_duration)
     .bind(new_rec_day)
     .bind(new_enabled)
     .bind(new_auto_apply)
+    .bind(new_auto_reboot)
+    .bind(new_reboot_delay_minutes)
     .fetch_one(&state.db)
     .await
     .map_err(|e| {

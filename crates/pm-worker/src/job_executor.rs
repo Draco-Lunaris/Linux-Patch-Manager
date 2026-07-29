@@ -72,6 +72,8 @@ struct JobInfo {
     patch_selection: serde_json::Value,
     #[sqlx(default)]
     allow_reboot: bool,
+    #[sqlx(default)]
+    reboot_delay_seconds: i64,
 }
 
 #[derive(Debug, FromRow)]
@@ -465,7 +467,7 @@ async fn execute_host_job(
 
     // ── 2. Fetch the job's kind and patch_selection ──────────────────────────
     let job_info: JobInfo = match sqlx::query_as(
-        "SELECT kind, patch_selection, allow_reboot FROM patch_jobs WHERE id = $1",
+        "SELECT kind, patch_selection, allow_reboot, reboot_delay_seconds FROM patch_jobs WHERE id = $1",
     )
     .bind(job_id)
     .fetch_optional(&pool)
@@ -553,6 +555,7 @@ async fn execute_host_job(
                 &client,
                 &job_info.patch_selection,
                 job_info.allow_reboot,
+                job_info.reboot_delay_seconds as u64,
             )
             .await;
         },
@@ -571,6 +574,7 @@ async fn execute_patch_host_job(
     client: &AgentClient,
     patch_selection: &serde_json::Value,
     allow_reboot: bool,
+    reboot_delay_seconds: u64,
 ) {
     let mut packages: Vec<String> =
         serde_json::from_value(patch_selection.clone()).unwrap_or_default();
@@ -617,7 +621,7 @@ async fn execute_patch_host_job(
     let req = ApplyPatchesRequest {
         packages,
         allow_reboot,
-        reboot_delay_seconds: 0,
+        reboot_delay_seconds,
     };
 
     match client.apply_patches(&req).await {

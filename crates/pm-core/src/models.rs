@@ -693,6 +693,8 @@ pub struct PatchJob {
     pub completed_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub allow_reboot: bool,
+    #[serde(default)]
+    pub reboot_delay_seconds: i64,
 }
 
 /// Full `patch_job_hosts` row (includes columns added in migration 003).
@@ -727,6 +729,12 @@ pub struct CreateJobRequest {
     /// historical behavior) when omitted.
     #[serde(default = "default_true")]
     pub allow_reboot: bool,
+    /// Delay in seconds before automatic reboot after patching. 0 = immediate
+    /// reboot via systemctl reboot. >0 = delayed reboot via shutdown -r +N.
+    /// Only used when allow_reboot = true and a reboot is actually required.
+    /// Defaults to 0 (immediate).
+    #[serde(default)]
+    pub reboot_delay_seconds: i64,
     /// Optional operator notes.
     pub notes: Option<String>,
     /// Job kind.  Defaults to `patch_apply`.  Use `reboot` to trigger an
@@ -801,6 +809,14 @@ pub struct MaintenanceWindow {
     pub recurrence_day: Option<i32>,
     pub enabled: bool,
     pub auto_apply: bool,
+    /// When true (default), auto-created patch jobs will have allow_reboot=true,
+    /// permitting the agent to automatically reboot if patches require it.
+    /// When false, patches apply but no automatic reboot occurs.
+    pub auto_reboot: bool,
+    /// Delay in minutes before automatic reboot after patching. 0 = immediate
+    /// reboot via systemctl reboot. >0 = delayed reboot via shutdown -r +N.
+    /// Only used when auto_apply = true and auto_reboot = true.
+    pub reboot_delay_minutes: i32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -820,6 +836,12 @@ pub struct CreateMaintenanceWindowRequest {
     pub enabled: Option<bool>,
     /// Whether to auto-create a patch_apply job when this window opens and patches are pending (default true).
     pub auto_apply: Option<bool>,
+    /// When true (default), auto-created patch jobs will have allow_reboot=true,
+    /// permitting the agent to automatically reboot if patches require it.
+    /// When false, patches apply but no automatic reboot occurs.
+    pub auto_reboot: Option<bool>,
+    /// Delay in minutes before automatic reboot after patching. 0 = immediate reboot via systemctl reboot. >0 = delayed reboot via shutdown -r +N. Only used when auto_apply = true and auto_reboot = true.
+    pub reboot_delay_minutes: Option<i32>,
 }
 
 /// Payload for `PUT /api/v1/hosts/{id}/maintenance-windows/{window_id}`.
@@ -832,6 +854,8 @@ pub struct UpdateMaintenanceWindowRequest {
     pub recurrence_day: Option<i32>,
     pub enabled: Option<bool>,
     pub auto_apply: Option<bool>,
+    pub auto_reboot: Option<bool>,
+    pub reboot_delay_minutes: Option<i32>,
 }
 
 // ============================================================
