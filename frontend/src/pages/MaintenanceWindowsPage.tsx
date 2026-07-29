@@ -106,6 +106,8 @@ interface FormValues {
   recurrence_day: number | ''
   enabled: boolean
   auto_apply: boolean
+  auto_reboot: boolean
+  reboot_delay_minutes: number
 }
 
 function defaultForm(): FormValues {
@@ -117,6 +119,8 @@ function defaultForm(): FormValues {
     recurrence_day: '',
     enabled: true,
     auto_apply: true,
+    auto_reboot: true,
+    reboot_delay_minutes: 0,
   }
 }
 
@@ -257,6 +261,31 @@ function WindowFormDialog({ open, title, initial, onClose, onSubmit }: WindowFor
         <Typography variant="caption" color="text.secondary" sx={{ mt: -1 }}>
           When enabled, pending patches are automatically applied during this window.
         </Typography>
+
+        <FormControlLabel
+          control={
+            <Switch
+              checked={form.auto_reboot}
+              onChange={e => set('auto_reboot', e.target.checked)}
+            />
+          }
+          label="Auto-Reboot After Patching"
+        />
+        <Typography variant="caption" color="text.secondary" sx={{ mt: -1 }}>
+          When enabled, the host will automatically reboot after patching if any patches require it.
+        </Typography>
+
+        {form.auto_reboot && (
+          <TextField
+            label="Reboot Delay (minutes)"
+            type="number"
+            value={form.reboot_delay_minutes}
+            onChange={e => set('reboot_delay_minutes', parseInt(e.target.value, 10) || 0)}
+            fullWidth
+            slotProps={{ htmlInput: { min: 0, max: 120 } }}
+            helperText="0 = immediate reboot. >0 = delayed reboot (e.g. 5 = reboot in 5 minutes)."
+          />
+        )}
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose} disabled={saving}>Cancel</Button>
@@ -363,6 +392,7 @@ function HostWindowsTable({ host, windows, onEdit, onDelete, onAdd, canWrite }: 
               <TableCell>Recurrence</TableCell>
               <TableCell>Status</TableCell>
               <TableCell>Auto-Apply</TableCell>
+              <TableCell>Auto-Reboot</TableCell>
               <TableCell>Created</TableCell>
               {canWrite && <TableCell align="right">Actions</TableCell>}
             </TableRow>
@@ -392,6 +422,13 @@ function HostWindowsTable({ host, windows, onEdit, onDelete, onAdd, canWrite }: 
                   <Chip
                     label={w.auto_apply ? 'On' : 'Off'}
                     color={w.auto_apply ? 'info' : 'default'}
+                    size="small"
+                  />
+                </TableCell>
+                <TableCell>
+                  <Chip
+                    label={w.auto_reboot ? (w.reboot_delay_minutes > 0 ? `+${w.reboot_delay_minutes}m` : 'On') : 'Off'}
+                    color={w.auto_reboot ? 'warning' : 'default'}
                     size="small"
                   />
                 </TableCell>
@@ -530,6 +567,8 @@ export default function MaintenanceWindowsPage() {
       recurrence_day: values.recurrence_day === '' ? undefined : values.recurrence_day,
       enabled: values.enabled,
       auto_apply: values.auto_apply,
+      auto_reboot: values.auto_reboot,
+      reboot_delay_minutes: values.reboot_delay_minutes,
     })
     setCreateOpen(false)
     showSnackbar('Maintenance window created', 'success')
@@ -547,6 +586,8 @@ export default function MaintenanceWindowsPage() {
       recurrence_day: w.recurrence_day ?? '',
       enabled: w.enabled,
       auto_apply: w.auto_apply,
+      auto_reboot: w.auto_reboot,
+      reboot_delay_minutes: w.reboot_delay_minutes,
     })
     setEditOpen(true)
   }
@@ -561,6 +602,8 @@ export default function MaintenanceWindowsPage() {
       recurrence_day: values.recurrence_day === '' ? undefined : values.recurrence_day,
       enabled: values.enabled,
       auto_apply: values.auto_apply,
+      auto_reboot: values.auto_reboot,
+      reboot_delay_minutes: values.reboot_delay_minutes,
     })
     setEditOpen(false)
     showSnackbar('Maintenance window updated', 'success')
