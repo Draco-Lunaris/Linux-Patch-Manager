@@ -688,14 +688,10 @@ pub async fn generate_apt_metadata(repo_dir: &str, suite: &str) -> Result<(), an
 /// Regenerate apt metadata for all supported suites. Called after a sync
 /// cycle to ensure every `dists/<suite>/` index reflects the current pool.
 ///
-/// Also prunes stale .deb files: removes files matching no known suite token
-/// and keeps only the latest version per (package, suite).
+/// Regenerate apt metadata for all suites. Does NOT prune stale packages —
+/// cleanup is handled uniformly across all distro formats via the
+/// repo cleanup API endpoint.
 pub async fn regenerate_all_apt_metadata(repo_dir: &str) -> Vec<(String, String)> {
-    // Prune stale packages first.
-    if let Err(e) = prune_stale_apt_packages(repo_dir).await {
-        tracing::warn!(error = %e, "Stale package cleanup failed (non-fatal)");
-    }
-
     let mut errors = Vec::new();
     for suite in APT_SUITES {
         if let Err(e) = generate_apt_metadata(repo_dir, suite).await {

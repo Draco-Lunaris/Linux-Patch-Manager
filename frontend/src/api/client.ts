@@ -436,6 +436,12 @@ export const repoApi = {
   listPackages: () =>
     apiClient.get('/admin/repo/packages'),
 
+  getDiskUsage: () =>
+    apiClient.get('/admin/repo/disk-usage'),
+
+  deletePackages: (packageIds: string[]) =>
+    apiClient.delete('/admin/repo/packages', { data: { package_ids: packageIds } }),
+
   regenerateMetadata: () =>
     apiClient.post('/admin/repo/regenerate-metadata'),
 }

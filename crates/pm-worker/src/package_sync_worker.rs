@@ -42,9 +42,10 @@ pub async fn run_package_sync_worker(pool: PgPool, config: Arc<AppConfig>) {
 /// Run a single scheduled sync cycle.
 ///
 /// 1. Create sync_log entry in DB
-/// 2. Call shared `repo_sync::run_sync_cycle()`
-/// 3. Persist synced packages to `repo_packages` table
-/// 4. Update sync_log with results
+/// 2. Fetch existing packages from DB for skip-if-exists
+/// 3. Call shared `repo_sync::run_sync_cycle()`
+/// 4. Persist synced packages to `repo_packages` table
+/// 5. Update sync_log with results
 async fn run_scheduled_sync(pool: &PgPool, config: &Arc<AppConfig>) -> Result<(), anyhow::Error> {
     let sync_config = &config.worker.package_sync;
     let repo_dir = &config.repo.dir;
@@ -58,11 +59,15 @@ async fn run_scheduled_sync(pool: &PgPool, config: &Arc<AppConfig>) -> Result<()
 
     tracing::info!(sync_log_id = %sync_log_id, "Package sync cycle started");
 
+    // Fetch existing packages from DB for skip-if-exists logic.
+    let existing = fetch_existing_packages(pool).await;
+
     // Run the shared sync logic.
     let result = match repo_sync::run_sync_cycle(
         sync_config,
         repo_dir,
         Some(&config.repo.apk_rsa_private_key_path),
+        &existing,
     )
     .await
     {
@@ -129,6 +134,32 @@ async fn run_scheduled_sync(pool: &PgPool, config: &Arc<AppConfig>) -> Result<()
     );
 
     Ok(())
+}
+
+/// Fetch existing packages from the DB for skip-if-exists logic.
+async fn fetch_existing_packages(pool: &PgPool) -> Vec<repo_sync::ExistingPackage> {
+    let rows: Vec<(String, String, String, Option<String>)> =
+        match sqlx::query_as("SELECT filename, version, distro, sha256 FROM repo_packages")
+            .fetch_all(pool)
+            .await
+        {
+            Ok(rows) => rows,
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to fetch existing packages for skip check");
+                return Vec::new();
+            },
+        };
+
+    rows.into_iter()
+        .map(
+            |(filename, version, distro, sha256)| repo_sync::ExistingPackage {
+                filename,
+                version,
+                distro,
+                sha256,
+            },
+        )
+        .collect()
 }
 
 /// Mark a sync log entry as failed.

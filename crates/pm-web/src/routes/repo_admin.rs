@@ -11,6 +11,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 type SyncLogRow = (
@@ -36,12 +37,25 @@ type PackageRow = (
     chrono::DateTime<chrono::Utc>,
 );
 
+type DiskUsageRow = (
+    uuid::Uuid,
+    String,
+    String,
+    String,
+    Option<String>,
+    i64,
+    chrono::DateTime<chrono::Utc>,
+);
+
+type DeletePackageRow = (uuid::Uuid, String, String, Option<String>, String);
+
 /// Admin-only repo management routes.
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/repo/sync", post(trigger_sync))
         .route("/repo/sync-status", get(sync_status))
-        .route("/repo/packages", get(list_packages))
+        .route("/repo/packages", get(list_packages).delete(delete_packages))
+        .route("/repo/disk-usage", get(disk_usage))
         .route("/repo/regenerate-metadata", post(regenerate_metadata))
 }
 
@@ -93,10 +107,36 @@ async fn run_manual_sync(
     let sync_config = &config.worker.package_sync;
     let repo_dir = &config.repo.dir;
 
+    // Fetch existing packages from DB for skip-if-exists logic.
+    let existing: Vec<pm_core::repo_sync::ExistingPackage> =
+        match sqlx::query_as::<_, (String, String, String, Option<String>)>(
+            "SELECT filename, version, distro, sha256 FROM repo_packages",
+        )
+        .fetch_all(pool)
+        .await
+        {
+            Ok(rows) => rows
+                .into_iter()
+                .map(
+                    |(filename, version, distro, sha256)| pm_core::repo_sync::ExistingPackage {
+                        filename,
+                        version,
+                        distro,
+                        sha256,
+                    },
+                )
+                .collect(),
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to fetch existing packages for skip check");
+                Vec::new()
+            },
+        };
+
     let result = match pm_core::repo_sync::run_sync_cycle(
         sync_config,
         repo_dir,
         Some(&config.repo.apk_rsa_private_key_path),
+        &existing,
     )
     .await
     {
@@ -397,4 +437,252 @@ async fn regenerate_metadata(
     Ok(Json(
         json!({ "message": "Metadata regeneration triggered for all distro formats" }),
     ))
+}
+
+/// `GET /api/v1/admin/repo/disk-usage`
+///
+/// Returns disk usage breakdown by distro and a list of all package files
+/// on disk with their sizes. Used by the cleanup UI.
+async fn disk_usage(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let repo_dir = state.config.repo.dir.clone();
+
+    // Query DB for package metadata (id, filename, version, distro, distro_codename, file_size, synced_at)
+    let db_packages: Vec<DiskUsageRow> = sqlx::query_as(
+        "SELECT id, filename, version, distro, distro_codename, file_size, synced_at \
+         FROM repo_packages ORDER BY synced_at DESC",
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, "Failed to fetch repo packages for disk usage");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+        )
+    })?;
+
+    // Scan the repo directory to compute actual on-disk sizes per distro.
+    let mut per_distro: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+    let mut total_disk: u64 = 0;
+
+    for distro_subdir in &["apt", "dnf", "apk", "pacman"] {
+        let dir = format!("{repo_dir}/{distro_subdir}");
+        let size = scan_dir_size(&dir).await;
+        per_distro.insert(distro_subdir.to_string(), size);
+        total_disk += size;
+    }
+
+    // Build the package list with on-disk file existence check.
+    let packages: Vec<Value> = db_packages
+        .iter()
+        .map(|row| {
+            let (id, filename, version, distro, distro_codename, file_size, synced_at) = row;
+            json!({
+                "id": id,
+                "filename": filename,
+                "version": version,
+                "distro": distro,
+                "distro_codename": distro_codename,
+                "file_size": file_size,
+                "synced_at": synced_at,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "per_distro": per_distro,
+        "total_disk_bytes": total_disk,
+        "packages": packages,
+        "package_count": packages.len(),
+    })))
+}
+
+/// Recursively compute the total size of all files in a directory.
+async fn scan_dir_size(path: &str) -> u64 {
+    let mut total: u64 = 0;
+    let mut stack = vec![path.to_string()];
+
+    while let Some(dir) = stack.pop() {
+        let mut reader = match tokio::fs::read_dir(&dir).await {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+
+        while let Ok(Some(entry)) = reader.next_entry().await {
+            let file_type = match entry.file_type().await {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+
+            if file_type.is_dir() {
+                stack.push(entry.path().to_string_lossy().to_string());
+            } else if file_type.is_file() {
+                if let Ok(meta) = entry.metadata().await {
+                    total += meta.len();
+                }
+            }
+        }
+    }
+
+    total
+}
+
+/// Request body for `DELETE /api/v1/admin/repo/packages`.
+#[derive(Deserialize)]
+struct DeletePackagesRequest {
+    package_ids: Vec<uuid::Uuid>,
+}
+
+/// `DELETE /api/v1/admin/repo/packages`
+///
+/// Remove packages from disk and the database. Also regenerates metadata
+/// for all distro formats after deletion so indices stay consistent.
+async fn delete_packages(
+    State(state): State<AppState>,
+    Json(req): Json<DeletePackagesRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if req.package_ids.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(
+                json!({ "error": { "code": "bad_request", "message": "package_ids must not be empty" } }),
+            ),
+        ));
+    }
+
+    let repo_dir = state.config.repo.dir.clone();
+
+    // Fetch package info from DB before deleting.
+    let packages: Vec<DeletePackageRow> = sqlx::query_as(
+        "SELECT id, filename, distro, distro_codename, version \
+             FROM repo_packages WHERE id = ANY($1)",
+    )
+    .bind(&req.package_ids)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, "Failed to fetch packages for deletion");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+        )
+    })?;
+
+    if packages.is_empty() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(
+                json!({ "error": { "code": "not_found", "message": "No packages found for the given IDs" } }),
+            ),
+        ));
+    }
+
+    let mut deleted_count = 0u32;
+    let mut errors = Vec::new();
+
+    for (id, filename, distro, distro_codename, _version) in &packages {
+        // Resolve the on-disk path.
+        let file_path = resolve_package_path(&repo_dir, distro, distro_codename, filename);
+
+        // Delete from disk.
+        if let Some(ref path) = file_path {
+            match tokio::fs::remove_file(path).await {
+                Ok(()) => {
+                    tracing::info!(file = %filename, distro = %distro, "Deleted package file from disk");
+                },
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    tracing::debug!(file = %filename, "File already absent on disk");
+                },
+                Err(e) => {
+                    tracing::warn!(error = %e, file = %filename, "Failed to delete package file");
+                    errors.push(format!("Failed to delete {filename}: {e}"));
+                },
+            }
+        }
+
+        // Delete from DB.
+        match sqlx::query("DELETE FROM repo_packages WHERE id = $1")
+            .bind(id)
+            .execute(&state.db)
+            .await
+        {
+            Ok(_) => deleted_count += 1,
+            Err(e) => {
+                tracing::warn!(error = %e, id = %id, "Failed to delete package from DB");
+                errors.push(format!("DB delete failed for {filename}: {e}"));
+            },
+        }
+    }
+
+    // Regenerate metadata for all distro formats so indices reflect deletions.
+    let apt_errors = pm_core::repo_metadata::regenerate_all_apt_metadata(&repo_dir).await;
+    for (suite, error) in apt_errors {
+        errors.push(format!("apt metadata regen for {suite}: {error}"));
+    }
+
+    if let Err(e) = pm_core::repo_metadata::generate_dnf_metadata(&repo_dir).await {
+        errors.push(format!("dnf metadata regen: {e}"));
+    }
+    // Re-sign repomd.xml
+    let dnf_codename = pm_core::repo_metadata::DNF_CODENAME;
+    let repomd_path = format!("{repo_dir}/dnf/{dnf_codename}/repodata/repomd.xml");
+    let repomd_sig_path = format!("{repo_dir}/dnf/{dnf_codename}/repodata/repomd.xml.asc");
+    if std::path::Path::new(&repomd_path).exists() {
+        let _ = pm_core::gpg::sign_file_detached(&repomd_path, &repomd_sig_path, true).await;
+    }
+
+    let rsa_key_path = if state.config.repo.apk_rsa_private_key_path.is_empty() {
+        std::env::var("LPA_APK_RSA_PRIVATE_KEY_PATH")
+            .unwrap_or_else(|_| "/etc/patch-manager/ca/lpa-repo-rsa.pem".to_string())
+    } else {
+        state.config.repo.apk_rsa_private_key_path.clone()
+    };
+    if let Err(e) =
+        pm_core::repo_metadata::generate_apk_metadata(&repo_dir, Some(&rsa_key_path)).await
+    {
+        errors.push(format!("apk metadata regen: {e}"));
+    }
+
+    if let Err(e) = pm_core::repo_metadata::generate_pacman_metadata(&repo_dir).await {
+        errors.push(format!("pacman metadata regen: {e}"));
+    }
+    let db_zst_path = format!("{repo_dir}/pacman/x86_64/lpa-repo.db.tar.zst");
+    let db_zst_sig_path = format!("{repo_dir}/pacman/x86_64/lpa-repo.db.tar.zst.sig");
+    if std::path::Path::new(&db_zst_path).exists() {
+        let _ = pm_core::gpg::sign_file_detached(&db_zst_path, &db_zst_sig_path, false).await;
+    }
+    let db_gz_path = format!("{repo_dir}/pacman/x86_64/lpa-repo.db");
+    let db_gz_sig_path = format!("{repo_dir}/pacman/x86_64/lpa-repo.db.sig");
+    if std::path::Path::new(&db_gz_path).exists() {
+        let _ = pm_core::gpg::sign_file_detached(&db_gz_path, &db_gz_sig_path, false).await;
+    }
+
+    Ok(Json(json!({
+        "deleted": deleted_count,
+        "errors": errors,
+    })))
+}
+
+/// Resolve the on-disk path of a package file in the repo directory.
+fn resolve_package_path(
+    repo_dir: &str,
+    distro: &str,
+    _codename: &Option<String>,
+    filename: &str,
+) -> Option<String> {
+    match distro {
+        "apt" => Some(format!("{repo_dir}/apt/pool/{filename}")),
+        "dnf" => {
+            let codename = pm_core::repo_metadata::DNF_CODENAME;
+            Some(format!("{repo_dir}/dnf/{codename}/Packages/{filename}"))
+        },
+        "apk" => {
+            let codename = pm_core::repo_metadata::APK_CODENAME;
+            Some(format!("{repo_dir}/apk/{codename}/x86_64/{filename}"))
+        },
+        "pacman" => Some(format!("{repo_dir}/pacman/x86_64/{filename}")),
+        _ => None,
+    }
 }
