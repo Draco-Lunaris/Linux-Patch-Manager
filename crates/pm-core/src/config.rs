@@ -200,6 +200,12 @@ pub struct WorkerConfig {
     /// How often to poll the agent during reconnect confirmation.
     #[serde(default = "default_self_upgrade_reconnect_poll_interval")]
     pub self_upgrade_reconnect_poll_interval_secs: u64,
+    /// Maximum time a standard (non-self-upgrade) job may stay in `running`
+    /// state before being marked as failed (default: 1800 = 30 minutes).
+    /// This catches jobs lost due to agent reboots where the agent doesn't
+    /// return JOB_NOT_FOUND (e.g. agent crashed, network partition).
+    #[serde(default = "default_job_timeout")]
+    pub job_timeout_secs: u64,
     /// Package sync configuration for manager-hosted repo (issue #116).
     #[serde(default)]
     pub package_sync: PackageSyncConfig,
@@ -393,6 +399,10 @@ fn default_self_upgrade_reconnect_poll_interval() -> u64 {
     10
 }
 
+fn default_job_timeout() -> u64 {
+    1800 // 30 minutes
+}
+
 fn default_sso_callback_url() -> String {
     "http://localhost:5173/auth/sso/callback".to_string()
 }
@@ -420,6 +430,7 @@ impl Default for AppConfig {
                 ws_relay_poll_interval_secs: 10,
                 self_upgrade_reconnect_timeout_secs: 600,
                 self_upgrade_reconnect_poll_interval_secs: 10,
+                job_timeout_secs: 1800,
                 package_sync: PackageSyncConfig::default(),
             },
             logging: LoggingConfig {

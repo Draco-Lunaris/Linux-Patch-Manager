@@ -191,6 +191,9 @@ async fn run_periodic_scanner(pool: PgPool, config: Arc<AppConfig>) {
         // 3. Retry pending pjh rows whose back-off window has elapsed.
         retry_pending_jobs(pool.clone(), config.clone()).await;
 
+        // 4. Fail running pjh rows that have exceeded the job timeout.
+        fail_timed_out_jobs(pool.clone(), config.clone()).await;
+
         tracing::debug!("Job executor periodic scan complete");
     }
 }
@@ -832,12 +835,45 @@ async fn poll_single_host(pool: PgPool, config: Arc<AppConfig>, row: PatchJobHos
             let status = match status_result {
                 Ok(s) => s,
                 Err(e) => {
-                    tracing::warn!(
-                        pjh_id = %row.id,
-                        agent_job_id = %row.agent_job_id,
-                        error = %e,
-                        "poll_single_host: agent status call failed"
-                    );
+                    // Check if this is a JOB_NOT_FOUND error — the agent lost
+                    // the job (e.g. after a reboot). This is a terminal failure,
+                    // not a transient error. The job will never complete.
+                    if let pm_agent_client::AgentClientError::ApiError { code, message } = &e {
+                        if code == "JOB_NOT_FOUND" {
+                            tracing::warn!(
+                                pjh_id = %row.id,
+                                agent_job_id = %row.agent_job_id,
+                                "poll_single_host: agent reports JOB_NOT_FOUND — agent likely rebooted and lost in-memory job state"
+                            );
+                            handle_host_failure(
+                                pool,
+                                row.id,
+                                format!(
+                                    "Agent reports job not found (agent may have rebooted): {message}"
+                                ),
+                            )
+                            .await;
+                            return;
+                        }
+                    }
+
+                    // For timeout errors, check if the job has exceeded the
+                    // maximum running duration. If so, fail it. Otherwise,
+                    // log and wait for the next poll cycle.
+                    if matches!(e, pm_agent_client::AgentClientError::Timeout) {
+                        tracing::debug!(
+                            pjh_id = %row.id,
+                            agent_job_id = %row.agent_job_id,
+                            "poll_single_host: agent status call timed out (transient)"
+                        );
+                    } else {
+                        tracing::warn!(
+                            pjh_id = %row.id,
+                            agent_job_id = %row.agent_job_id,
+                            error = %e,
+                            "poll_single_host: agent status call failed"
+                        );
+                    }
                     return;
                 },
             };
@@ -1687,6 +1723,103 @@ pub async fn retry_pending_jobs(pool: PgPool, config: Arc<AppConfig>) {
         tokio::spawn(async move {
             execute_host_job(p, c, job_id, host_id, pjh_id).await;
         });
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// fail_timed_out_jobs — catch running jobs that have exceeded the timeout
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Find running `patch_job_hosts` rows whose `started_at` is older than the
+/// configured `job_timeout_secs` and mark them as failed.
+///
+/// This catches jobs that are stuck in `running` because the agent rebooted
+/// and lost the in-memory job, or because of a network partition where the
+/// agent is unreachable and never returns JOB_NOT_FOUND.
+///
+/// Self-upgrade jobs are excluded — they have their own reconnect timeout
+/// logic in `poll_self_upgrade_host`.
+async fn fail_timed_out_jobs(pool: PgPool, config: Arc<AppConfig>) {
+    let timeout_secs = config.worker.job_timeout_secs;
+    if timeout_secs == 0 {
+        return; // 0 = disabled
+    }
+
+    #[derive(FromRow)]
+    struct TimedOutRow {
+        id: Uuid,
+        job_id: Uuid,
+        agent_job_id: Option<Uuid>,
+        started_at: chrono::DateTime<chrono::Utc>,
+    }
+
+    let rows: Vec<TimedOutRow> = match sqlx::query_as(
+        r#"
+        SELECT pjh.id, pjh.job_id, pjh.agent_job_id, pjh.started_at
+        FROM   patch_job_hosts pjh
+        JOIN   patch_jobs j ON j.id = pjh.job_id
+        WHERE  pjh.status = 'running'
+          AND  j.kind != 'self_upgrade'
+          AND  pjh.started_at IS NOT NULL
+          AND  pjh.started_at < NOW() - ($1 || ' seconds')::interval
+        "#,
+    )
+    .bind(timeout_secs.to_string())
+    .fetch_all(&pool)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "fail_timed_out_jobs: DB query failed");
+            return;
+        },
+    };
+
+    for row in rows {
+        let elapsed = chrono::Utc::now() - row.started_at;
+        let err_msg = format!(
+            "Job timed out after {} seconds (started at {}). The agent may have rebooted or become unreachable.",
+            elapsed.num_seconds(),
+            row.started_at
+        );
+
+        tracing::warn!(
+            pjh_id = %row.id,
+            job_id = %row.job_id,
+            agent_job_id = ?row.agent_job_id,
+            elapsed_secs = elapsed.num_seconds(),
+            timeout_secs,
+            "fail_timed_out_jobs: marking stuck running job as failed"
+        );
+
+        // Mark the pjh as failed directly (not via handle_host_failure, which
+        // would schedule a retry — a timed-out job should not be retried
+        // automatically because the agent state is unknown).
+        if let Err(e) = sqlx::query(
+            r#"
+            UPDATE patch_job_hosts
+            SET    status        = 'failed',
+                   error_message = $2,
+                   last_error    = $2,
+                   completed_at  = NOW()
+            WHERE  id = $1
+            "#,
+        )
+        .bind(row.id)
+        .bind(&err_msg)
+        .execute(&pool)
+        .await
+        {
+            tracing::error!(
+                pjh_id = %row.id,
+                error = %e,
+                "fail_timed_out_jobs: failed to mark pjh as failed"
+            );
+            continue;
+        }
+
+        // Sync the parent job status.
+        sync_job_status(&pool, row.job_id).await;
     }
 }
 
