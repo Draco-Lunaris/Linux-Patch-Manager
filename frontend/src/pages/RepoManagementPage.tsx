@@ -3,11 +3,11 @@ import {
   Box, Typography, Paper, Divider, Button, CircularProgress, Alert,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Chip, Card, CardContent, Grid, Dialog, DialogTitle, DialogContent, DialogActions,
-  Snackbar,
+  Snackbar, Checkbox, IconButton, Tooltip,
 } from '@mui/material'
 import {
   Sync as SyncIcon, Store as PackageIcon, CloudDownload as DownloadIcon,
-  Refresh as RefreshIcon,
+  Refresh as RefreshIcon, Delete as DeleteIcon, CleanHands as CleanupIcon,
 } from '@mui/icons-material'
 import { repoApi } from '../api/client'
 
@@ -39,14 +39,39 @@ interface SyncStatus {
   total_packages: number
 }
 
+interface DiskUsageInfo {
+  per_distro: Record<string, number>
+  total_disk_bytes: number
+  packages: RepoPackage[]
+  package_count: number
+}
+
+function fmtBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
+
+const DISTRO_COLORS: Record<string, 'primary' | 'secondary' | 'info' | 'warning'> = {
+  apt: 'primary',
+  dnf: 'secondary',
+  apk: 'info',
+  pacman: 'warning',
+}
+
 export default function RepoManagementPage() {
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null)
   const [packages, setPackages] = useState<RepoPackage[]>([])
+  const [diskUsage, setDiskUsage] = useState<DiskUsageInfo | null>(null)
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [regenerating, setRegenerating] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [syncDialogOpen, setSyncDialogOpen] = useState(false)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
     open: false, message: '', severity: 'success',
   })
@@ -58,12 +83,14 @@ export default function RepoManagementPage() {
     setLoading(true)
     setError(null)
     try {
-      const [statusRes, pkgRes] = await Promise.all([
+      const [statusRes, pkgRes, diskRes] = await Promise.all([
         repoApi.getSyncStatus(),
         repoApi.listPackages(),
+        repoApi.getDiskUsage(),
       ])
       setSyncStatus(statusRes.data)
       setPackages((pkgRes.data as { packages: RepoPackage[] }).packages || [])
+      setDiskUsage(diskRes.data)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load repo data')
     } finally {
@@ -80,6 +107,7 @@ export default function RepoManagementPage() {
     setSyncDialogOpen(false)
     try {
       await repoApi.triggerSync()
+      showSnack('Package sync triggered', 'success')
       await fetchData()
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to trigger sync')
@@ -102,6 +130,45 @@ export default function RepoManagementPage() {
     }
   }
 
+  const handleSelectToggle = (id: string) => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const handleSelectAll = () => {
+    if (selected.size === packages.length) {
+      setSelected(new Set())
+    } else {
+      setSelected(new Set(packages.map(p => p.id)))
+    }
+  }
+
+  const handleDelete = async () => {
+    setDeleting(true)
+    setDeleteDialogOpen(false)
+    try {
+      const ids = Array.from(selected)
+      const res = await repoApi.deletePackages(ids)
+      const data = res.data as { deleted: number; errors: string[] }
+      showSnack(`Deleted ${data.deleted} package(s)`, 'success')
+      if (data.errors.length > 0) {
+        setError(`Partial errors: ${data.errors.join('; ')}`)
+      }
+      setSelected(new Set())
+      await fetchData()
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Failed to delete packages'
+      setError(msg)
+      showSnack('Failed to delete packages', 'error')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
@@ -112,6 +179,9 @@ export default function RepoManagementPage() {
 
   const lastSync = syncStatus?.recent_syncs?.[0]
   const totalPackages = syncStatus?.total_packages ?? 0
+  const selectedSize = packages
+    .filter(p => selected.has(p.id))
+    .reduce((sum, p) => sum + p.file_size, 0)
 
   return (
     <Box>
@@ -123,7 +193,7 @@ export default function RepoManagementPage() {
 
       {/* Summary Cards */}
       <Grid container spacing={2} sx={{ mb: 3 }}>
-        <Grid size={{ xs: 12, sm: 4 }}>
+        <Grid size={{ xs: 12, sm: 3 }}>
           <Card>
             <CardContent>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -134,7 +204,7 @@ export default function RepoManagementPage() {
             </CardContent>
           </Card>
         </Grid>
-        <Grid size={{ xs: 12, sm: 4 }}>
+        <Grid size={{ xs: 12, sm: 3 }}>
           <Card>
             <CardContent>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -155,10 +225,36 @@ export default function RepoManagementPage() {
             </CardContent>
           </Card>
         </Grid>
+        <Grid size={{ xs: 12, sm: 3 }}>
+          <Card>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <CleanupIcon color="primary" />
+                <Typography variant="h6">Disk Usage</Typography>
+              </Box>
+              <Typography variant="h4" sx={{ mt: 1 }}>
+                {diskUsage ? fmtBytes(diskUsage.total_disk_bytes) : '—'}
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid size={{ xs: 12, sm: 3 }}>
+          <Card>
+            <CardContent>
+              <Typography variant="h6" sx={{ mb: 1 }}>Per Distro</Typography>
+              {diskUsage && Object.entries(diskUsage.per_distro).map(([distro, size]) => (
+                <Box key={distro} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
+                  <Chip label={distro} size="small" color={DISTRO_COLORS[distro] || 'default'} />
+                  <Typography variant="body2">{fmtBytes(size)}</Typography>
+                </Box>
+              ))}
+            </CardContent>
+          </Card>
+        </Grid>
       </Grid>
 
       {/* Actions */}
-      <Box sx={{ mb: 3, display: 'flex', gap: 1 }}>
+      <Box sx={{ mb: 3, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
         <Button
           variant="contained"
           startIcon={syncing ? <CircularProgress size={20} /> : <SyncIcon />}
@@ -175,6 +271,17 @@ export default function RepoManagementPage() {
         >
           {regenerating ? 'Regenerating...' : 'Regenerate Metadata'}
         </Button>
+        {selected.size > 0 && (
+          <Button
+            variant="contained"
+            color="error"
+            startIcon={deleting ? <CircularProgress size={20} /> : <DeleteIcon />}
+            onClick={() => setDeleteDialogOpen(true)}
+            disabled={deleting}
+          >
+            {deleting ? 'Deleting...' : `Delete ${selected.size} Selected (${fmtBytes(selectedSize)})`}
+          </Button>
+        )}
         <Button variant="outlined" startIcon={<DownloadIcon />} onClick={fetchData}>
           Refresh
         </Button>
@@ -227,39 +334,80 @@ export default function RepoManagementPage() {
         )}
       </Paper>
 
-      {/* Package List */}
+      {/* Package List with Cleanup */}
       <Paper sx={{ p: 3 }}>
-        <Typography variant="h6" fontWeight={600} sx={{ mb: 2 }}>Packages in Repository</Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+          <Typography variant="h6" fontWeight={600}>Packages in Repository</Typography>
+          {packages.length > 0 && (
+            <Button size="small" onClick={handleSelectAll}>
+              {selected.size === packages.length ? 'Deselect All' : 'Select All'}
+            </Button>
+          )}
+        </Box>
         <Divider sx={{ mb: 2 }} />
         {packages.length ? (
           <TableContainer>
             <Table size="small">
               <TableHead>
                 <TableRow>
+                  <TableCell padding="checkbox">
+                    <Checkbox
+                      size="small"
+                      indeterminate={selected.size > 0 && selected.size < packages.length}
+                      checked={packages.length > 0 && selected.size === packages.length}
+                      onChange={handleSelectAll}
+                    />
+                  </TableCell>
                   <TableCell>Filename</TableCell>
                   <TableCell>Version</TableCell>
                   <TableCell>Distro</TableCell>
                   <TableCell>Codename</TableCell>
                   <TableCell>Arch</TableCell>
                   <TableCell>Size</TableCell>
-                  <TableCell>Signed</TableCell>
                   <TableCell>Source</TableCell>
                   <TableCell>Synced</TableCell>
+                  <TableCell align="right">Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
-                {packages.map((pkg) => (
-                  <TableRow key={pkg.id}>
-                    <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>{pkg.filename}</TableCell>
-                    <TableCell>{pkg.version}</TableCell>
-                    <TableCell>{pkg.distro}</TableCell>
-                    <TableCell>{pkg.distro_codename || '—'}</TableCell>
-                    <TableCell>{pkg.arch}</TableCell>
-                    <TableCell>{(pkg.file_size / 1024 / 1024).toFixed(1)} MB</TableCell>
-                    <TableCell>{pkg.source}</TableCell>
-                    <TableCell>{new Date(pkg.synced_at).toLocaleDateString()}</TableCell>
-                  </TableRow>
-                ))}
+                {packages.map((pkg) => {
+                  const isSelected = selected.has(pkg.id)
+                  return (
+                    <TableRow key={pkg.id} hover selected={isSelected}>
+                      <TableCell padding="checkbox">
+                        <Checkbox
+                          size="small"
+                          checked={isSelected}
+                          onChange={() => handleSelectToggle(pkg.id)}
+                        />
+                      </TableCell>
+                      <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>{pkg.filename}</TableCell>
+                      <TableCell>{pkg.version}</TableCell>
+                      <TableCell>
+                        <Chip label={pkg.distro} size="small" color={DISTRO_COLORS[pkg.distro] || 'default'} />
+                      </TableCell>
+                      <TableCell>{pkg.distro_codename || '—'}</TableCell>
+                      <TableCell>{pkg.arch}</TableCell>
+                      <TableCell>{(pkg.file_size / 1024 / 1024).toFixed(1)} MB</TableCell>
+                      <TableCell>{pkg.source}</TableCell>
+                      <TableCell>{new Date(pkg.synced_at).toLocaleDateString()}</TableCell>
+                      <TableCell align="right">
+                        <Tooltip title="Delete">
+                          <IconButton
+                            size="small"
+                            color="error"
+                            onClick={() => {
+                              setSelected(new Set([pkg.id]))
+                              setDeleteDialogOpen(true)
+                            }}
+                          >
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
               </TableBody>
             </Table>
           </TableContainer>
@@ -274,13 +422,31 @@ export default function RepoManagementPage() {
         <DialogContent>
           <Typography>
             This will pull the last 3 releases from GitHub and import package assets into the manager-hosted repository.
-            The sync runs in the background and may take several minutes.
+            Packages already up to date (matching sha256) will be skipped. The sync runs in the background and may take several minutes.
           </Typography>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setSyncDialogOpen(false)}>Cancel</Button>
           <Button variant="contained" onClick={handleSync} startIcon={<SyncIcon />}>
             Start Sync
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
+        <DialogTitle>Delete Packages</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Delete {selected.size} package(s) ({fmtBytes(selectedSize)}) from the repository?
+            This will remove the files from disk and the database, then regenerate all metadata.
+            This cannot be undone.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
+          <Button color="error" variant="contained" onClick={handleDelete} startIcon={<DeleteIcon />}>
+            Delete
           </Button>
         </DialogActions>
       </Dialog>

@@ -367,23 +367,51 @@ pub fn detect_codename_from_filename(name: &str, distro: &str) -> Option<String>
     }
 }
 
+/// Information about an existing package in the local repo, used by
+/// `run_sync_cycle` to skip re-downloading unchanged assets.
+#[derive(Debug, Clone)]
+pub struct ExistingPackage {
+    pub filename: String,
+    pub version: String,
+    pub distro: String,
+    pub sha256: Option<String>,
+}
+
 /// Run a full sync cycle: fetch releases, download assets, import into repo.
 ///
 /// This is the shared entry point called by both the scheduled worker and
 /// the manual admin trigger. The caller is responsible for creating and
 /// updating the `repo_sync_log` DB entry.
 ///
+/// `existing_packages` is the list of packages already in the local repo
+/// (from the `repo_packages` DB table). Assets matching an existing package
+/// by (filename, version, distro) with a matching sha256 are skipped — no
+/// re-download. If the sha256 differs or is missing, the asset is re-downloaded.
+///
 /// Returns a `SyncResult` with counts and errors for the caller to persist.
 pub async fn run_sync_cycle(
     config: &PackageSyncConfig,
     repo_dir: &str,
     apk_rsa_private_key_path: Option<&str>,
+    existing_packages: &[ExistingPackage],
 ) -> Result<SyncResult, anyhow::Error> {
     let sync_config = config;
 
     let releases = fetch_github_releases(sync_config).await?;
 
     let mut result = SyncResult::default();
+
+    // Build a lookup set of (filename, version, distro) -> sha256 for fast checks.
+    let existing_map: std::collections::HashMap<(String, String, String), Option<String>> =
+        existing_packages
+            .iter()
+            .map(|p| {
+                (
+                    (p.filename.clone(), p.version.clone(), p.distro.clone()),
+                    p.sha256.clone(),
+                )
+            })
+            .collect();
 
     for release in &releases {
         for asset in &release.assets {
@@ -402,6 +430,30 @@ pub async fn run_sync_cycle(
 
             let distro = distro.unwrap();
             let codename = detect_codename_from_filename(&asset.name, &distro);
+            let version = release
+                .tag_name
+                .strip_prefix('v')
+                .unwrap_or(&release.tag_name)
+                .to_string();
+
+            // Check if we already have this package with the same sha256.
+            let key = (asset.name.clone(), version.clone(), distro.clone());
+            if let Some(Some(_existing_sha)) = existing_map.get(&key) {
+                // We have a record. Verify the local file still exists on disk.
+                let local_path = local_package_path(repo_dir, &distro, &codename, &asset.name);
+                if let Some(ref local) = local_path {
+                    if tokio::fs::try_exists(local).await.unwrap_or(false) {
+                        // File exists on disk and sha256 matches — skip download.
+                        tracing::debug!(
+                            filename = %asset.name,
+                            version = %version,
+                            "Skipping unchanged package (sha256 match)"
+                        );
+                        result.packages_skipped += 1;
+                        continue;
+                    }
+                }
+            }
 
             // Download the asset.
             let download_path = format!("{repo_dir}/tmp/{}", asset.name);
@@ -423,11 +475,6 @@ pub async fn run_sync_cycle(
                         result.packages_skipped += 1;
                     } else {
                         result.packages_synced += 1;
-                        let version = release
-                            .tag_name
-                            .strip_prefix('v')
-                            .unwrap_or(&release.tag_name)
-                            .to_string();
                         result.synced_packages.push(SyncedPackage {
                             filename: asset.name.clone(),
                             version,
@@ -453,7 +500,7 @@ pub async fn run_sync_cycle(
     }
 
     // Regenerate apt metadata for all suites so every dists/<suite>/ index
-    // reflects the current pool contents. Also prunes stale .deb files.
+    // reflects the current pool contents.
     let metadata_errors = crate::repo_metadata::regenerate_all_apt_metadata(repo_dir).await;
     for (suite, error) in metadata_errors {
         result.errors.push(format!(
@@ -462,6 +509,29 @@ pub async fn run_sync_cycle(
     }
 
     Ok(result)
+}
+
+/// Resolve the on-disk path of a package file in the repo directory.
+/// Returns None if the distro/format is unknown.
+fn local_package_path(
+    repo_dir: &str,
+    distro: &str,
+    _codename: &Option<String>,
+    filename: &str,
+) -> Option<String> {
+    match distro {
+        "apt" => Some(format!("{repo_dir}/apt/pool/{filename}")),
+        "dnf" => {
+            let codename = crate::repo_metadata::DNF_CODENAME;
+            Some(format!("{repo_dir}/dnf/{codename}/Packages/{filename}"))
+        },
+        "apk" => {
+            let codename = crate::repo_metadata::APK_CODENAME;
+            Some(format!("{repo_dir}/apk/{codename}/x86_64/{filename}"))
+        },
+        "pacman" => Some(format!("{repo_dir}/pacman/x86_64/{filename}")),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
