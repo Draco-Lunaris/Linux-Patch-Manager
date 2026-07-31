@@ -19,10 +19,46 @@ use pm_core::audit::{log_event, AuditAction};
 use pm_core::models::RepoAvailableVersion;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
 use crate::AppState;
+
+/// Compare two version strings semantically (e.g. "2.6.9" vs "2.6.10").
+///
+/// Splits on '.' and compares each component numerically. Falls back to
+/// lexicographic comparison for non-numeric components. Returns `Ordering::Greater`
+/// if `a` is newer than `b`.
+fn compare_versions(a: &str, b: &str) -> Ordering {
+    let a_parts: Vec<&str> = a.split('.').collect();
+    let b_parts: Vec<&str> = b.split('.').collect();
+
+    for i in 0..a_parts.len().max(b_parts.len()) {
+        let a_part = a_parts.get(i).unwrap_or(&"0");
+        let b_part = b_parts.get(i).unwrap_or(&"0");
+
+        // Try numeric comparison first.
+        match (a_part.parse::<u64>(), b_part.parse::<u64>()) {
+            (Ok(a_num), Ok(b_num)) => match a_num.cmp(&b_num) {
+                Ordering::Equal => continue,
+                ord => return ord,
+            },
+            // Fall back to lexicographic for non-numeric components.
+            _ => match a_part.cmp(b_part) {
+                Ordering::Equal => continue,
+                ord => return ord,
+            },
+        }
+    }
+
+    Ordering::Equal
+}
+
+/// Sort `RepoAvailableVersion` records in descending order (newest first).
+fn sort_repo_versions_desc(versions: &mut [RepoAvailableVersion]) {
+    versions.sort_by(|a, b| compare_versions(&b.version, &a.version));
+}
 
 /// Public (unauthenticated) routes: available-versions listing.
 pub fn public_router() -> Router<AppState> {
@@ -150,7 +186,7 @@ async fn list_available_versions(
         },
     };
 
-    let versions: Vec<RepoAvailableVersion> = sqlx::query_as(
+    let mut versions: Vec<RepoAvailableVersion> = sqlx::query_as(
         r#"
         SELECT DISTINCT ON (version)
                version,
@@ -175,6 +211,10 @@ async fn list_available_versions(
             Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
         )
     })?;
+
+    // Re-sort semantically in Rust — SQL text sort breaks on double-digit
+    // components (e.g. "2.6.10" < "2.6.9" lexicographically).
+    sort_repo_versions_desc(&mut versions);
 
     Ok(Json(serde_json::to_value(&versions).unwrap_or(json!([]))))
 }
@@ -277,7 +317,7 @@ async fn trigger_upgrade(
             )
         })?;
 
-        let available_versions: Vec<String> = versions.into_iter().map(|r| r.0).collect();
+        let mut available_versions: Vec<String> = versions.into_iter().map(|r| r.0).collect();
 
         if available_versions.is_empty() {
             skipped.push(SkippedHost {
@@ -286,6 +326,10 @@ async fn trigger_upgrade(
             });
             continue;
         }
+
+        // Re-sort semantically in Rust — SQL text sort breaks on double-digit
+        // components (e.g. "2.6.10" < "2.6.9" lexicographically).
+        available_versions.sort_by(|a, b| compare_versions(b, a));
 
         // Resolve target version.
         let resolved_version = match &req.target_version {
@@ -300,7 +344,7 @@ async fn trigger_upgrade(
                 tv.clone()
             },
             None => {
-                // Latest = first entry (ORDER BY version DESC).
+                // Latest = first entry after semver sort.
                 available_versions[0].clone()
             },
         };
@@ -439,4 +483,80 @@ async fn trigger_upgrade(
         host_count: total_host_count,
         skipped,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compare_versions_basic() {
+        assert_eq!(compare_versions("2.6.9", "2.6.10"), Ordering::Less);
+        assert_eq!(compare_versions("2.6.10", "2.6.9"), Ordering::Greater);
+        assert_eq!(compare_versions("2.6.9", "2.6.9"), Ordering::Equal);
+    }
+
+    #[test]
+    fn test_compare_versions_double_digit() {
+        assert_eq!(compare_versions("2.6.10", "2.6.11"), Ordering::Less);
+        assert_eq!(compare_versions("2.6.11", "2.6.10"), Ordering::Greater);
+        assert_eq!(compare_versions("2.6.10", "2.6.10"), Ordering::Equal);
+    }
+
+    #[test]
+    fn test_compare_versions_major_minor() {
+        assert_eq!(compare_versions("2.7.0", "2.6.11"), Ordering::Greater);
+        assert_eq!(compare_versions("3.0.0", "2.6.11"), Ordering::Greater);
+        assert_eq!(compare_versions("2.6.11", "3.0.0"), Ordering::Less);
+    }
+
+    #[test]
+    fn test_compare_versions_different_lengths() {
+        assert_eq!(compare_versions("2.6", "2.6.1"), Ordering::Less);
+        assert_eq!(compare_versions("2.6.1", "2.6"), Ordering::Greater);
+        assert_eq!(compare_versions("2.6", "2.6"), Ordering::Equal);
+    }
+
+    #[test]
+    fn test_compare_versions_non_numeric_fallback() {
+        assert_eq!(
+            compare_versions("2.6.9-alpha", "2.6.9-beta"),
+            Ordering::Less
+        );
+        assert_eq!(
+            compare_versions("2.6.9-beta", "2.6.9-alpha"),
+            Ordering::Greater
+        );
+    }
+
+    #[test]
+    fn test_sort_repo_versions_desc() {
+        let mut versions = vec![
+            RepoAvailableVersion {
+                version: "2.6.9".to_string(),
+                distro: "apt".to_string(),
+                distro_codename: None,
+                file_name: "a.deb".to_string(),
+                published_at: None,
+            },
+            RepoAvailableVersion {
+                version: "2.6.10".to_string(),
+                distro: "apt".to_string(),
+                distro_codename: None,
+                file_name: "b.deb".to_string(),
+                published_at: None,
+            },
+            RepoAvailableVersion {
+                version: "2.6.11".to_string(),
+                distro: "apt".to_string(),
+                distro_codename: None,
+                file_name: "c.deb".to_string(),
+                published_at: None,
+            },
+        ];
+        sort_repo_versions_desc(&mut versions);
+        assert_eq!(versions[0].version, "2.6.11");
+        assert_eq!(versions[1].version, "2.6.10");
+        assert_eq!(versions[2].version, "2.6.9");
+    }
 }
