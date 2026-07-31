@@ -17,43 +17,13 @@ use axum::{
 use pm_auth::rbac::AuthUser;
 use pm_core::audit::{log_event, AuditAction};
 use pm_core::models::RepoAvailableVersion;
+use pm_core::version::compare_versions;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
 use crate::AppState;
-
-/// Compare two version strings semantically (e.g. "2.6.9" vs "2.6.10").
-///
-/// Splits on '.' and compares each component numerically. Falls back to
-/// lexicographic comparison for non-numeric components. Returns `Ordering::Greater`
-/// if `a` is newer than `b`.
-fn compare_versions(a: &str, b: &str) -> Ordering {
-    let a_parts: Vec<&str> = a.split('.').collect();
-    let b_parts: Vec<&str> = b.split('.').collect();
-
-    for i in 0..a_parts.len().max(b_parts.len()) {
-        let a_part = a_parts.get(i).unwrap_or(&"0");
-        let b_part = b_parts.get(i).unwrap_or(&"0");
-
-        // Try numeric comparison first.
-        match (a_part.parse::<u64>(), b_part.parse::<u64>()) {
-            (Ok(a_num), Ok(b_num)) => match a_num.cmp(&b_num) {
-                Ordering::Equal => continue,
-                ord => return ord,
-            },
-            // Fall back to lexicographic for non-numeric components.
-            _ => match a_part.cmp(b_part) {
-                Ordering::Equal => continue,
-                ord => return ord,
-            },
-        }
-    }
-
-    Ordering::Equal
-}
 
 /// Sort `RepoAvailableVersion` records in descending order (newest first).
 fn sort_repo_versions_desc(versions: &mut [RepoAvailableVersion]) {
@@ -488,46 +458,6 @@ async fn trigger_upgrade(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_compare_versions_basic() {
-        assert_eq!(compare_versions("2.6.9", "2.6.10"), Ordering::Less);
-        assert_eq!(compare_versions("2.6.10", "2.6.9"), Ordering::Greater);
-        assert_eq!(compare_versions("2.6.9", "2.6.9"), Ordering::Equal);
-    }
-
-    #[test]
-    fn test_compare_versions_double_digit() {
-        assert_eq!(compare_versions("2.6.10", "2.6.11"), Ordering::Less);
-        assert_eq!(compare_versions("2.6.11", "2.6.10"), Ordering::Greater);
-        assert_eq!(compare_versions("2.6.10", "2.6.10"), Ordering::Equal);
-    }
-
-    #[test]
-    fn test_compare_versions_major_minor() {
-        assert_eq!(compare_versions("2.7.0", "2.6.11"), Ordering::Greater);
-        assert_eq!(compare_versions("3.0.0", "2.6.11"), Ordering::Greater);
-        assert_eq!(compare_versions("2.6.11", "3.0.0"), Ordering::Less);
-    }
-
-    #[test]
-    fn test_compare_versions_different_lengths() {
-        assert_eq!(compare_versions("2.6", "2.6.1"), Ordering::Less);
-        assert_eq!(compare_versions("2.6.1", "2.6"), Ordering::Greater);
-        assert_eq!(compare_versions("2.6", "2.6"), Ordering::Equal);
-    }
-
-    #[test]
-    fn test_compare_versions_non_numeric_fallback() {
-        assert_eq!(
-            compare_versions("2.6.9-alpha", "2.6.9-beta"),
-            Ordering::Less
-        );
-        assert_eq!(
-            compare_versions("2.6.9-beta", "2.6.9-alpha"),
-            Ordering::Greater
-        );
-    }
 
     #[test]
     fn test_sort_repo_versions_desc() {
