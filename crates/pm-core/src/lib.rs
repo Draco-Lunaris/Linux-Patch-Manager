@@ -10,6 +10,7 @@ pub mod repo_metadata;
 pub mod repo_sync;
 pub mod request_id;
 pub mod rsa_signing;
+pub mod version;
 
 // Re-export commonly used types
 pub use config::AppConfig;

@@ -1539,8 +1539,15 @@ pub async fn generate_pacman_metadata(repo_dir: &str) -> Result<(), anyhow::Erro
             Ok(info) => {
                 let name = info.pkgname.clone();
                 let ver = info.pkgver.clone();
+                // Compare versions semantically, not lexicographically. A plain
+                // string comparison orders "2.6.10" before "2.6.9" (byte-wise),
+                // which would pin the repo to 2.6.9 forever once a double-digit
+                // component appears. See issue #222.
                 let is_newer = match latest_by_name.get(&name) {
-                    Some(existing) => ver > existing.pkgver,
+                    Some(existing) => {
+                        crate::version::compare_versions(&ver, &existing.pkgver)
+                            == std::cmp::Ordering::Greater
+                    },
                     None => true,
                 };
                 if is_newer {
@@ -1640,6 +1647,53 @@ pub async fn generate_pacman_metadata(repo_dir: &str) -> Result<(), anyhow::Erro
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Reproduce the "keep latest per name" selection used by
+    /// `generate_pacman_metadata` and assert it picks the true latest version
+    /// across a double-digit boundary (issue #222).
+    #[test]
+    fn test_pacman_latest_selection_double_digit() {
+        let candidates = ["2.6.9-1", "2.6.10-1", "2.6.11-1"];
+        let mut latest: Option<String> = None;
+        for ver in candidates {
+            let is_newer = match &latest {
+                Some(existing) => {
+                    crate::version::compare_versions(ver, existing) == std::cmp::Ordering::Greater
+                },
+                None => true,
+            };
+            if is_newer {
+                latest = Some(ver.to_string());
+            }
+        }
+        assert_eq!(latest.as_deref(), Some("2.6.11-1"));
+    }
+
+    /// Order of files on disk is not guaranteed; the selection must pick the
+    /// latest regardless of the order candidates are scanned in.
+    #[test]
+    fn test_pacman_latest_selection_any_order() {
+        for candidates in [
+            ["2.6.11-1", "2.6.9-1", "2.6.10-1"],
+            ["2.6.9-1", "2.6.11-1", "2.6.10-1"],
+            ["2.6.10-1", "2.6.11-1", "2.6.9-1"],
+        ] {
+            let mut latest: Option<String> = None;
+            for ver in candidates {
+                let is_newer = match &latest {
+                    Some(existing) => {
+                        crate::version::compare_versions(ver, existing)
+                            == std::cmp::Ordering::Greater
+                    },
+                    None => true,
+                };
+                if is_newer {
+                    latest = Some(ver.to_string());
+                }
+            }
+            assert_eq!(latest.as_deref(), Some("2.6.11-1"));
+        }
+    }
 
     #[test]
     fn test_parse_ar_empty() {
