@@ -468,9 +468,13 @@ async fn relay_one_job_poll(
 
 async fn process_event(pool: &PgPool, row: &RunningHostJob, event: &AgentWsEvent) {
     // Map agent status string to DB job_status enum value.
+    //
+    // The agent sends "completed" (from JobStatus::Completed.as_str()), not
+    // "succeeded". The HTTP polling path in job_executor.rs already handles
+    // both ("succeeded" | "completed"). This must match.
     let db_status = match event.status.as_str() {
         "running" => "running",
-        "succeeded" => "succeeded",
+        "succeeded" | "completed" => "succeeded",
         "failed" => "failed",
         "cancelled" => "cancelled",
         other => {
