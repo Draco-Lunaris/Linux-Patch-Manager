@@ -22,7 +22,7 @@ import type { OidcConfigResponse, OidcDiscoveryResult, SmtpConfig, PollingConfig
 type OidcForm = OidcConfigResponse & { client_secret?: string }
 type SmtpForm = SmtpConfig & { password?: string }
 
-const KEYCLOAK_DISCOVERY_URL = 'https://keycloak.moon-dragon.us/realms/moon-dragon.us/.well-known/openid-configuration'
+const KEYCLOAK_DISCOVERY_URL = 'https://keycloak.example.com/realms/example/.well-known/openid-configuration'
 
 export default function SettingsPage() {
   const user = useAuthStore(state => state.user)

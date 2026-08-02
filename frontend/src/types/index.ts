@@ -378,6 +378,18 @@ export interface AuditIntegrityResult {
   }>
 }
 
+export interface AuditRepairResult {
+  intact: boolean
+  rows_checked: number
+  prev_hash_fixed: number
+  row_hash_fixed: number
+  remaining_errors: Array<{
+    row_id: number
+    expected_hash: string
+    actual_hash: string
+  }>
+}
+
 export type ReportFormat = 'csv' | 'pdf'
 
 // ── Health Checks ────────────────────────────────────────────────────────────

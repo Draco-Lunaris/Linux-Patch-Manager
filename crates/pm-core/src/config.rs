@@ -109,7 +109,7 @@ pub struct RepoServerConfig {
     /// /etc/patch-manager/ca/ with 0600 perms. Added for issue #170.
     #[serde(default = "default_apk_rsa_private_key_path")]
     pub apk_rsa_private_key_path: String,
-    /// Base URL for the repo as seen by agents (e.g., http://lpm.moon-dragon.us).
+    /// Base URL for the repo as seen by agents (e.g., http://patch-manager.example.com).
     /// Used to generate distro-specific sources_config strings.
     #[serde(default = "default_repo_url_base")]
     pub url_base: String,
@@ -148,7 +148,7 @@ fn default_apk_rsa_private_key_path() -> String {
     "/etc/patch-manager/ca/lpa-repo-rsa.pem".to_string()
 }
 fn default_repo_url_base() -> String {
-    "http://lpm.moon-dragon.us".to_string()
+    "http://patch-manager.example.com".to_string()
 }
 fn default_repo_http_port() -> u16 {
     80

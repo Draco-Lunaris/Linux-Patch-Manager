@@ -64,6 +64,8 @@ pub enum AuditAction {
     // Upgrade management events
     UpgradeTriggered,
     BatchUpgradeTriggered,
+    // Audit chain repair (issue #160)
+    AuditChainRepaired,
 }
 
 impl AuditAction {
@@ -113,6 +115,8 @@ impl AuditAction {
             Self::CrlInvalid => "crl_invalid",
             Self::UpgradeTriggered => "upgrade_triggered",
             Self::BatchUpgradeTriggered => "batch_upgrade_triggered",
+            // Audit chain repair (issue #160)
+            Self::AuditChainRepaired => "audit_chain_repaired",
         }
     }
 }
@@ -164,10 +168,21 @@ async fn write_audit_row(
     ip_address: Option<IpAddr>,
     request_id: Option<&str>,
 ) -> Result<(), sqlx::Error> {
-    // Fetch previous hash for chain
+    // Serialize audit writes via a transaction-scoped advisory lock to
+    // prevent the TOCTOU race where two concurrent writers both read the
+    // same prev_hash and produce broken chain links. The lock is
+    // automatically released when the transaction commits or rolls back.
+    // Key 42 is an arbitrary constant identifying the audit_log chain.
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(42)")
+        .execute(&mut *tx)
+        .await?;
+
+    // Fetch previous hash for chain — now guaranteed to be stable while we
+    // hold the advisory lock.
     let prev_hash: Option<String> =
         sqlx::query_scalar("SELECT row_hash FROM audit_log ORDER BY id DESC LIMIT 1")
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await?;
 
     let prev = prev_hash.unwrap_or_default();
@@ -219,9 +234,10 @@ async fn write_audit_row(
     .bind(&now)
     .bind(&row_hash)
     .bind(&prev)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
 
+    tx.commit().await?;
     Ok(())
 }
 
@@ -351,5 +367,165 @@ pub async fn verify_integrity(pool: &PgPool) -> IntegrityResult {
         intact,
         rows_checked,
         errors,
+    }
+}
+
+/// Result of an audit chain repair operation.
+#[derive(Debug, serde::Serialize)]
+pub struct RepairResult {
+    /// Whether the chain is now intact after repair.
+    pub intact: bool,
+    /// Total number of rows in the chain.
+    pub rows_checked: i64,
+    /// Number of rows whose prev_hash was corrected.
+    pub prev_hash_fixed: i64,
+    /// Number of rows whose row_hash was recomputed and corrected.
+    pub row_hash_fixed: i64,
+    /// Remaining errors after repair (should be empty on success).
+    pub remaining_errors: Vec<IntegrityError>,
+}
+
+/// Repair the audit hash chain by recomputing prev_hash and row_hash for
+/// every row, starting from row 1 and walking forward.
+///
+/// This fixes broken chains caused by the TOCTOU race condition that
+/// existed before the advisory-lock fix (issue #160). The repair is
+/// destructive — it overwrites all row_hash and prev_hash values — but
+/// preserves the audit event data (action, actor, details, timestamps).
+///
+/// After repair, the chain should verify cleanly with `verify_integrity`.
+pub async fn repair_integrity(pool: &PgPool) -> RepairResult {
+    let mut tx = match pool.begin().await {
+        Ok(tx) => tx,
+        Err(e) => {
+            tracing::error!(error = %e, "repair_integrity: failed to begin transaction");
+            return RepairResult {
+                intact: false,
+                rows_checked: 0,
+                prev_hash_fixed: 0,
+                row_hash_fixed: 0,
+                remaining_errors: vec![],
+            };
+        },
+    };
+
+    // Lock the audit_log exclusively during repair to prevent concurrent writes.
+    if let Err(e) = sqlx::query("SELECT pg_advisory_xact_lock(42)")
+        .execute(&mut *tx)
+        .await
+    {
+        tracing::error!(error = %e, "repair_integrity: failed to acquire advisory lock");
+        return RepairResult {
+            intact: false,
+            rows_checked: 0,
+            prev_hash_fixed: 0,
+            row_hash_fixed: 0,
+            remaining_errors: vec![],
+        };
+    }
+
+    let rows: Vec<AuditRow> = match sqlx::query_as(
+        r#"
+        SELECT id, action::text AS action, actor_user_id, actor_username,
+               target_type, target_id, details,
+               host(ip_address) AS ip_address,
+               request_id, created_at, row_hash, prev_hash
+        FROM audit_log
+        ORDER BY id ASC
+        "#,
+    )
+    .fetch_all(&mut *tx)
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "repair_integrity: failed to fetch audit rows");
+            return RepairResult {
+                intact: false,
+                rows_checked: 0,
+                prev_hash_fixed: 0,
+                row_hash_fixed: 0,
+                remaining_errors: vec![],
+            };
+        },
+    };
+
+    let mut prev_hash_fixed: i64 = 0;
+    let mut row_hash_fixed: i64 = 0;
+    let mut expected_prev_hash = String::new();
+
+    for row in &rows {
+        // Fix prev_hash if it doesn't match the previous row's row_hash.
+        if row.prev_hash != expected_prev_hash {
+            prev_hash_fixed += 1;
+        }
+
+        // Recompute row_hash with the corrected prev_hash.
+        let uid_str = row.actor_user_id.map(|u| u.to_string()).unwrap_or_default();
+        let uname = row.actor_username.as_deref().unwrap_or("");
+        let ttype = row.target_type.as_deref().unwrap_or("");
+        let tid = row.target_id.as_deref().unwrap_or("");
+        let details_str = row
+            .details
+            .as_ref()
+            .and_then(|v| serde_json::to_string(v).ok())
+            .unwrap_or_default();
+        let ip_str = row.ip_address.as_deref().unwrap_or("");
+        let rid = row.request_id.as_deref().unwrap_or("");
+        let created_str = row
+            .created_at
+            .map(|c| c.to_rfc3339_opts(chrono::SecondsFormat::Micros, true))
+            .unwrap_or_default();
+
+        let mut hasher = Sha256::new();
+        hasher.update(expected_prev_hash.as_bytes());
+        hasher.update(row.action.as_bytes());
+        hasher.update(uid_str.as_bytes());
+        hasher.update(uname.as_bytes());
+        hasher.update(ttype.as_bytes());
+        hasher.update(tid.as_bytes());
+        hasher.update(details_str.as_bytes());
+        hasher.update(ip_str.as_bytes());
+        hasher.update(rid.as_bytes());
+        hasher.update(created_str.as_bytes());
+        let computed_hash = hex::encode(hasher.finalize());
+
+        if row.row_hash != computed_hash {
+            row_hash_fixed += 1;
+        }
+
+        // Update the row in the database with corrected hashes.
+        let _ = sqlx::query("UPDATE audit_log SET prev_hash = $1, row_hash = $2 WHERE id = $3")
+            .bind(&expected_prev_hash)
+            .bind(&computed_hash)
+            .bind(row.id)
+            .execute(&mut *tx)
+            .await;
+
+        // Next row's prev_hash is this row's (corrected) row_hash.
+        expected_prev_hash = computed_hash;
+    }
+
+    // Commit the repairs.
+    if let Err(e) = tx.commit().await {
+        tracing::error!(error = %e, "repair_integrity: failed to commit transaction");
+        return RepairResult {
+            intact: false,
+            rows_checked: rows.len() as i64,
+            prev_hash_fixed,
+            row_hash_fixed,
+            remaining_errors: vec![],
+        };
+    }
+
+    // Re-verify after repair to confirm the chain is now intact.
+    let verify = verify_integrity(pool).await;
+
+    RepairResult {
+        intact: verify.intact,
+        rows_checked: verify.rows_checked,
+        prev_hash_fixed,
+        row_hash_fixed,
+        remaining_errors: verify.errors,
     }
 }

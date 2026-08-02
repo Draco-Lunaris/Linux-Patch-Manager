@@ -339,6 +339,18 @@ export interface AuditIntegrityResult {
   }>
 }
 
+export interface AuditRepairResult {
+  intact: boolean
+  rows_checked: number
+  prev_hash_fixed: number
+  row_hash_fixed: number
+  remaining_errors: Array<{
+    row_id: number
+    expected_hash: string
+    actual_hash: string
+  }>
+}
+
 export const settingsApi = {
   get: () => apiClient.get<SettingsResponse>('/settings'),
   update: (data: Partial<SettingsResponse> & {
@@ -354,6 +366,7 @@ export const settingsApi = {
   getIpWhitelist: () => apiClient.get<{ entries: string[] }>('/settings/ip-whitelist'),
   updateIpWhitelist: (entries: string[]) => apiClient.put<{ entries: string[] }>('/settings/ip-whitelist', { entries }),
   auditIntegrity: () => apiClient.post<AuditIntegrityResult>('/settings/audit-integrity'),
+  auditIntegrityRepair: () => apiClient.post<AuditRepairResult>('/settings/audit-integrity/repair'),
 }
 
 // ── Health Checks API ─────────────────────────────────────────────────────────

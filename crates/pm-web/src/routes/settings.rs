@@ -8,7 +8,8 @@
 //! POST /api/v1/settings/smtp/test    — send test email (admin only)
 //! GET  /api/v1/settings/ip-whitelist — get IP whitelist (admin only)
 //! PUT  /api/v1/settings/ip-whitelist — update IP whitelist (admin only)
-//! POST /api/v1/settings/audit-integrity — verify audit log integrity (admin only)
+//! POST /api/v1/settings/audit-integrity          — verify audit log integrity (admin only)
+//! POST /api/v1/settings/audit-integrity/repair   — repair audit hash chain (admin only)
 
 use axum::{
     extract::State,
@@ -23,7 +24,7 @@ use lettre::{
     AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
 };
 use pm_auth::rbac::AuthUser;
-use pm_core::audit::{log_event, verify_integrity, AuditAction};
+use pm_core::audit::{log_event, repair_integrity, verify_integrity, AuditAction};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -162,6 +163,7 @@ pub fn router() -> Router<AppState> {
             get(get_ip_whitelist).put(update_ip_whitelist),
         )
         .route("/audit-integrity", post(audit_integrity))
+        .route("/audit-integrity/repair", post(audit_integrity_repair))
 }
 
 // ============================================================
@@ -1140,7 +1142,75 @@ async fn audit_integrity(
     })))
 }
 
-/// Decode a hex string to bytes. Returns an empty Vec on invalid input.
+// ============================================================
+// POST /api/v1/settings/audit-integrity/repair
+// ============================================================
+
+/// Repair the audit log hash chain by recomputing all prev_hash and
+/// row_hash values from row 1 forward. Admin-only — this is a
+/// destructive operation that overwrites all hash values.
+async fn audit_integrity_repair(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    admin_required(&auth)?;
+
+    tracing::warn!(
+        user_id = %auth.user_id,
+        username = %auth.username,
+        "Audit chain repair initiated by admin"
+    );
+
+    let result = repair_integrity(&state.db).await;
+
+    log_event(
+        &state.db,
+        AuditAction::AuditChainRepaired,
+        Some(auth.user_id),
+        Some(&auth.username),
+        Some("audit_log"),
+        None,
+        json!({
+            "intact": result.intact,
+            "rows_checked": result.rows_checked,
+            "prev_hash_fixed": result.prev_hash_fixed,
+            "row_hash_fixed": result.row_hash_fixed,
+            "remaining_errors": result.remaining_errors.len(),
+        }),
+        None,
+        None,
+    )
+    .await;
+
+    if result.intact {
+        tracing::info!(
+            rows_checked = result.rows_checked,
+            prev_hash_fixed = result.prev_hash_fixed,
+            row_hash_fixed = result.row_hash_fixed,
+            "Audit chain repair succeeded"
+        );
+    } else {
+        tracing::error!(
+            rows_checked = result.rows_checked,
+            prev_hash_fixed = result.prev_hash_fixed,
+            row_hash_fixed = result.row_hash_fixed,
+            remaining_errors = result.remaining_errors.len(),
+            "Audit chain repair completed but chain is still broken"
+        );
+    }
+
+    Ok(Json(json!({
+        "intact": result.intact,
+        "rows_checked": result.rows_checked,
+        "prev_hash_fixed": result.prev_hash_fixed,
+        "row_hash_fixed": result.row_hash_fixed,
+        "remaining_errors": result.remaining_errors.iter().map(|e| json!({
+            "row_id": e.row_id,
+            "expected_hash": e.expected_hash,
+            "actual_hash": e.actual_hash,
+        })).collect::<Vec<_>>(),
+    })))
+}
 /// Used by the SMTP password decryption logic (issue #6 fix).
 fn hex_decode(s: &str) -> Vec<u8> {
     if !s.len().is_multiple_of(2) {

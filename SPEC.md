@@ -117,7 +117,7 @@ Management plane web application communicating with Linux Patch API agents on ea
 
 ## API Integration
 
-**Upstream Dependency:** [Linux Patch API](https://gitea.moon-dragon.us/echo/linux_patch_api)
+**Upstream Dependency:** [Linux Patch API](https://github.com/Draco-Lunaris/Linux-Patch-Api)
 - All managed device access uses the Linux Patch API
 - mTLS certificate-based authentication to agents (TLS 1.3 only)
 - Hybrid sync/async operation model (sync for queries, async jobs for patch operations)

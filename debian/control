@@ -1,7 +1,7 @@
 Package: linux-patch-manager
-Version: 1.5.1-1
+Version: 1.5.5-1
 Architecture: amd64
-Maintainer: Moon Dragon <echo@moon-dragon.us>
+Maintainer: Draco-Lunaris <noreply@users.noreply.github.com>
 Installed-Size: 45000
 Depends: postgresql-16, openssl, curl, cron | cron-daemon, util-linux, libssl3, libc6 (>= 2.39), libfontconfig1, gnupg
 Recommends: postgresql-client-16, fonts-dejavu-core
