@@ -53,7 +53,7 @@ The design covers the management plane only: the web server, background worker, 
 - RFC 8446, *TLS 1.3*
 - HIPAA Security Rule, 45 CFR §164.312
 - PCI-DSS v4.0
-- Upstream: [Linux Patch API](https://gitea.moon-dragon.us/echo/linux_patch_api)
+- Upstream: [Linux Patch API](https://github.com/Draco-Lunaris/Linux-Patch-Api)
 - Internal: `SPEC.md`, `REQUIREMENTS.md` (same repository)
 
 ### 1.6 Glossary
@@ -551,7 +551,7 @@ HTTP status codes follow standard REST semantics (`400`, `401`, `403`, `404`, `4
 
 ## 12. Integration Points
 
-**Upstream dependency:** [Linux Patch API](https://gitea.moon-dragon.us/echo/linux_patch_api)
+**Upstream dependency:** [Linux Patch API](https://github.com/Draco-Lunaris/Linux-Patch-Api)
 
 | Integration | Protocol | Direction | Purpose |
 |-------------|----------|-----------|---------|

@@ -51,7 +51,8 @@ The agent is designed for **fleet management at scale** (up to 2,500 hosts per M
 Download the release package:
 
 ```bash
-wget https://gitea-lxc.moon-dragon.us/echo/linux_patch_api/releases/download/v0.0.2/linux-patch-api_1.0.0-1_amd64.deb
+# Replace v0.0.2 with the latest release tag
+wget https://github.com/Draco-Lunaris/Linux-Patch-Api/releases/download/v0.0.2/linux-patch-api_1.0.0-1_amd64.deb
 sudo apt install ./linux-patch-api_1.0.0-1_amd64.deb
 ```
 

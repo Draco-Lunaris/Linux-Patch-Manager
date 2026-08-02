@@ -1,3 +1,11 @@
+linux-patch-manager (1.5.5-1) unstable; urgency=low
+
+  * fix: serialize audit writes with advisory lock to prevent hash chain race condition (#160)
+  * fix: add audit chain repair endpoint and UI for broken hash chains (#160)
+  * chore: remove moon-dragon.us and gitea references, fix license consistency (#162)
+
+ -- Draco-Lunaris <noreply@users.noreply.github.com>  Sat, 02 Aug 2026 18:00:00 -0500
+
 linux-patch-manager (1.5.4-1) unstable; urgency=low
 
   * Release v1.5.4

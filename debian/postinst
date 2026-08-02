@@ -302,7 +302,7 @@ gpg_public_key_path = "/etc/patch-manager/ca/lpa-repo-public-key.asc"
 gpg_private_key_path = "/etc/patch-manager/ca/lpa-repo-private-key.asc"
 
 # Base URL for the repo as seen by agents (used to generate sources_config)
-url_base = "http://lpm.moon-dragon.us"
+url_base = "http://patch-manager.example.com"
 
 # HTTP port for the repo server (default: 80)
 http_port = 80

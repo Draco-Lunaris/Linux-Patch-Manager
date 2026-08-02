@@ -1,6 +1,6 @@
 [Unit]
 Description=Linux Patch Manager — Web Server
-Documentation=https://gitea.moon-dragon.us/echo/linux_patch_manager
+Documentation=https://github.com/Draco-Lunaris/Linux-Patch-Manager
 After=network-online.target postgresql.service
 Wants=network-online.target
 Requires=postgresql.service

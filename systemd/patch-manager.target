@@ -1,6 +1,6 @@
 [Unit]
 Description=Linux Patch Manager — Service Target
-Documentation=https://gitea.moon-dragon.us/echo/linux_patch_manager
+Documentation=https://github.com/Draco-Lunaris/Linux-Patch-Manager
 Wants=patch-manager-web.service patch-manager-worker.service
 
 [Install]

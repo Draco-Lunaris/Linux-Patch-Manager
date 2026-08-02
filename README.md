@@ -4,7 +4,7 @@
 
 ## Overview
 
-Linux Patch Manager provides a centralized web interface to manage patching and software updates across a fleet of Linux servers and workstations. It communicates with managed devices through the [Linux Patch API](https://gitea.moon-dragon.us/echo/linux_patch_api), leveraging mTLS-secured RESTful endpoints for all operations.
+Linux Patch Manager provides a centralized web interface to manage patching and software updates across a fleet of Linux servers and workstations. It communicates with managed devices through the [Linux Patch API](https://github.com/Draco-Lunaris/Linux-Patch-Api), leveraging mTLS-secured RESTful endpoints for all operations.
 
 ## Key Features
 
@@ -48,10 +48,11 @@ Linux Patch Manager is a web application that acts as a management plane, commun
 
 ### 1. Download the Package
 
-Download the latest `.deb` package from the [Gitea Releases](https://gitea-lxc.moon-dragon.us/echo/linux_patch_manager/releases) page:
+Download the latest `.deb` package from the [GitHub Releases](https://github.com/Draco-Lunaris/Linux-Patch-Manager/releases) page:
 
 ```bash
-wget https://gitea-lxc.moon-dragon.us/echo/linux_patch_manager/releases/download/v0.1.7/linux-patch-manager_0.1.7-1_amd64.deb
+# Replace v0.1.7 with the latest release tag
+wget https://github.com/Draco-Lunaris/Linux-Patch-Manager/releases/download/v0.1.7/linux-patch-manager_0.1.7-1_amd64.deb
 ```
 
 ### 2. Install Dependencies
@@ -205,7 +206,7 @@ The `.deb` package will be created in the project root directory.
 
 ## Related Projects
 
-- **[Linux Patch API](https://gitea-lxc.moon-dragon.us/echo/linux_patch_api)** — The API agent that runs on each managed host
+- **[Linux Patch API](https://github.com/Draco-Lunaris/Linux-Patch-Api)** — The API agent that runs on each managed host
 
 ## Troubleshooting
 

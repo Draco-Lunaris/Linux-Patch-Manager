@@ -1,6 +1,6 @@
 [Unit]
 Description=Linux Patch Manager — Background Worker
-Documentation=https://gitea.moon-dragon.us/echo/linux_patch_manager
+Documentation=https://github.com/Draco-Lunaris/Linux-Patch-Manager
 After=network-online.target postgresql.service patch-manager-web.service
 Wants=network-online.target
 Requires=postgresql.service

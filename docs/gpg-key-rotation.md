@@ -23,7 +23,7 @@ The GPG key has a **2-year expiry** as a safety net. Key rotation should be perf
 - **Expires:** 2028-06-27
 - **Storage:** Per-manager on disk at `/etc/patch-manager/ca/` alongside CA material (NEVER in Vaultwarden or CI secrets — see AGENTS.md Rule 2)
 - **Distribution:** Via enrollment `PkiBundle.repo_config.gpg_public_key`
-- **GPG keyring:** `~/.gnupg` on `lpm.moon-dragon.us` (echo user)
+- **GPG keyring:** `~/.gnupg` on the manager host (service user)
 
 ## Key Health Monitoring
 

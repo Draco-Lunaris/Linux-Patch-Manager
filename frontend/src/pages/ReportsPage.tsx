@@ -6,6 +6,11 @@ import {
   Chip,
   CircularProgress,
   Container,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
   Divider,
   FormControl,
   FormHelperText,
@@ -22,8 +27,9 @@ import {
 import DescriptionIcon from '@mui/icons-material/Description'
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf'
 import VerifiedUserIcon from '@mui/icons-material/VerifiedUser'
+import BuildIcon from '@mui/icons-material/Build'
 import { reportsApi, settingsApi, apiClient } from '../api/client'
-import type { ReportType, ReportFormat, AuditIntegrityResult, Group } from '../types'
+import type { ReportType, ReportFormat, AuditIntegrityResult, AuditRepairResult, Group } from '../types'
 
 // ── Report metadata ───────────────────────────────────────────────────────────
 
@@ -102,6 +108,9 @@ export default function ReportsPage() {
   const [error, setError] = useState<string | null>(null)
   const [verifyingIntegrity, setVerifyingIntegrity] = useState(false)
   const [integrityResult, setIntegrityResult] = useState<AuditIntegrityResult | null>(null)
+  const [repairDialogOpen, setRepairDialogOpen] = useState(false)
+  const [repairing, setRepairing] = useState(false)
+  const [repairResult, setRepairResult] = useState<AuditRepairResult | null>(null)
 
   useEffect(() => {
     apiClient.get<Group[]>('/groups').then((res) => {
@@ -153,6 +162,24 @@ export default function ReportsPage() {
       setIntegrityResult({ intact: false, rows_checked: 0, errors: [{ row_id: 0, expected_hash: '', actual_hash: msg }] })
     } finally {
       setVerifyingIntegrity(false)
+    }
+  }
+
+  const handleRepairChain = async () => {
+    setRepairing(true)
+    setRepairResult(null)
+    setRepairDialogOpen(false)
+    try {
+      const { data } = await settingsApi.auditIntegrityRepair()
+      setRepairResult(data)
+      // Re-verify after repair to refresh the integrity result display
+      const { data: verifyData } = await settingsApi.auditIntegrity()
+      setIntegrityResult(verifyData)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Repair failed'
+      setRepairResult({ intact: false, rows_checked: 0, prev_hash_fixed: 0, row_hash_fixed: 0, remaining_errors: [{ row_id: 0, expected_hash: '', actual_hash: msg }] })
+    } finally {
+      setRepairing(false)
     }
   }
 
@@ -273,9 +300,22 @@ export default function ReportsPage() {
               startIcon={verifyingIntegrity ? <CircularProgress size={20} /> : <VerifiedUserIcon />}
               onClick={handleVerifyIntegrity}
               disabled={verifyingIntegrity}
+              sx={{ mb: 1 }}
             >
               Verify Integrity
             </Button>
+            {integrityResult && !integrityResult.intact && (
+              <Button
+                variant="contained"
+                color="warning"
+                fullWidth
+                startIcon={repairing ? <CircularProgress size={20} /> : <BuildIcon />}
+                onClick={() => setRepairDialogOpen(true)}
+                disabled={repairing}
+              >
+                Repair Chain
+              </Button>
+            )}
             {integrityResult && (
               <Alert severity={integrityResult.intact ? 'success' : 'error'} sx={{ mt: 2 }}>
                 {integrityResult.intact
@@ -291,6 +331,22 @@ export default function ReportsPage() {
                     {integrityResult.errors.length > 5 && (
                       <Typography variant="body2">…and {integrityResult.errors.length - 5} more</Typography>
                     )}
+                  </Box>
+                )}
+              </Alert>
+            )}
+            {repairResult && (
+              <Alert severity={repairResult.intact ? 'success' : 'error'} sx={{ mt: 2 }}>
+                {repairResult.intact
+                  ? `✓ Chain repaired — ${repairResult.row_hash_fixed} hash(es) fixed, ${repairResult.prev_hash_fixed} link(s) fixed across ${repairResult.rows_checked} rows`
+                  : `✗ Repair incomplete — ${repairResult.remaining_errors.length} error(s) remain in ${repairResult.rows_checked} rows`}
+                {repairResult.remaining_errors.length > 0 && (
+                  <Box sx={{ mt: 1 }}>
+                    {repairResult.remaining_errors.slice(0, 5).map((e, i) => (
+                      <Typography key={i} variant="body2">
+                        Row {e.row_id}: expected {e.expected_hash.substring(0, 16)}… got {e.actual_hash.substring(0, 16)}…
+                      </Typography>
+                    ))}
                   </Box>
                 )}
               </Alert>
@@ -340,6 +396,38 @@ export default function ReportsPage() {
           {error}
         </Alert>
       </Snackbar>
+
+      {/* ── Repair confirmation dialog ── */}
+      <Dialog
+        open={repairDialogOpen}
+        onClose={() => setRepairDialogOpen(false)}
+      >
+        <DialogTitle>Repair Audit Hash Chain?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            This will recompute all <strong>prev_hash</strong> and <strong>row_hash</strong> values
+            in the audit log from row 1 forward. The audit event data (action, actor, details,
+            timestamps) is preserved, but all hash values will be overwritten.
+            <br /><br />
+            This action is logged as an <code>audit_chain_repaired</code> event. Use this only
+            when the chain is broken and you need to restore integrity.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRepairDialogOpen(false)} disabled={repairing}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleRepairChain}
+            color="warning"
+            variant="contained"
+            disabled={repairing}
+            startIcon={repairing ? <CircularProgress size={20} /> : <BuildIcon />}
+          >
+            Repair Chain
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Container>
   )
 }
