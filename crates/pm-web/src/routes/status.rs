@@ -34,6 +34,8 @@ pub struct FleetStatus {
     pub crl_invalid: i64,
     /// Hosts not reporting CRL status (older agents or no data yet).
     pub crl_not_reporting: i64,
+    /// Health checks currently in a failed state (latest result is unhealthy).
+    pub failed_health_checks: i64,
 }
 
 // ── GET /api/v1/status/fleet ──────────────────────────────────────────────────
@@ -165,6 +167,31 @@ pub async fn fleet_status(
         )
     })?;
 
+    // ── 6. Failed health checks (latest result is unhealthy) ─────────────────
+    let failed_health_checks: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM host_health_checks hc
+        JOIN LATERAL (
+            SELECT healthy
+            FROM host_health_check_results r
+            WHERE r.check_id = hc.id
+            ORDER BY r.checked_at DESC
+            LIMIT 1
+        ) lr ON TRUE
+        WHERE hc.enabled = TRUE AND lr.healthy = FALSE
+        "#,
+    )
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, "fleet_status: failed to query failed health checks");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+        )
+    })?;
+
     Ok(Json(FleetStatus {
         total_hosts,
         healthy,
@@ -179,5 +206,6 @@ pub async fn fleet_status(
         crl_missing,
         crl_invalid,
         crl_not_reporting,
+        failed_health_checks,
     }))
 }
