@@ -15,6 +15,7 @@ import DashboardPage from './pages/DashboardPage'
 import PatchDeploymentPage from './pages/PatchDeploymentPage'
 import JobsPage from './pages/JobsPage'
 import MaintenanceWindowsPage from './pages/MaintenanceWindowsPage'
+import MaintenanceCalendarPage from './pages/MaintenanceCalendarPage'
 import CertificatesPage from './pages/CertificatesPage'
 import ReportsPage from './pages/ReportsPage'
 import SettingsPage from './pages/SettingsPage'
@@ -105,6 +106,7 @@ function App() {
             <Route path="/jobs" element={<JobsPage />} />
             <Route path="/deployment" element={<PatchDeploymentPage />} />
             <Route path="/maintenance" element={<MaintenanceWindowsPage />} />
+            <Route path="/maintenance-calendar" element={<MaintenanceCalendarPage />} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/certificates" element={<CertificatesPage />} />
             <Route path="/repo" element={<RepoManagementPage />} />
