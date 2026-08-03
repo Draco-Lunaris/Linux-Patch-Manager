@@ -11,13 +11,13 @@
 /// We mock `fetch`, the auth store, and `window.history.replaceState`
 /// so the test focuses on the page's effect-driven logic (URL parsing
 /// → POST exchange → store update → navigation → URL cleanup). We do
-/// NOT mock `react-router-dom` — instead, we use a real
+/// NOT mock `react-router` — instead, we use a real
 /// `MemoryRouter` and assert on side effects (the auth store mocks +
 /// `replaceState` spy + visible error text).
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, act } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter } from 'react-router'
 import SsoCallbackPage from '../SsoCallbackPage'
 
 // Mock the auth store — we don't want real zustand state leaking
