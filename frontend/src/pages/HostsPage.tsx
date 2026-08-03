@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   Box, Button, Checkbox, Chip, CircularProgress, Container, Dialog, DialogTitle,
   DialogContent, DialogActions, FormControl, IconButton, InputLabel, MenuItem, Paper,
@@ -7,7 +7,7 @@ import {
   TablePagination, TableSortLabel, TextField, Toolbar, Tooltip, Typography,
 } from '@mui/material'
 import { Add as AddIcon, Refresh as RefreshIcon, Delete as DeleteIcon, CheckCircle as CheckCircleIcon, Cancel as CancelIcon, Remove as RemoveIcon, Pending as PendingIcon, GppMaybe as GppMaybeIcon, CheckCircleOutline as CheckCircleOutlineIcon, WarningAmber as WarningAmberIcon, VerifiedUser as VerifiedUserIcon, Security as SecurityIcon, SystemUpdate as SystemUpdateIcon, NewReleases as NewReleasesIcon, RestartAlt as RestartAltIcon } from '@mui/icons-material'
-import { useNavigate } from 'react-router'
+import { useNavigate, useSearchParams } from 'react-router'
 import { apiClient, hostsApi, enrollmentApi, upgradesApi, jobsApi } from '../api/client'
 import { useAuthStore } from '../store/authStore'
 import type { Host, HostHealthStatus, EnrollmentRequest, EnrollmentConflictResponse, RepoAvailableVersion, TriggerUpgradeRequest, CreateJobRequest } from '../types'
@@ -17,14 +17,21 @@ const statusColor = (s: HostHealthStatus) =>
 
 export default function HostsPage() {
   const navigate = useNavigate()
+  const [urlParams, setUrlParams] = useSearchParams()
   const user = useAuthStore(state => state.user)
   const canWrite = user?.role === 'admin' || user?.role === 'operator'
   const [hosts, setHosts] = useState<Host[]>([])
   const [total, setTotal] = useState(0)
-  const [page, setPage] = useState(0)
-  const [rowsPerPage, setRowsPerPage] = useState(25)
+  const [page, setPage] = useState(() => {
+    const p = parseInt(urlParams.get('page') ?? '', 10)
+    return Number.isFinite(p) && p > 0 ? p : 0
+  })
+  const [rowsPerPage, setRowsPerPage] = useState(() => {
+    const r = parseInt(urlParams.get('rows') ?? '', 10)
+    return [10, 25, 50, 100].includes(r) ? r : 25
+  })
   const [loading, setLoading] = useState(true)
-  const [search, setSearch] = useState('')
+  const [search, setSearch] = useState(() => urlParams.get('q') ?? '')
   const [refreshing, setRefreshing] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Host | null>(null)
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({ open: false, message: '', severity: 'success' })
@@ -52,9 +59,15 @@ export default function HostsPage() {
   const [rebootLoading, setRebootLoading] = useState(false)
 
   // ── Sorting state ────────────────────────────────────────────────────────
-  type SortKey = 'fqdn' | 'display_name' | 'ip_address' | 'os' | 'health_status' | 'health_check_status' | 'crl_status' | 'agent_version'
-  const [sortKey, setSortKey] = useState<SortKey | null>(null)
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+  type SortKey = 'fqdn' | 'display_name' | 'ip_address' | 'os' | 'health_status' | 'health_check_status' | 'crl_status' | 'agent_version' | 'pending_reboot'
+  const validSortKeys: SortKey[] = ['fqdn', 'display_name', 'ip_address', 'os', 'health_status', 'health_check_status', 'crl_status', 'agent_version', 'pending_reboot']
+  const [sortKey, setSortKey] = useState<SortKey | null>(() => {
+    const k = urlParams.get('sort') as SortKey | null
+    return k && validSortKeys.includes(k) ? k : null
+  })
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>(() => {
+    return urlParams.get('dir') === 'desc' ? 'desc' : 'asc'
+  })
 
   const handleSortChange = (key: SortKey) => {
     if (sortKey === key) {
@@ -65,6 +78,17 @@ export default function HostsPage() {
     }
     setPage(0)
   }
+
+  // ── Sync filter/sort/page state to URL ──────────────────────────────────
+  useEffect(() => {
+    const next = new URLSearchParams()
+    if (page > 0) next.set('page', String(page))
+    if (rowsPerPage !== 25) next.set('rows', String(rowsPerPage))
+    if (search) next.set('q', search)
+    if (sortKey) next.set('sort', sortKey)
+    if (sortDir === 'desc') next.set('dir', 'desc')
+    setUrlParams(next, { replace: true })
+  }, [page, rowsPerPage, search, sortKey, sortDir, setUrlParams])
 
 
 
@@ -77,12 +101,15 @@ export default function HostsPage() {
         params.sort_by = sortKey
         params.order = sortDir
       }
+      if (search.trim()) {
+        params.search = search.trim()
+      }
       const res = await apiClient.get('/hosts', { params })
       setHosts(res.data.hosts)
       setTotal(res.data.total)
     } catch { /* handled by interceptor */ }
     finally { setLoading(false) }
-  }, [page, rowsPerPage, sortKey, sortDir])
+  }, [page, rowsPerPage, sortKey, sortDir, search])
 
   const loadPending = useCallback(async () => {
     try {
@@ -264,10 +291,10 @@ export default function HostsPage() {
   }
 
   const handleToggleSelectAll = () => {
-    if (selectedHostIds.size === filtered.length) {
+    if (selectedHostIds.size === hosts.length) {
       setSelectedHostIds(new Set())
     } else {
-      setSelectedHostIds(new Set(filtered.map(h => h.id)))
+      setSelectedHostIds(new Set(hosts.map(h => h.id)))
     }
   }
 
@@ -278,10 +305,15 @@ export default function HostsPage() {
 
   useEffect(() => { load(); loadPending() }, [load, loadPending])
 
-  const filtered = hosts.filter(h =>
-    h.fqdn.toLowerCase().includes(search.toLowerCase()) ||
-    h.display_name.toLowerCase().includes(search.toLowerCase())
-  )
+  // Debounce: reset to page 0 and reload when search changes
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    if (searchTimer.current) clearTimeout(searchTimer.current)
+    searchTimer.current = setTimeout(() => {
+      setPage(0)
+    }, 300)
+    return () => { if (searchTimer.current) clearTimeout(searchTimer.current) }
+  }, [search])
 
   const handleChangePage = (_event: React.MouseEvent<HTMLButtonElement> | null, newPage: number) => {
     setPage(newPage)
@@ -342,8 +374,8 @@ export default function HostsPage() {
               <TableRow>
                 {canWrite && <TableCell padding="checkbox">
                   <Checkbox
-                    checked={filtered.length > 0 && selectedHostIds.size === filtered.length}
-                    indeterminate={selectedHostIds.size > 0 && selectedHostIds.size < filtered.length}
+                    checked={hosts.length > 0 && selectedHostIds.size === hosts.length}
+                    indeterminate={selectedHostIds.size > 0 && selectedHostIds.size < hosts.length}
                     onChange={handleToggleSelectAll}
                   />
                 </TableCell>}
@@ -371,7 +403,9 @@ export default function HostsPage() {
                 <TableCell>
                   <TableSortLabel active={sortKey === 'agent_version'} direction={sortKey === 'agent_version' ? sortDir : 'asc'} onClick={() => handleSortChange('agent_version')}>Agent</TableSortLabel>
                 </TableCell>
-                <TableCell>Reboot</TableCell>
+                <TableCell>
+                  <TableSortLabel active={sortKey === 'pending_reboot'} direction={sortKey === 'pending_reboot' ? sortDir : 'asc'} onClick={() => handleSortChange('pending_reboot')}>Reboot</TableSortLabel>
+                </TableCell>
                 {canWrite && <TableCell>Actions</TableCell>}
               </TableRow>
             </TableHead>
@@ -412,7 +446,7 @@ export default function HostsPage() {
                   </TableRow>
                 ))
               ) : (
-                filtered.map(h => (
+                hosts.map(h => (
                   <TableRow key={h.id} hover sx={{ cursor: 'pointer' }}
                     onClick={() => navigate(`/hosts/${h.id}`)}>
                     {canWrite && <TableCell padding="checkbox" onClick={e => e.stopPropagation()}>

@@ -70,6 +70,7 @@ fn resolve_sort_fragment(sort_by: &str, order: &str) -> Option<String> {
         "crl_status" => "h.crl_status",
         "agent_version" => "h.agent_version",
         "patches_missing" => "patches_missing",
+        "pending_reboot" => "h.pending_reboot",
         _ => return None,
     };
     let dir = if order.eq_ignore_ascii_case("desc") {

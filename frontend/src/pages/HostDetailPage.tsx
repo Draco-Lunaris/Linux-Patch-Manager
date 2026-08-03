@@ -55,6 +55,7 @@ import {
 } from '@mui/icons-material'
 import { apiClient, hostsApi, maintenanceWindowsApi, healthChecksApi, certsApi, upgradesApi, jobsApi } from '../api/client'
 import { useAuthStore } from '../store/authStore'
+import { compareVersions } from '../version'
 import type {
   CreateHostRequest,
   CreateJobRequest,
@@ -504,7 +505,7 @@ function CreateHostForm() {
 
   return (
     <Container maxWidth="sm" sx={{ mt: 3, mb: 6 }}>
-      <Button startIcon={<ArrowBack />} onClick={() => navigate('/hosts')} sx={{ mb: 2 }}>
+      <Button startIcon={<ArrowBack />} onClick={() => navigate(-1)} sx={{ mb: 2 }}>
         Back to Hosts
       </Button>
       <Paper sx={{ p: 3 }}>
@@ -549,7 +550,7 @@ function CreateHostForm() {
           />
         </Box>
         <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, mt: 3 }}>
-          <Button onClick={() => navigate('/hosts')} disabled={saving}>
+          <Button onClick={() => navigate(-1)} disabled={saving}>
             Cancel
           </Button>
           <Button variant="contained" onClick={handleSubmit} disabled={saving}>
@@ -717,10 +718,8 @@ export default function HostDetailPage() {
   // ── Helper: check if newer version available ──────────────────────────────
   const isNewerVersionAvailable = (): boolean => {
     if (!host?.agent_version) return false
-    const current = String(host.agent_version).split('-')[0]
-    return availableVersions.some(v => {
-      return v.version !== current
-    })
+    const current = String(host.agent_version)
+    return availableVersions.some(v => compareVersions(String(v.version), current) > 0)
   }
 
   // ── Helper: open upgrade dialog ───────────────────────────────────────────
@@ -1027,7 +1026,7 @@ export default function HostDetailPage() {
 
   return (
     <Container maxWidth="lg" sx={{ mt: 3, mb: 6 }}>
-      <Button startIcon={<ArrowBack />} onClick={() => navigate('/hosts')} sx={{ mb: 2 }}>
+      <Button startIcon={<ArrowBack />} onClick={() => navigate(-1)} sx={{ mb: 2 }}>
         Back to Hosts
       </Button>
 
