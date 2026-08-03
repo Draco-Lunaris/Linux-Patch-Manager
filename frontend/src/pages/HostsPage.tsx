@@ -412,7 +412,7 @@ export default function HostsPage() {
             <TableBody>
               {showPending ? (
                 pendingEnrollments.map(req => (
-                  <TableRow key={req.id} hover sx={{ backgroundColor: '#fff8e1' }}>
+                  <TableRow key={req.id} hover sx={{ backgroundColor: 'action.hover' }}>
                     <TableCell>
                       <Box display="flex" alignItems="center" gap={1}>
                         <GppMaybeIcon color="warning" fontSize="small" />
