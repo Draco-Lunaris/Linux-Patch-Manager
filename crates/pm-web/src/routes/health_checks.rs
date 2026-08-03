@@ -307,11 +307,11 @@ async fn create_health_check(
         )
     })?;
 
-    if count >= 5 {
+    if count >= 10 {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(
-                json!({ "error": { "code": "limit_exceeded", "message": "Maximum 5 health checks per host" } }),
+                json!({ "error": { "code": "limit_exceeded", "message": "Maximum 10 health checks per host" } }),
             ),
         ));
     }
