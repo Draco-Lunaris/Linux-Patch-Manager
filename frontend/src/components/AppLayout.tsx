@@ -12,6 +12,7 @@ import {
   Build as DeployIcon,
   Assignment as JobsIcon,
   Schedule as MaintenanceIcon,
+  CalendarMonth as CalendarIcon,
   People as UsersIcon,
   VerifiedUser as CertsIcon,
   Assessment as ReportsIcon,
@@ -53,6 +54,7 @@ const navGroups: { heading: string; items: NavItem[] }[] = [
     items: [
       { label: 'Jobs', path: '/jobs', icon: <JobsIcon /> },
       { label: 'Maintenance', path: '/maintenance', icon: <MaintenanceIcon />, writeOnly: true },
+      { label: 'Calendar', path: '/maintenance-calendar', icon: <CalendarIcon /> },
     ],
   },
   {
