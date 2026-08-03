@@ -1359,7 +1359,7 @@ export default function HostDetailPage() {
             startIcon={<AddIcon />}
             variant="outlined"
             size="small"
-            disabled={healthChecks.length >= 5}
+            disabled={healthChecks.length >= 10}
             onClick={() => { setHcCreateForm(defaultHealthCheckForm()); setHcCreateOpen(true) }}
           >
             Add Health Check
@@ -1368,7 +1368,7 @@ export default function HostDetailPage() {
         <Divider sx={{ mb: 2 }} />
 
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Monitor host health with service and HTTP checks. Maximum 5 checks per host.
+          Monitor host health with service and HTTP checks. Maximum 10 checks per host.
         </Typography>
 
         {hcLoading ? (
