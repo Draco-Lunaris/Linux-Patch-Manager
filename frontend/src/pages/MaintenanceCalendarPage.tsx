@@ -337,7 +337,7 @@ function MonthView({ currentDate, events, hostMap, onDayClick }: {
                         <Tooltip key={`${ev.windowId}-${i}`} title={<EventTooltipContent ev={ev} host={hostMap.get(ev.hostId)} />} arrow placement="right">
                           <Chip
                             size="small"
-                            label={`${fmtTime(ev.start)} ${ev.label}`}
+                            label={`${hostMap.get(ev.hostId)?.display_name ?? hostMap.get(ev.hostId)?.fqdn ?? ev.hostId} · ${fmtTime(ev.start)}`}
                             color={recurrenceColor(ev.recurrence)}
                             variant={ev.enabled ? 'filled' : 'outlined'}
                             sx={{
@@ -410,7 +410,7 @@ function WeekView({ currentDate, events, hostMap }: {
                 <Tooltip key={`${ev.windowId}-${i}`} title={<EventTooltipContent ev={ev} host={hostMap.get(ev.hostId)} />} arrow placement="right">
                   <Chip
                     size="small"
-                    label={`${fmtTime(ev.start)} ${ev.label}`}
+                    label={`${hostMap.get(ev.hostId)?.display_name ?? hostMap.get(ev.hostId)?.fqdn ?? ev.hostId} · ${fmtTime(ev.start)}`}
                     color={recurrenceColor(ev.recurrence)}
                     variant={ev.enabled ? 'filled' : 'outlined'}
                     sx={{
@@ -466,7 +466,7 @@ function DayView({ currentDate, events, hostMap }: {
               }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
                   <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                    {fmtTime(ev.start)} – {fmtTime(ev.end)}
+                    {hostMap.get(ev.hostId)?.display_name ?? hostMap.get(ev.hostId)?.fqdn ?? ev.hostId}
                   </Typography>
                   <Chip size="small" label={recurrenceLabel(ev.recurrence)} color={recurrenceColor(ev.recurrence)} />
                   {!ev.enabled && <Chip size="small" label="Disabled" color="warning" variant="outlined" />}
@@ -475,7 +475,7 @@ function DayView({ currentDate, events, hostMap }: {
                   {ev.label}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  {hostMap.get(ev.hostId)?.display_name ?? hostMap.get(ev.hostId)?.fqdn ?? ev.hostId}
+                  {fmtTime(ev.start)} – {fmtTime(ev.end)}
                 </Typography>
               </Paper>
             </Tooltip>
