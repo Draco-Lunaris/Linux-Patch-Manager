@@ -178,7 +178,7 @@ export default function DashboardPage() {
         <Box>
           {/* ── Row 1: Status stat cards ── */}
           <Grid container spacing={2} sx={{ mb: 3 }}>
-            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+            <Grid size={{ xs: 12, sm: 6, md: 2.4 }}>
               <StatCard
                 title="Healthy"
                 value={status.healthy}
@@ -186,7 +186,7 @@ export default function DashboardPage() {
                 icon={<CheckCircle sx={{ color: '#2e7d32' }} />}
               />
             </Grid>
-            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+            <Grid size={{ xs: 12, sm: 6, md: 2.4 }}>
               <StatCard
                 title="Degraded"
                 value={status.degraded}
@@ -194,7 +194,7 @@ export default function DashboardPage() {
                 icon={<Warning sx={{ color: '#ed6c02' }} />}
               />
             </Grid>
-            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+            <Grid size={{ xs: 12, sm: 6, md: 2.4 }}>
               <StatCard
                 title="Unreachable"
                 value={status.unreachable}
@@ -202,7 +202,15 @@ export default function DashboardPage() {
                 icon={<ErrorIcon sx={{ color: '#d32f2f' }} />}
               />
             </Grid>
-            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+            <Grid size={{ xs: 12, sm: 6, md: 2.4 }}>
+              <StatCard
+                title="Failed Health Checks"
+                value={status.failed_health_checks}
+                color="#f57c00"
+                icon={<BugReport sx={{ color: '#f57c00' }} />}
+              />
+            </Grid>
+            <Grid size={{ xs: 12, sm: 6, md: 2.4 }}>
               <StatCard
                 title="Pending / Unknown"
                 value={status.pending}

@@ -111,6 +111,7 @@ export interface FleetStatus {
   crl_missing: number
   crl_invalid: number
   crl_not_reporting: number
+  failed_health_checks: number
 }
 
 export interface PatchInfo {
