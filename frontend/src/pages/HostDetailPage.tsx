@@ -1405,6 +1405,14 @@ export default function HostDetailPage() {
                         ? (check.service_name ?? '—')
                         : (check.url ?? '—')}
                     </Typography>
+                    {check.check_type === 'service' && check.target_host_id && (() => {
+                      const targetHost = hosts.find(h => h.id === check.target_host_id)
+                      return targetHost ? (
+                        <Typography variant="caption" color="text.secondary" display="block">
+                          on {targetHost.display_name || targetHost.fqdn}
+                        </Typography>
+                      ) : null
+                    })()}
                   </TableCell>
                   <TableCell>
                     {check.last_result ? (
