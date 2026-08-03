@@ -9,7 +9,7 @@ This project follows the [Contributor Covenant v2.1](https://www.contributor-cov
 ## How to Contribute
 
 1. **Fork** the repository
-2. Create a **feature branch** from `main`:
+2. Create a **feature branch** from `master`:
    ```bash
    git checkout -b feat/my-feature
    ```
@@ -17,18 +17,17 @@ This project follows the [Contributor Covenant v2.1](https://www.contributor-cov
 4. Ensure all CI checks pass:
    ```bash
    # Rust backend
-   cargo fmt --check
-   cargo clippy -- -D warnings
-   cargo test
+   cargo fmt --check --all
+   cargo clippy --all-targets --all-features
+   cargo test --workspace --all-features --lib --bins --tests
 
    # TypeScript/React frontend
    cd frontend
-   npm run lint
-   npm run build
-   npm test
+   npx eslint src/ --ext .ts,.tsx --max-warnings 0
+   npx tsc --noEmit
    ```
 5. **Commit** using conventional commit format (see below)
-6. Open a **Pull Request** against `main`
+6. Open a **Pull Request** against `master`
 
 ## Development Setup
 
@@ -38,7 +37,7 @@ This project follows the [Contributor Covenant v2.1](https://www.contributor-cov
 - **Node.js** 20+ (for the frontend) — [nvm](https://github.com/nvm-sh/nvm) recommended
 - **System dependencies**:
   ```bash
-  sudo apt-get install build-essential libsystemd-dev pkg-config libssl-dev
+  sudo apt-get install build-essential pkg-config libssl-dev libfontconfig1-dev
   ```
 
 ### Build & Run

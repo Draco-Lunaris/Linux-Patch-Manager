@@ -7,7 +7,7 @@ import {
   TablePagination, TableSortLabel, TextField, Toolbar, Tooltip, Typography,
 } from '@mui/material'
 import { Add as AddIcon, Refresh as RefreshIcon, Delete as DeleteIcon, CheckCircle as CheckCircleIcon, Cancel as CancelIcon, Remove as RemoveIcon, Pending as PendingIcon, GppMaybe as GppMaybeIcon, CheckCircleOutline as CheckCircleOutlineIcon, WarningAmber as WarningAmberIcon, VerifiedUser as VerifiedUserIcon, Security as SecurityIcon, SystemUpdate as SystemUpdateIcon, NewReleases as NewReleasesIcon, RestartAlt as RestartAltIcon } from '@mui/icons-material'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import { apiClient, hostsApi, enrollmentApi, upgradesApi, jobsApi } from '../api/client'
 import { useAuthStore } from '../store/authStore'
 import type { Host, HostHealthStatus, EnrollmentRequest, EnrollmentConflictResponse, RepoAvailableVersion, TriggerUpgradeRequest, CreateJobRequest } from '../types'

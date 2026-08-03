@@ -27,7 +27,7 @@ import {
   Tooltip,
 } from '@mui/material'
 import { Search as SearchIcon, CheckCircle as CheckCircleIcon, Cancel as CancelIcon, Remove as RemoveIcon } from '@mui/icons-material'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import { hostsApi, jobsApi } from '../api/client'
 import type { Host, HostHealthStatus } from '../types'
 

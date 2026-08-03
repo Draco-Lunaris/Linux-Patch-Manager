@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate } from 'react-router'
 import { CssBaseline, ThemeProvider, CircularProgress, Box } from '@mui/material'
 import { darkTheme } from './theme/theme'
 import { useAuthStore } from './store/authStore'

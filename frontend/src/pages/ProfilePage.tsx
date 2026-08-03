@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router'
 import {
   Box, Button, Card, CardContent, Chip, Container, Dialog,
   DialogActions, DialogContent, DialogTitle, Snackbar,
