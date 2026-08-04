@@ -310,6 +310,17 @@ pub fn is_package_file(name: &str) -> bool {
         || name.ends_with(".pkg.tar.zst")
 }
 
+/// Check if a filename is a manager .deb package.
+///
+/// Manager packages are named `linux-patch-manager_*.deb` (see
+/// `scripts/build-package.sh`). Agent packages are named
+/// `linux-patch-api_*.deb`. This distinction keeps manager packages
+/// out of `repo_packages` (which drives the agent upgrade UI) while
+/// still placing them in the apt pool for manager-host self-update.
+pub fn is_manager_package(name: &str) -> bool {
+    name.starts_with("linux-patch-manager") && name.ends_with(".deb")
+}
+
 /// Detect repo format (apt/dnf/apk/pacman) from filename patterns.
 pub fn detect_distro_from_filename(name: &str) -> Option<String> {
     if name.ends_with(".deb") {
@@ -375,6 +386,139 @@ pub struct ExistingPackage {
     pub version: String,
     pub distro: String,
     pub sha256: Option<String>,
+}
+
+/// Sync manager .deb packages from the manager's own GitHub Releases into
+/// the apt pool.
+///
+/// This is separate from agent package sync because:
+/// 1. Manager packages come from a different GitHub repo
+///    (`manager_github_repo`, default `Draco-Lunaris/Linux-Patch-Manager`).
+/// 2. Manager packages are NOT recorded in `repo_packages` — that table
+///    drives the agent upgrade UI. The manager .deb just needs to be in
+///    the apt pool so the manager host's `apt-get upgrade` finds it during
+///    scheduled maintenance.
+/// 3. Only .deb is supported (the manager targets Ubuntu 24.04).
+///
+/// Returns the count of manager packages downloaded (0 if none found or
+/// already up-to-date). Errors are collected into `result.errors` rather
+/// than propagated, so a manager-sync failure does not abort the agent sync.
+pub async fn sync_manager_packages(
+    config: &PackageSyncConfig,
+    repo_dir: &str,
+    result: &mut SyncResult,
+) {
+    let repo = &config.manager_github_repo;
+    if repo.is_empty() {
+        return;
+    }
+
+    let url = format!(
+        "https://api.github.com/repos/{}/releases?per_page={}",
+        repo,
+        config.max_releases.min(100)
+    );
+
+    let client = match reqwest::Client::builder()
+        .user_agent("Linux-Patch-Manager-Sync/1.0")
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            result
+                .errors
+                .push(format!("Manager sync: HTTP client build failed: {e}"));
+            return;
+        },
+    };
+
+    let resp = match client.get(&url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            result
+                .errors
+                .push(format!("Manager sync: GitHub API request failed: {e}"));
+            return;
+        },
+    };
+
+    if !resp.status().is_success() {
+        result.errors.push(format!(
+            "Manager sync: GitHub API returned status: {}",
+            resp.status()
+        ));
+        return;
+    }
+
+    let releases: Vec<GithubRelease> = match resp.json().await {
+        Ok(r) => r,
+        Err(e) => {
+            result.errors.push(format!(
+                "Manager sync: failed to parse GitHub response: {e}"
+            ));
+            return;
+        },
+    };
+
+    let releases: Vec<GithubRelease> = releases
+        .into_iter()
+        .filter(|r| !r.prerelease)
+        .take(config.max_releases as usize)
+        .collect();
+
+    let pool_dir = format!("{repo_dir}/apt/pool");
+    if let Err(e) = tokio::fs::create_dir_all(&pool_dir).await {
+        result
+            .errors
+            .push(format!("Manager sync: failed to create apt pool dir: {e}"));
+        return;
+    }
+
+    for release in &releases {
+        for asset in &release.assets {
+            if !is_manager_package(&asset.name) {
+                continue;
+            }
+
+            let dest = format!("{pool_dir}/{}", asset.name);
+
+            // Skip if already present on disk.
+            if tokio::fs::try_exists(&dest).await.unwrap_or(false) {
+                tracing::debug!(
+                    filename = %asset.name,
+                    "Manager package already in apt pool — skipping"
+                );
+                continue;
+            }
+
+            // Download to tmp then move into pool.
+            let tmp_path = format!("{repo_dir}/tmp/{}", asset.name);
+            match download_asset(&asset.browser_download_url, &tmp_path, config).await {
+                Ok(_sha256) => {
+                    if let Err(e) = tokio::fs::copy(&tmp_path, &dest).await {
+                        result.errors.push(format!(
+                            "Manager sync: failed to copy {} to pool: {e}",
+                            asset.name
+                        ));
+                    } else {
+                        tracing::info!(
+                            filename = %asset.name,
+                            version = %release.tag_name,
+                            "Manager .deb synced to apt pool"
+                        );
+                    }
+                    let _ = tokio::fs::remove_file(&tmp_path).await;
+                },
+                Err(e) => {
+                    result.errors.push(format!(
+                        "Manager sync: download failed for {}: {e}",
+                        asset.name
+                    ));
+                },
+            }
+        }
+    }
 }
 
 /// Run a full sync cycle: fetch releases, download assets, import into repo.
@@ -499,6 +643,14 @@ pub async fn run_sync_cycle(
         }
     }
 
+    // Sync manager .deb packages from the manager's own GitHub Releases
+    // into the apt pool. This is done here (not in the agent release loop
+    // above) because manager packages come from a different repo and are
+    // not tracked in repo_packages. The .deb just needs to be in the pool
+    // so apt-get upgrade on the manager host picks it up. Metadata is
+    // regenerated below by the existing regenerate_all_apt_metadata call.
+    sync_manager_packages(sync_config, repo_dir, &mut result).await;
+
     // Regenerate apt metadata for all suites so every dists/<suite>/ index
     // reflects the current pool contents.
     let metadata_errors = crate::repo_metadata::regenerate_all_apt_metadata(repo_dir).await;
@@ -554,6 +706,27 @@ mod tests {
         assert!(!is_package_file("checksums.txt"));
         assert!(!is_package_file("source.tar.gz"));
         assert!(!is_package_file(""));
+    }
+
+    #[test]
+    fn test_is_manager_package_recognizes_manager_deb() {
+        assert!(is_manager_package("linux-patch-manager_1.6.4-1_amd64.deb"));
+        assert!(is_manager_package("linux-patch-manager_2.0.0-1_amd64.deb"));
+    }
+
+    #[test]
+    fn test_is_manager_package_rejects_agent_deb() {
+        assert!(!is_manager_package(
+            "linux-patch-api_2.6.11_u2404_amd64.deb"
+        ));
+    }
+
+    #[test]
+    fn test_is_manager_package_rejects_non_deb() {
+        assert!(!is_manager_package(
+            "linux-patch-manager-1.0.0-1.el9.x86_64.rpm"
+        ));
+        assert!(!is_manager_package("README.md"));
     }
 
     #[test]
