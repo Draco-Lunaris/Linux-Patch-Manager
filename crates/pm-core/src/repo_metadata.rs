@@ -612,19 +612,28 @@ pub async fn generate_apt_metadata(repo_dir: &str, suite: &str) -> Result<(), an
     // Ensure directories exist.
     std::fs::create_dir_all(&binary_dir)?;
 
-    // Scan pool for .deb files matching this suite.
-    // The suite name appears in the filename as `_<suite>_` (e.g. `_u2404_`).
-    let token = format!("_{suite}_");
-    let mut deb_files: Vec<String> = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&pool_dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".deb") && name.to_ascii_lowercase().contains(&token) {
-                deb_files.push(entry.path().to_string_lossy().to_string());
-            }
+// Scan pool for .deb files matching this suite.
+// The suite name appears in the filename as `_<suite>_` (e.g. `_u2404_`).
+// Additionally, for the u2404 suite, include manager packages
+// (linux-patch-manager_*.deb) which don't have a suite token but target Ubuntu 24.04.
+let token = format!("_{suite}_");
+let mut deb_files: Vec<String> = Vec::new();
+if let Ok(entries) = std::fs::read_dir(&pool_dir) {
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.ends_with(".deb") {
+            continue;
+        }
+        let lower = name.to_ascii_lowercase();
+        let matches_suite = lower.contains(&token);
+        // Manager packages target Ubuntu 24.04 (u2404) but don't have a suite token.
+        let is_manager = suite == "u2404" && lower.starts_with("linux-patch-manager_");
+        if matches_suite || is_manager {
+            deb_files.push(entry.path().to_string_lossy().to_string());
         }
     }
-    deb_files.sort();
+}
+deb_files.sort();
 
     // Build Packages file.
     let mut packages_content = String::new();
