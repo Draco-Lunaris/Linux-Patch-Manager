@@ -223,12 +223,18 @@ pub struct PackageSyncConfig {
     /// Sync interval in seconds (default: 3600 = 1 hour).
     #[serde(default = "default_sync_interval")]
     pub interval_secs: u64,
-    /// GitHub repository to sync from (e.g., "Draco-Lunaris/Linux-Patch-Api").
+    /// GitHub repository to sync agent packages from (e.g., "Draco-Lunaris/Linux-Patch-Api").
     #[serde(default = "default_sync_repo")]
     pub github_repo: String,
     /// Maximum number of recent releases to sync (default: 3 — last 3 versions).
     #[serde(default = "default_sync_max_releases")]
     pub max_releases: u32,
+    /// GitHub repository to sync manager packages from
+    /// (default: "Draco-Lunaris/Linux-Patch-Manager").
+    /// The manager .deb is imported into the apt pool so the manager host
+    /// auto-updates via scheduled apt-get upgrade (same as agents).
+    #[serde(default = "default_manager_sync_repo")]
+    pub manager_github_repo: String,
 }
 
 fn default_sync_interval() -> u64 {
@@ -236,6 +242,9 @@ fn default_sync_interval() -> u64 {
 }
 fn default_sync_repo() -> String {
     "Draco-Lunaris/Linux-Patch-Api".to_string()
+}
+fn default_manager_sync_repo() -> String {
+    "Draco-Lunaris/Linux-Patch-Manager".to_string()
 }
 fn default_sync_max_releases() -> u32 {
     3

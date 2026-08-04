@@ -181,6 +181,11 @@ interval_secs = 3600
 # GitHub repository to sync from (e.g., "Draco-Lunaris/Linux-Patch-Api")
 github_repo = "Draco-Lunaris/Linux-Patch-Api"
 
+# GitHub repository to sync manager .deb packages from.
+# The manager .deb is imported into the apt pool so the manager host
+# auto-updates via scheduled apt-get upgrade (same as agents).
+manager_github_repo = "Draco-Lunaris/Linux-Patch-Manager"
+
 # Maximum number of recent releases to sync (default: 3 — last 3 versions)
 max_releases = 3
 
