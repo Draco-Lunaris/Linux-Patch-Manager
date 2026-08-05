@@ -392,6 +392,7 @@ async fn compute_upgrade_available(hosts: &mut [HostSummary], pool: &sqlx::PgPoo
             FROM repo_packages
             WHERE distro = $1
               AND (distro_codename = $2 OR distro_codename IS NULL)
+              AND filename NOT LIKE 'linux-patch-manager_%'
             ORDER BY published_at DESC NULLS LAST, version DESC
             LIMIT 1
             "#,
