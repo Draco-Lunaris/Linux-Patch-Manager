@@ -167,6 +167,7 @@ async fn list_available_versions(
         FROM repo_packages
         WHERE distro = $1
           AND (distro_codename = $2 OR distro_codename IS NULL)
+          AND filename NOT LIKE 'linux-patch-manager_%'
         ORDER BY version DESC, published_at DESC NULLS LAST
         "#,
     )
@@ -272,6 +273,7 @@ async fn trigger_upgrade(
             FROM repo_packages
             WHERE distro = $1
               AND (distro_codename = $2 OR distro_codename IS NULL)
+              AND filename NOT LIKE 'linux-patch-manager_%'
             ORDER BY version DESC
             "#,
         )

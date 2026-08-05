@@ -314,9 +314,10 @@ pub fn is_package_file(name: &str) -> bool {
 ///
 /// Manager packages are named `linux-patch-manager_*.deb` (see
 /// `scripts/build-package.sh`). Agent packages are named
-/// `linux-patch-api_*.deb`. This distinction keeps manager packages
-/// out of `repo_packages` (which drives the agent upgrade UI) while
-/// still placing them in the apt pool for manager-host self-update.
+/// `linux-patch-api_*.deb`. Manager packages are synced into the apt pool
+/// AND tracked in `repo_packages` (with `distro='apt'`, no codename) so
+/// they appear in the Repo Management UI. They are filtered out of the
+/// agent upgrade catalog by filename pattern in `upgrades.rs`.
 pub fn is_manager_package(name: &str) -> bool {
     name.starts_with("linux-patch-manager") && name.ends_with(".deb")
 }
@@ -475,7 +476,11 @@ pub async fn sync_manager_packages(
         return;
     }
 
+    let version_from_tag = |tag: &str| tag.strip_prefix('v').unwrap_or(tag).to_string();
+
     for release in &releases {
+        let version = version_from_tag(&release.tag_name);
+
         for asset in &release.assets {
             if !is_manager_package(&asset.name) {
                 continue;
@@ -487,15 +492,26 @@ pub async fn sync_manager_packages(
             if tokio::fs::try_exists(&dest).await.unwrap_or(false) {
                 tracing::debug!(
                     filename = %asset.name,
-                    "Manager package already in apt pool — skipping"
+                    "Manager package already in apt pool — skipping download"
                 );
+                // Still register in synced_packages so it gets upserted into
+                // repo_packages and appears in the Repo Management UI.
+                result.synced_packages.push(SyncedPackage {
+                    filename: asset.name.clone(),
+                    version: version.clone(),
+                    distro: "apt".to_string(),
+                    distro_codename: None,
+                    file_size: asset.size as i64,
+                    sha256: None,
+                    published_at: release.published_at,
+                });
                 continue;
             }
 
             // Download to tmp then move into pool.
             let tmp_path = format!("{repo_dir}/tmp/{}", asset.name);
             match download_asset(&asset.browser_download_url, &tmp_path, config).await {
-                Ok(_sha256) => {
+                Ok(sha256) => {
                     if let Err(e) = tokio::fs::copy(&tmp_path, &dest).await {
                         result.errors.push(format!(
                             "Manager sync: failed to copy {} to pool: {e}",
@@ -507,6 +523,16 @@ pub async fn sync_manager_packages(
                             version = %release.tag_name,
                             "Manager .deb synced to apt pool"
                         );
+                        result.packages_synced += 1;
+                        result.synced_packages.push(SyncedPackage {
+                            filename: asset.name.clone(),
+                            version: version.clone(),
+                            distro: "apt".to_string(),
+                            distro_codename: None,
+                            file_size: asset.size as i64,
+                            sha256: Some(sha256),
+                            published_at: release.published_at,
+                        });
                     }
                     let _ = tokio::fs::remove_file(&tmp_path).await;
                 },
@@ -644,11 +670,12 @@ pub async fn run_sync_cycle(
     }
 
     // Sync manager .deb packages from the manager's own GitHub Releases
-    // into the apt pool. This is done here (not in the agent release loop
-    // above) because manager packages come from a different repo and are
-    // not tracked in repo_packages. The .deb just needs to be in the pool
-    // so apt-get upgrade on the manager host picks it up. Metadata is
-    // regenerated below by the existing regenerate_all_apt_metadata call.
+    // into the apt pool and repo_packages DB. This is done here (not in
+    // the agent release loop above) because manager packages come from a
+    // different repo. The .deb is placed in the pool for apt-get upgrade
+    // on the manager host, and registered in repo_packages so it shows up
+    // in the Repo Management UI. Metadata is regenerated below by the
+    // existing regenerate_all_apt_metadata call.
     sync_manager_packages(sync_config, repo_dir, &mut result).await;
 
     // Regenerate apt metadata for all suites so every dists/<suite>/ index
