@@ -1,7 +1,7 @@
 {
   "name": "patch-manager-ui",
   "private": true,
-  "version": "1.7.0",
+  "version": "1.6.8",
   "type": "module",
   "scripts": {
     "dev": "vite",
