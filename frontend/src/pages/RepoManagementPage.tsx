@@ -3,11 +3,12 @@ import {
   Box, Typography, Paper, Divider, Button, CircularProgress, Alert,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Chip, Card, CardContent, Grid, Dialog, DialogTitle, DialogContent, DialogActions,
-  Snackbar, Checkbox, IconButton, Tooltip,
+  Snackbar, Checkbox, IconButton, Tooltip, Switch, FormControlLabel,
 } from '@mui/material'
 import {
   Sync as SyncIcon, Store as PackageIcon, CloudDownload as DownloadIcon,
   Refresh as RefreshIcon, Delete as DeleteIcon, CleanHands as CleanupIcon,
+  PauseCircle as PauseIcon, PlayCircle as PlayIcon,
 } from '@mui/icons-material'
 import { repoApi } from '../api/client'
 
@@ -37,6 +38,7 @@ interface RepoPackage {
 interface SyncStatus {
   recent_syncs: SyncLog[]
   total_packages: number
+  auto_sync_enabled?: boolean
 }
 
 interface DiskUsageInfo {
@@ -72,6 +74,7 @@ export default function RepoManagementPage() {
   const [syncDialogOpen, setSyncDialogOpen] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [autoSyncToggling, setAutoSyncToggling] = useState(false)
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
     open: false, message: '', severity: 'success',
   })
@@ -127,6 +130,22 @@ export default function RepoManagementPage() {
       showSnack('Failed to trigger metadata regeneration', 'error')
     } finally {
       setRegenerating(false)
+    }
+  }
+
+  const handleToggleAutoSync = async () => {
+    const current = syncStatus?.auto_sync_enabled ?? true
+    setAutoSyncToggling(true)
+    try {
+      const res = await repoApi.setAutoSync(!current)
+      setSyncStatus(prev => prev ? { ...prev, auto_sync_enabled: res.data.auto_sync_enabled } : prev)
+      showSnack(`Auto-sync ${!current ? 'enabled' : 'paused'}`, 'success')
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Failed to toggle auto-sync'
+      setError(msg)
+      showSnack('Failed to toggle auto-sync', 'error')
+    } finally {
+      setAutoSyncToggling(false)
     }
   }
 
@@ -254,7 +273,7 @@ export default function RepoManagementPage() {
       </Grid>
 
       {/* Actions */}
-      <Box sx={{ mb: 3, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+      <Box sx={{ mb: 3, display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
         <Button
           variant="contained"
           startIcon={syncing ? <CircularProgress size={20} /> : <SyncIcon />}
@@ -285,6 +304,34 @@ export default function RepoManagementPage() {
         <Button variant="outlined" startIcon={<DownloadIcon />} onClick={fetchData}>
           Refresh
         </Button>
+        <Box sx={{ flexGrow: 1 }} />
+        <Tooltip title={
+          (syncStatus?.auto_sync_enabled ?? true)
+            ? 'Auto-sync is ON — packages are pulled from GitHub Releases every hour. Click to pause.'
+            : 'Auto-sync is PAUSED — new packages will not be pulled automatically. Manual sync still works. Click to resume.'
+        }>
+          <FormControlLabel
+            control={
+              <Switch
+                checked={syncStatus?.auto_sync_enabled ?? true}
+                onChange={handleToggleAutoSync}
+                disabled={autoSyncToggling}
+                color="success"
+                icon={<PauseIcon color="action" fontSize="small" />}
+                checkedIcon={<PlayIcon color="success" fontSize="small" />}
+              />
+            }
+            label={
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                <Typography variant="body2" fontWeight={600}>
+                  Auto-Sync
+                </Typography>
+                {autoSyncToggling && <CircularProgress size={14} />}
+              </Box>
+            }
+            labelPlacement="start"
+          />
+        </Tooltip>
       </Box>
 
       {/* Sync History */}

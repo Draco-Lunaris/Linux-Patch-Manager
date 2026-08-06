@@ -867,6 +867,18 @@ export default function HostDetailPage() {
     }
   }
 
+  // ── Toggle window enabled ─────────────────────────────────────────────────
+  const handleToggleWindowEnabled = async (w: MaintenanceWindow) => {
+    if (!id) return
+    try {
+      await maintenanceWindowsApi.update(id, w.id, { enabled: !w.enabled })
+      showSnack(`Window ${w.enabled ? 'disabled' : 'enabled'}`, 'success')
+      await fetchWindows()
+    } catch {
+      showSnack('Failed to toggle window', 'error')
+    }
+  }
+
   // ── Issue client certificate ──────────────────────────────────────────────
   const handleOpenIssueCert = () => {
     setIssueCertHostname(String(host?.fqdn ?? ''))
@@ -1320,11 +1332,15 @@ export default function HostDetailPage() {
                     <Chip label={recurrenceLabel(w.recurrence)} size="small" />
                   </TableCell>
                   <TableCell>
-                    <Chip
-                      label={w.enabled ? 'Enabled' : 'Disabled'}
-                      color={w.enabled ? 'success' : 'default'}
-                      size="small"
-                    />
+                    <Tooltip title={w.enabled ? 'Click to disable' : 'Click to enable'}>
+                      <Switch
+                        size="small"
+                        color="success"
+                        checked={w.enabled}
+                        onChange={canWrite ? () => handleToggleWindowEnabled(w) : undefined}
+                        disabled={!canWrite}
+                      />
+                    </Tooltip>
                   </TableCell>
                   {canWrite && <TableCell align="right">
                     <Tooltip title="Edit">

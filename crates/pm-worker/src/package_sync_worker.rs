@@ -33,6 +33,24 @@ pub async fn run_package_sync_worker(pool: PgPool, config: Arc<AppConfig>) {
     loop {
         ticker.tick().await;
 
+        // Check the runtime DB toggle (system_config.package_sync_auto_enabled).
+        // This lets operators pause auto-sync from the UI without restarting
+        // pm-worker. The TOML [worker.package_sync] enabled flag is a startup
+        // kill switch; this DB row is a runtime on/off switch.
+        // Default is 'true' (migration 039) so existing behavior is preserved.
+        let auto_enabled: bool = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT value FROM system_config WHERE key = 'package_sync_auto_enabled'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .map(|row| row.flatten().as_deref() != Some("false"))
+        .unwrap_or(true);
+
+        if !auto_enabled {
+            tracing::debug!("Package sync auto-toggle is off — skipping tick");
+            continue;
+        }
+
         if let Err(e) = run_scheduled_sync(&pool, &config).await {
             tracing::error!(error = %e, "Package sync cycle failed");
         }
