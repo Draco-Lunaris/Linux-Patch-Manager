@@ -1,3 +1,9 @@
+linux-patch-manager (1.7.0-1) unstable; urgency=low
+
+  * Release v1.7.0
+
+ -- Draco-Lunaris <noreply@users.noreply.github.com>  Thu, 06 Aug 2026 11:47:04 -0500
+
 linux-patch-manager (1.6.7-1) unstable; urgency=low
 
   * Fix manager packages not appearing in Repo Management UI

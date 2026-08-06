@@ -341,10 +341,11 @@ interface HostWindowsTableProps {
   onEdit: (w: MaintenanceWindow) => void
   onDelete: (w: MaintenanceWindow) => void
   onAdd: (hostId: string) => void
+  onToggleEnabled: (w: MaintenanceWindow) => void
   canWrite: boolean
 }
 
-function HostWindowsTable({ host, windows, onEdit, onDelete, onAdd, canWrite }: HostWindowsTableProps) {
+function HostWindowsTable({ host, windows, onEdit, onDelete, onAdd, onToggleEnabled, canWrite }: HostWindowsTableProps) {
   return (
     <Paper variant="outlined" sx={{ mb: 3 }}>
       <Box
@@ -412,11 +413,15 @@ function HostWindowsTable({ host, windows, onEdit, onDelete, onAdd, canWrite }: 
                   />
                 </TableCell>
                 <TableCell>
-                  <Chip
-                    label={w.enabled ? 'Enabled' : 'Disabled'}
-                    color={w.enabled ? 'success' : 'default'}
-                    size="small"
-                  />
+                  <Tooltip title={w.enabled ? 'Click to disable' : 'Click to enable'}>
+                    <Switch
+                      size="small"
+                      color="success"
+                      checked={w.enabled}
+                      onChange={canWrite ? () => onToggleEnabled(w) : undefined}
+                      disabled={!canWrite}
+                    />
+                  </Tooltip>
                 </TableCell>
                 <TableCell>
                   <Chip
@@ -616,6 +621,17 @@ export default function MaintenanceWindowsPage() {
     setDeleteOpen(true)
   }
 
+  // ── Toggle window enabled ─────────────────────────────────────────────────
+  const handleToggleEnabled = async (w: MaintenanceWindow) => {
+    try {
+      await maintenanceWindowsApi.update(w.host_id, w.id, { enabled: !w.enabled })
+      showSnackbar(`Maintenance window ${w.enabled ? 'disabled' : 'enabled'}`, 'success')
+      refreshData()
+    } catch {
+      showSnackbar('Failed to toggle maintenance window', 'error')
+    }
+  }
+
   const handleDeleteConfirm = async () => {
     if (!deleteWindow) return
     try {
@@ -675,6 +691,7 @@ export default function MaintenanceWindowsPage() {
           onEdit={handleEditClick}
           onDelete={handleDeleteClick}
           onAdd={handleAddClick}
+          onToggleEnabled={handleToggleEnabled}
           canWrite={canWrite}
         />
       ))}
