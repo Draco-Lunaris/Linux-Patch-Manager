@@ -18,7 +18,7 @@ permissions:
 jobs:
   rust-format:
     name: Rust Format
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ubuntu-24.04]
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@1.96.0
@@ -29,7 +29,7 @@ jobs:
 
   clippy:
     name: Clippy
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ubuntu-24.04]
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -42,7 +42,7 @@ jobs:
 
   rust-test:
     name: Rust Tests
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ubuntu-24.04]
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -53,7 +53,7 @@ jobs:
 
   security-audit:
     name: Security Audit
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ubuntu-24.04]
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -61,7 +61,7 @@ jobs:
 
   gitleaks:
     name: Secret scanning
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ubuntu-24.04]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -73,7 +73,7 @@ jobs:
 
   frontend-lint:
     name: Frontend Lint
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ubuntu-24.04]
     steps:
       - uses: actions/checkout@v6
       - name: Setup Node.js
@@ -86,7 +86,7 @@ jobs:
   build-and-release:
     name: Build & Release
     needs: [rust-format, clippy, rust-test, security-audit, frontend-lint]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ubuntu-24.04]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -135,7 +135,7 @@ jobs:
     name: Docker Build & Push
     needs: [rust-format, clippy, rust-test, security-audit, frontend-lint]
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, ubuntu-24.04]
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
