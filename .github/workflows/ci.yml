@@ -1,69 +1,86 @@
 name: CI
 
+# Releases-only: CI fires on version tags (+ manual dispatch).
+# Local dev/test uses `just check` on the dev box; this workflow is the
+# release-time gate + the official .deb + Docker image builder.
 on:
   push:
-    branches: [master]
-    tags: ['v*']
-  pull_request:
-    branches: [master]
+    tags: ['v*.*.*']
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  RUST_BACKTRACE: 1
 
 permissions:
   contents: write
   packages: write
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  rust-format:
+  # ── Quality Gates (release-time; local dev uses `just check`) ─────────────
+
+  fmt:
     name: Rust Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --check --all
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - run: just fmt
 
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev libfontconfig1-dev
-      - run: cargo clippy --all-targets --all-features
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - run: just deps-deb
+      - run: just clippy
 
-  rust-test:
+  test:
     name: Rust Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev libfontconfig1-dev
-      - run: cargo test --workspace --all-features --lib --bins --tests
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - run: just deps-deb
+      - run: just test
 
-  security-audit:
+  audit:
     name: Security Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo install cargo-audit && cargo audit
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,just
+      - run: just audit
 
   gitleaks:
     name: Secret scanning
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Gitleaks
@@ -75,20 +92,43 @@ jobs:
     name: Frontend Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
           node-version: '20'
-      - name: Install & Lint
-        run: cd frontend && npm ci && npx eslint src/ --ext .ts,.tsx --max-warnings 0 && npx tsc --noEmit
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - run: just frontend-lint
+
+  frontend-typecheck:
+    name: Frontend Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - run: just frontend-typecheck
+
+  # ── Build & Release (tag push only) ────────────────────────────────────────
 
   build-and-release:
     name: Build & Release
-    needs: [rust-format, clippy, rust-test, security-audit, frontend-lint]
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [fmt, clippy, test, audit, gitleaks, frontend-lint, frontend-typecheck]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Free disk space
@@ -97,22 +137,18 @@ jobs:
           df -h
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev libfontconfig1-dev dpkg-dev
-      - name: Build Rust release
-        run: cargo build --release
-      - name: Strip binaries
-        run: strip target/release/pm-web target/release/pm-worker
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
           node-version: '20'
-      - name: Build frontend
-        run: cd frontend && npm ci && npm run build
-      - name: Build .deb package
-        run: chmod +x scripts/build-package.sh && scripts/build-package.sh
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - run: just deps-deb
+      - run: just pkg-deb
       - name: Generate release notes
-        if: startsWith(github.ref, 'refs/tags/v')
         id: release_notes
         run: |
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
@@ -125,7 +161,6 @@ jobs:
           echo "$NOTES" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
       - name: Upload to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v3
         with:
           body: ${{ steps.release_notes.outputs.notes }}
@@ -133,12 +168,12 @@ jobs:
 
   docker:
     name: Docker Build & Push
-    needs: [rust-format, clippy, rust-test, security-audit, frontend-lint]
     if: startsWith(github.ref, 'refs/tags/v')
+    needs: [fmt, clippy, test, audit, gitleaks, frontend-lint, frontend-typecheck]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
