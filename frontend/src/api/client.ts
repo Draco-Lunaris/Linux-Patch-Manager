@@ -457,4 +457,10 @@ export const repoApi = {
 
   regenerateMetadata: () =>
     apiClient.post('/admin/repo/regenerate-metadata'),
+
+  getAutoSync: () =>
+    apiClient.get<{ auto_sync_enabled: boolean }>('/admin/repo/auto-sync'),
+
+  setAutoSync: (auto_sync_enabled: boolean) =>
+    apiClient.put('/admin/repo/auto-sync', { auto_sync_enabled }),
 }

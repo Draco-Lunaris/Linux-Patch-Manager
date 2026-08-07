@@ -11,6 +11,8 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use pm_auth::rbac::AuthUser;
+use pm_core::audit::{log_event, AuditAction};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -57,6 +59,7 @@ pub fn router() -> Router<AppState> {
         .route("/repo/packages", get(list_packages).delete(delete_packages))
         .route("/repo/disk-usage", get(disk_usage))
         .route("/repo/regenerate-metadata", post(regenerate_metadata))
+        .route("/repo/auto-sync", get(get_auto_sync).put(set_auto_sync))
 }
 
 /// `POST /api/v1/admin/repo/sync`
@@ -245,9 +248,20 @@ async fn sync_status(
         .await
         .unwrap_or(0);
 
+    // Include the runtime auto-sync toggle state so the UI can render the
+    // switch without a separate round-trip.
+    let auto_sync_enabled: bool = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT value FROM system_config WHERE key = 'package_sync_auto_enabled'",
+    )
+    .fetch_optional(&state.db)
+    .await
+    .map(|row| row.flatten().as_deref() != Some("false"))
+    .unwrap_or(true);
+
     Ok(Json(json!({
         "recent_syncs": sync_logs,
         "total_packages": total_packages,
+        "auto_sync_enabled": auto_sync_enabled,
     })))
 }
 
@@ -685,4 +699,101 @@ fn resolve_package_path(
         "pacman" => Some(format!("{repo_dir}/pacman/x86_64/{filename}")),
         _ => None,
     }
+}
+
+// ============================================================
+// GET /api/v1/admin/repo/auto-sync
+// ============================================================
+
+/// Return the current runtime auto-sync toggle state.
+async fn get_auto_sync(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if !auth.role.is_admin() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(
+                json!({ "error": { "code": "forbidden_role", "message": "Admin role required" } }),
+            ),
+        ));
+    }
+
+    let enabled: bool = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT value FROM system_config WHERE key = 'package_sync_auto_enabled'",
+    )
+    .fetch_optional(&state.db)
+    .await
+    .map(|row| row.flatten().as_deref() != Some("false"))
+    .unwrap_or(true);
+
+    Ok(Json(json!({ "auto_sync_enabled": enabled })))
+}
+
+// ============================================================
+// PUT /api/v1/admin/repo/auto-sync
+// ============================================================
+
+#[derive(Debug, Deserialize)]
+struct SetAutoSyncRequest {
+    auto_sync_enabled: bool,
+}
+
+/// Enable or disable the automatic (hourly) package sync worker at runtime.
+/// Manual syncs via POST /admin/repo/sync are unaffected.
+async fn set_auto_sync(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Json(req): Json<SetAutoSyncRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if !auth.role.is_admin() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(
+                json!({ "error": { "code": "forbidden_role", "message": "Admin role required" } }),
+            ),
+        ));
+    }
+
+    let value = if req.auto_sync_enabled {
+        "true"
+    } else {
+        "false"
+    };
+    sqlx::query(
+        "INSERT INTO system_config (key, value, description, updated_at)
+         VALUES ('package_sync_auto_enabled', $1, 'Runtime toggle for the automatic package sync worker.', NOW())
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
+    )
+    .bind(value)
+    .execute(&state.db)
+    .await
+    .map_err(|e| {
+        tracing::error!(error = %e, "Failed to update package_sync_auto_enabled");
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": { "code": "internal_error", "message": "Database error" } })),
+        )
+    })?;
+
+    log_event(
+        &state.db,
+        AuditAction::ConfigChanged,
+        Some(auth.user_id),
+        Some(&auth.username),
+        Some("package_sync_auto_enabled"),
+        Some("system_config"),
+        json!({ "auto_sync_enabled": req.auto_sync_enabled }),
+        None,
+        None,
+    )
+    .await;
+
+    tracing::info!(
+        auto_sync_enabled = req.auto_sync_enabled,
+        user = %auth.username,
+        "Package auto-sync toggle updated"
+    );
+
+    Ok(Json(json!({ "auto_sync_enabled": req.auto_sync_enabled })))
 }
