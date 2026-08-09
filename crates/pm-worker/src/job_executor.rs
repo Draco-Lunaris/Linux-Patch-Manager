@@ -19,6 +19,7 @@ use pm_agent_client::{
     types::{ApplyPatchesRequest, RebootRequest},
     AgentClient, AgentClientError,
 };
+use pm_core::audit::{log_event, AuditAction};
 use pm_core::config::AppConfig;
 use pm_core::models::JobKind;
 use serde_json::json;
@@ -621,6 +622,28 @@ async fn execute_patch_host_job(
         }
     }
 
+    // ── Reboot safety gate (auto-reboot-after-patching) ────────────────
+    // The agent decides whether to auto-reboot after patching based on
+    // `allow_reboot`. If this host is reboot_paused or its package database is
+    // not clean, force allow_reboot=false so the agent won't auto-reboot a
+    // host that could be left unbootable. Patches still apply; only the
+    // automatic reboot is suppressed.
+    let allow_reboot = if let Some((reboot_paused, package_db_clean)) =
+        reboot_safety_state(&pool, host_id).await
+    {
+        if reboot_refusal_reason(reboot_paused, package_db_clean).is_some() {
+            tracing::warn!(
+                %pjh_id, %host_id, reboot_paused, package_db_clean,
+                "execute_patch_host_job: suppressing auto-reboot (allow_reboot=false) — host is paused or package db not clean"
+            );
+            false
+        } else {
+            allow_reboot
+        }
+    } else {
+        allow_reboot
+    };
+
     let req = ApplyPatchesRequest {
         packages,
         allow_reboot,
@@ -659,8 +682,69 @@ async fn execute_patch_host_job(
 // execute_reboot_host_job — explicit reboot dispatch
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Read a host's reboot-safety state: `(reboot_paused, package_db_clean)`.
+/// `None` if the host row could not be read (callers fail-open in that case).
+async fn reboot_safety_state(pool: &PgPool, host_id: Uuid) -> Option<(bool, bool)> {
+    sqlx::query_as::<_, (bool, bool)>(
+        "SELECT reboot_paused, package_db_clean FROM hosts WHERE id = $1",
+    )
+    .bind(host_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+}
+
+/// Build the human-readable reason a reboot was refused, or `None` if the
+/// reboot is safe to proceed. A reboot is refused when the host is
+/// `reboot_paused` (operator hold) or its package database is not clean (a
+/// half-configured kernel could make the host unbootable on reboot).
+fn reboot_refusal_reason(reboot_paused: bool, package_db_clean: bool) -> Option<&'static str> {
+    if reboot_paused {
+        Some("host is reboot-paused (operator hold)")
+    } else if !package_db_clean {
+        Some("host package database is not clean (half-configured packages) — run `dpkg --configure -a` before rebooting")
+    } else {
+        None
+    }
+}
+
 async fn execute_reboot_host_job(pool: PgPool, pjh_id: Uuid, host_id: Uuid, client: &AgentClient) {
     tracing::info!(%pjh_id, %host_id, "execute_reboot_host_job: triggering reboot");
+
+    // ── Reboot safety gate ───────────────────────────────────────────────
+    // Refuse to reboot a host that is reboot_paused or whose package database
+    // is not clean (half-configured / unpacked / failed packages — especially
+    // a kernel whose postinst never ran). Rebooting such a host can leave it
+    // unbootable (no initramfs / GRUB repointed). Fail-open only if the host
+    // row itself can't be read.
+    if let Some((reboot_paused, package_db_clean)) = reboot_safety_state(&pool, host_id).await {
+        if let Some(reason) = reboot_refusal_reason(reboot_paused, package_db_clean) {
+            tracing::warn!(
+                %pjh_id, %host_id, reboot_paused, package_db_clean,
+                "execute_reboot_host_job: refusing reboot — {reason}"
+            );
+            let _ = log_event(
+                &pool,
+                AuditAction::RebootRefused,
+                None,
+                None,
+                Some("host"),
+                Some(&host_id.to_string()),
+                json!({
+                    "pjh_id": pjh_id.to_string(),
+                    "reboot_paused": reboot_paused,
+                    "package_db_clean": package_db_clean,
+                    "reason": reason,
+                }),
+                None,
+                None,
+            )
+            .await;
+            handle_host_failure(pool, pjh_id, format!("Reboot refused: {reason}")).await;
+            return;
+        }
+    }
 
     let req = RebootRequest {
         delay_seconds: 0,

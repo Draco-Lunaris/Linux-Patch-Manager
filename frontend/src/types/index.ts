@@ -35,6 +35,12 @@ export interface Host {
   upgrade_available?: boolean
   latest_version?: string
   pending_reboot?: boolean
+  /** Operator toggle: when true the manager refuses to reboot this host
+   * (explicit + auto) — used during half-configured-package recovery. */
+  reboot_paused?: boolean
+  /** True when the agent reports no half-configured packages (read-only
+   * dpkg --audit). False = package db dirty → manager refuses to reboot. */
+  package_db_clean?: boolean
 }
 
 export interface CreateHostRequest {
@@ -49,6 +55,7 @@ export interface UpdateHostRequest {
   fqdn?: string
   ip_address?: string
   display_name?: string
+  reboot_paused?: boolean
 }
 
 export interface Group {

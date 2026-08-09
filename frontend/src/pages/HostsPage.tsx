@@ -4,9 +4,9 @@ import {
   DialogContent, DialogActions, FormControl, IconButton, InputLabel, MenuItem, Paper,
   Select, Snackbar, Alert,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  TablePagination, TableSortLabel, TextField, Toolbar, Tooltip, Typography,
+  TablePagination, TableSortLabel, TextField, Toolbar, Tooltip, Typography, Switch,
 } from '@mui/material'
-import { Add as AddIcon, Refresh as RefreshIcon, Delete as DeleteIcon, CheckCircle as CheckCircleIcon, Cancel as CancelIcon, Remove as RemoveIcon, Pending as PendingIcon, GppMaybe as GppMaybeIcon, CheckCircleOutline as CheckCircleOutlineIcon, WarningAmber as WarningAmberIcon, VerifiedUser as VerifiedUserIcon, Security as SecurityIcon, SystemUpdate as SystemUpdateIcon, NewReleases as NewReleasesIcon, RestartAlt as RestartAltIcon } from '@mui/icons-material'
+import { Add as AddIcon, Refresh as RefreshIcon, Delete as DeleteIcon, CheckCircle as CheckCircleIcon, Cancel as CancelIcon, Remove as RemoveIcon, Pending as PendingIcon, GppMaybe as GppMaybeIcon, CheckCircleOutline as CheckCircleOutlineIcon, WarningAmber as WarningAmberIcon, VerifiedUser as VerifiedUserIcon, Security as SecurityIcon, SystemUpdate as SystemUpdateIcon, NewReleases as NewReleasesIcon, RestartAlt as RestartAltIcon, PauseCircle as PauseCircleIcon, ReportProblem as ReportProblemIcon } from '@mui/icons-material'
 import { useNavigate, useSearchParams } from 'react-router'
 import { apiClient, hostsApi, enrollmentApi, upgradesApi, jobsApi } from '../api/client'
 import { useAuthStore } from '../store/authStore'
@@ -126,6 +126,28 @@ export default function HostsPage() {
       await hostsApi.refresh(hostId)
       setTimeout(() => { load(); setRefreshing(null) }, 2000)
     } catch {
+      setRefreshing(null)
+    }
+  }
+
+  // Toggle the per-host "reboot paused" safety switch. When paused, the
+  // manager refuses to issue any reboot (explicit + auto) for this host —
+  // used to safely recover a half-configured host without the manager
+  // rebooting it mid-recovery.
+  const handleToggleRebootPause = async (e: React.MouseEvent, host: Host) => {
+    e.stopPropagation()
+    setRefreshing(host.id)
+    try {
+      await hostsApi.update(host.id, { reboot_paused: !host.reboot_paused })
+      setSnackbar({
+        open: true,
+        message: `Reboots ${!host.reboot_paused ? 'paused' : 'resumed'} for "${host.display_name || host.fqdn}"`,
+        severity: 'success',
+      })
+      load()
+    } catch {
+      /* handled by interceptor */
+    } finally {
       setRefreshing(null)
     }
   }
@@ -495,13 +517,35 @@ export default function HostsPage() {
                       </Box>
                     </TableCell>
                     <TableCell>
-                      {h.pending_reboot ? (
-                        <Tooltip title="Reboot required">
-                          <WarningAmberIcon color="warning" fontSize="small" />
-                        </Tooltip>
-                      ) : (
-                        <Tooltip title="No reboot required"><RemoveIcon color="disabled" fontSize="small" /></Tooltip>
-                      )}
+                      <Box display="flex" alignItems="center" gap={0.5}>
+                        {canWrite && (
+                          <Tooltip title={h.reboot_paused ? 'Reboots paused (operator hold) — click to resume' : 'Pause reboots for this host'}>
+                            <Switch
+                              size="small"
+                              color="warning"
+                              checked={!!h.reboot_paused}
+                              disabled={refreshing === h.id}
+                              onClick={(e) => handleToggleRebootPause(e, h)}
+                              inputProps={{ 'aria-label': 'toggle reboot pause' }}
+                            />
+                          </Tooltip>
+                        )}
+                        {h.reboot_paused ? (
+                          <Tooltip title="Reboots blocked (operator hold)">
+                            <PauseCircleIcon color="error" fontSize="small" />
+                          </Tooltip>
+                        ) : h.package_db_clean === false ? (
+                          <Tooltip title="Package DB not clean (half-configured packages) — reboots blocked by the safety gate. Run dpkg --configure -a on the host.">
+                            <ReportProblemIcon color="error" fontSize="small" />
+                          </Tooltip>
+                        ) : h.pending_reboot ? (
+                          <Tooltip title="Reboot required">
+                            <WarningAmberIcon color="warning" fontSize="small" />
+                          </Tooltip>
+                        ) : (
+                          <Tooltip title="No reboot required"><RemoveIcon color="disabled" fontSize="small" /></Tooltip>
+                        )}
+                      </Box>
                     </TableCell>
                     {canWrite && <TableCell onClick={e => e.stopPropagation()}>
                       <Tooltip title="Upgrade agent">

@@ -113,6 +113,19 @@ pub struct SystemInfoData {
     pub last_update_apply: Option<DateTime<Utc>>,
     /// Whether the system has a pending reboot.
     pub pending_reboot: bool,
+    /// Whether the package database is clean (no half-configured / unpacked /
+    /// failed packages — read-only `dpkg --audit` on Debian/Ubuntu; `true` for
+    /// backends with no audit). The manager uses this as a safe-to-reboot gate.
+    /// `#[serde(default)]` so older agents that omit the field are treated as
+    /// clean (fail-open).
+    #[serde(default = "default_true")]
+    pub package_db_clean: bool,
+}
+
+/// Default for `package_db_clean` when an older agent omits the field — treat
+/// as clean (fail-open) rather than spuriously blocking reboots.
+fn default_true() -> bool {
+    true
 }
 
 // ============================================================

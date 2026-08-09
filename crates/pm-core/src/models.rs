@@ -113,6 +113,17 @@ pub struct Host {
     /// health poller from the agent's /system/info response.
     #[serde(default)]
     pub pending_reboot: bool,
+    /// Operator toggle: when true, the manager refuses to issue any reboot
+    /// (explicit Reboot jobs or auto-reboot-after-patching) for this host —
+    /// the "do not reboot this host while I recover it" switch. Default false.
+    #[serde(default)]
+    pub reboot_paused: bool,
+    /// True when the agent reports no half-configured / unpacked / failed
+    /// packages (read-only `dpkg --audit`). The manager refuses to reboot a
+    /// host where this is false. Populated by the health poller; default true
+    /// (fail-open for older agents).
+    #[serde(default)]
+    pub package_db_clean: bool,
 }
 
 /// Payload for registering a new host.
@@ -132,6 +143,9 @@ pub struct UpdateHostRequest {
     pub fqdn: Option<String>,
     pub ip_address: Option<String>,
     pub display_name: Option<String>,
+    /// When set, set the per-host "reboot paused" toggle. `true` blocks all
+    /// reboots for this host (explicit + auto) until set back to `false`.
+    pub reboot_paused: Option<bool>,
 }
 
 /// Host list item (lighter projection for list views)
@@ -164,6 +178,14 @@ pub struct HostSummary {
     /// poller from the agent's /system/info response.
     #[serde(default)]
     pub pending_reboot: bool,
+    /// Operator toggle: when true, the manager refuses to reboot this host
+    /// (explicit + auto). See [`Host::reboot_paused`].
+    #[serde(default)]
+    pub reboot_paused: bool,
+    /// True when the agent reports no half-configured packages (read-only
+    /// dpkg --audit). See [`Host::package_db_clean`].
+    #[serde(default)]
+    pub package_db_clean: bool,
 }
 
 // ============================================================

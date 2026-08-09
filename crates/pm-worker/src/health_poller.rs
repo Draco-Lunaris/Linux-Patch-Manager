@@ -336,6 +336,12 @@ async fn poll_host_health(
     // Extract pending_reboot from system info (false when unavailable).
     let pending_reboot = sys_info.as_ref().is_some_and(|i| i.pending_reboot);
 
+    // Extract package_db_clean from system info. None when /system/info was
+    // unavailable (preserve the previous value via COALESCE below); Some(bool)
+    // otherwise — including older agents that omit the field, which serde
+    // defaults to true (fail-open).
+    let package_db_clean = sys_info.as_ref().map(|i| i.package_db_clean);
+
     // Update hosts table with the hysteresis-adjusted health status,
     // agent version, OS details, CRL fields, pending reboot, and consecutive
     // failure count.  COALESCE preserves existing values when new data is
@@ -354,6 +360,7 @@ async fn poll_host_health(
             gpg_key_status = COALESCE($10, gpg_key_status),
             gpg_key_expires_at = COALESCE($11, gpg_key_expires_at),
             pending_reboot = $13,
+            package_db_clean = COALESCE($14, package_db_clean),
             consecutive_failures = $12
         WHERE id = $1
         "#,
@@ -371,6 +378,7 @@ async fn poll_host_health(
     .bind(gpg_key_expires_at_dt)
     .bind(new_failure_count)
     .bind(pending_reboot)
+    .bind(package_db_clean)
     .execute(&pool)
     .await
     {
