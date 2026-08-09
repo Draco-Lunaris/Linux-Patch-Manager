@@ -26,6 +26,7 @@ pub enum AuditAction {
     UserUpdated,
     HostRegistered,
     HostRemoved,
+    HostUpdated,
     GroupCreated,
     GroupDeleted,
     GroupMembershipChanged,
@@ -66,6 +67,10 @@ pub enum AuditAction {
     BatchUpgradeTriggered,
     // Audit chain repair (issue #160)
     AuditChainRepaired,
+    // Reboot safety gate: a reboot was refused because the host is
+    // reboot_paused or its package database is not clean (half-configured
+    // packages — e.g. a kernel whose postinst never ran).
+    RebootRefused,
 }
 
 impl AuditAction {
@@ -79,6 +84,7 @@ impl AuditAction {
             Self::UserUpdated => "user_updated",
             Self::HostRegistered => "host_registered",
             Self::HostRemoved => "host_removed",
+            Self::HostUpdated => "host_updated",
             Self::GroupCreated => "group_created",
             Self::GroupDeleted => "group_deleted",
             Self::GroupMembershipChanged => "group_membership_changed",
@@ -117,6 +123,7 @@ impl AuditAction {
             Self::BatchUpgradeTriggered => "batch_upgrade_triggered",
             // Audit chain repair (issue #160)
             Self::AuditChainRepaired => "audit_chain_repaired",
+            Self::RebootRefused => "reboot_refused",
         }
     }
 }

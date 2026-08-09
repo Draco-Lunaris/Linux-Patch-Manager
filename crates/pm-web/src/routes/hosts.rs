@@ -238,7 +238,9 @@ async fn list_hosts(
                     h.crl_status,
                     false AS upgrade_available,
                     NULL::text AS latest_version,
-                    COALESCE(h.pending_reboot, false) AS pending_reboot
+                    COALESCE(h.pending_reboot, false) AS pending_reboot,
+                    COALESCE(h.reboot_paused, false) AS reboot_paused,
+                    COALESCE(h.package_db_clean, true) AS package_db_clean
             FROM hosts h
             LEFT JOIN host_patch_data hpd ON hpd.host_id = h.id
             WHERE 1=1{filter_clause}
@@ -284,7 +286,9 @@ async fn list_hosts(
                     h.crl_status,
                     false AS upgrade_available,
                     NULL::text AS latest_version,
-                    COALESCE(h.pending_reboot, false) AS pending_reboot
+                    COALESCE(h.pending_reboot, false) AS pending_reboot,
+                    COALESCE(h.reboot_paused, false) AS reboot_paused,
+                    COALESCE(h.package_db_clean, true) AS package_db_clean
             FROM hosts h
             LEFT JOIN host_patch_data hpd ON hpd.host_id = h.id
             WHERE
@@ -542,7 +546,9 @@ async fn get_host(
                    registered_at, updated_at,
                    crl_status, crl_age_seconds, crl_next_update,
                    gpg_key_status, gpg_key_expires_at,
-                   COALESCE(pending_reboot, false) AS pending_reboot
+                   COALESCE(pending_reboot, false) AS pending_reboot,
+                   COALESCE(reboot_paused, false) AS reboot_paused,
+                   COALESCE(package_db_clean, true) AS package_db_clean
             FROM hosts WHERE id = $1
         ) h
         "#,
@@ -646,6 +652,7 @@ async fn update_host(
                 fqdn         = COALESCE($1, fqdn),
                 ip_address   = COALESCE($2::inet, ip_address),
                 display_name = COALESCE($3, display_name),
+                reboot_paused = COALESCE($5, reboot_paused),
                 updated_at   = NOW()
             WHERE id = $4
             RETURNING id
@@ -655,7 +662,10 @@ async fn update_host(
                    os_family, os_name, arch, agent_version, health_status,
                    last_health_at, last_patch_at, agent_port, notes,
                    registered_at, updated_at, crl_status, crl_age_seconds, crl_next_update,
-                   gpg_key_status, gpg_key_expires_at
+                   gpg_key_status, gpg_key_expires_at,
+                   COALESCE(pending_reboot, false) AS pending_reboot,
+                   COALESCE(reboot_paused, false) AS reboot_paused,
+                   COALESCE(package_db_clean, true) AS package_db_clean
             FROM hosts WHERE id = (SELECT id FROM updated)
         ) h
         "#,
@@ -664,6 +674,7 @@ async fn update_host(
     .bind(&req.ip_address)
     .bind(&req.display_name)
     .bind(id)
+    .bind(req.reboot_paused)
     .fetch_optional(&state.db)
     .await
     .map_err(|e| {
@@ -678,6 +689,25 @@ async fn update_host(
             Json(json!({ "error": { "code": "conflict", "message": msg } })),
         )
     })?;
+
+    // Audit the per-host reboot-pause toggle — a safety-relevant operator action
+    // (blocking all reboots for a host, typically during half-configured-package
+    // recovery).
+    if let Some(paused) = req.reboot_paused {
+        log_event(
+            &state.db,
+            AuditAction::HostUpdated,
+            Some(auth.user_id),
+            Some(&auth.username),
+            Some("host"),
+            Some(&id.to_string()),
+            json!({ "reboot_paused": paused }),
+            None,
+            None,
+        )
+        .await;
+        tracing::info!(host_id = %id, reboot_paused = paused, "Host reboot-paused toggle updated");
+    }
 
     host.map(Json).ok_or_else(|| {
         (
