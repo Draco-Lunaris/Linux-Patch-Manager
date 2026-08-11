@@ -489,7 +489,10 @@ async fn process_event(pool: &PgPool, row: &RunningHostJob, event: &AgentWsEvent
     // Determine timestamps based on terminal state.
     let is_terminal = matches!(db_status, "succeeded" | "failed" | "cancelled");
 
-    // Update the DB row.
+    // Update the DB row. The status guard prevents a late/racing event from
+    // overwriting a row that a concurrent writer (the HTTP poller in
+    // job_executor.rs, or a prior event) already drove to a terminal state —
+    // the succeeded→failed false negative.
     let update_result = if is_terminal {
         sqlx::query(
             r#"
@@ -500,6 +503,7 @@ async fn process_event(pool: &PgPool, row: &RunningHostJob, event: &AgentWsEvent
                 completed_at  = NOW()
             WHERE job_id = $4
               AND host_id = $5
+              AND status NOT IN ('succeeded','failed','cancelled')
             "#,
         )
         .bind(db_status)
@@ -517,6 +521,7 @@ async fn process_event(pool: &PgPool, row: &RunningHostJob, event: &AgentWsEvent
                 output = CASE WHEN $2 != '' THEN $2 ELSE output END
             WHERE job_id = $3
               AND host_id = $4
+              AND status NOT IN ('succeeded','failed','cancelled')
             "#,
         )
         .bind(db_status)
@@ -527,12 +532,29 @@ async fn process_event(pool: &PgPool, row: &RunningHostJob, event: &AgentWsEvent
         .await
     };
 
-    if let Err(e) = update_result {
-        tracing::error!(
-            error   = %e,
+    let rows_affected = match update_result {
+        Ok(res) => res.rows_affected(),
+        Err(e) => {
+            tracing::error!(
+                error   = %e,
+                job_id  = %row.job_id,
+                host_id = %row.host_id,
+                "WS relay: DB update failed"
+            );
+            return;
+        },
+    };
+
+    // 0 rows = the guard found the row already terminal. A stale event must
+    // not re-sync the parent (could clobber the parent aggregate) and must not
+    // fire pg_notify (the payload carries this event's status, which would
+    // flip the browser display to a stale terminal state).
+    if rows_affected == 0 {
+        tracing::info!(
             job_id  = %row.job_id,
             host_id = %row.host_id,
-            "WS relay: DB update failed"
+            status  = %db_status,
+            "WS relay: row already terminal — skipping parent sync and notify"
         );
         return;
     }

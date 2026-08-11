@@ -81,6 +81,10 @@ struct JobInfo {
 struct RetryRow {
     job_id: Uuid,
     retry_count: i32,
+    /// Current status as a raw string (the SQL `job_status` enum has a
+    /// `waiting_health_check` value the Rust `JobStatus` enum lacks, so we
+    /// decode as String to avoid a decode failure).
+    status: String,
 }
 
 #[derive(Debug, FromRow)]
@@ -452,6 +456,7 @@ async fn execute_host_job(
                        retry_next_at = $2,
                        last_error    = 'Waiting for health checks to pass'
                 WHERE  id = $1
+                  AND  status NOT IN ('succeeded','failed','cancelled')
                 "#,
             )
             .bind(pjh_id)
@@ -523,6 +528,7 @@ async fn execute_host_job(
         SET    status     = 'running',
                started_at = COALESCE(started_at, NOW())
         WHERE  id = $1
+          AND  status NOT IN ('succeeded','failed','cancelled')
         "#,
     )
     .bind(pjh_id)
@@ -965,13 +971,18 @@ async fn poll_single_host(pool: PgPool, config: Arc<AppConfig>, row: PatchJobHos
             match status.status.as_str() {
                 "succeeded" | "completed" => {
                     tracing::info!(pjh_id = %row.id, "poll_single_host: agent job succeeded");
-                    if let Err(e) = sqlx::query(
+                    match sqlx::query(
                         r#"
                         UPDATE patch_job_hosts
-                        SET    status       = 'succeeded',
-                               completed_at = NOW(),
-                               output       = $2
+                        SET    status        = 'succeeded',
+                               completed_at  = NOW(),
+                               output        = $2,
+                               retry_count   = 0,
+                               retry_next_at = NULL,
+                               last_error    = NULL,
+                               error_message = NULL
                         WHERE  id = $1
+                          AND  status NOT IN ('succeeded','failed','cancelled')
                         "#,
                     )
                     .bind(row.id)
@@ -979,7 +990,20 @@ async fn poll_single_host(pool: PgPool, config: Arc<AppConfig>, row: PatchJobHos
                     .execute(&pool)
                     .await
                     {
-                        tracing::error!(pjh_id = %row.id, error = %e, "poll_single_host: update failed");
+                        Ok(res) => {
+                            // 0 rows = the guard found the row already terminal;
+                            // a stale re-poll must not re-sync the parent.
+                            if res.rows_affected() == 0 {
+                                tracing::debug!(
+                                    pjh_id = %row.id,
+                                    "poll_single_host: row already terminal — skipping parent sync"
+                                );
+                                return;
+                            }
+                        },
+                        Err(e) => {
+                            tracing::error!(pjh_id = %row.id, error = %e, "poll_single_host: update failed");
+                        },
                     }
                     sync_job_status(&pool, row.job_id).await;
                 },
@@ -1105,6 +1129,43 @@ fn decide_self_upgrade_reconnect_result(
     }
 }
 
+/// Decision returned by [`decide_self_upgrade_succeeded_action`].
+///
+/// Captures what the `Succeeded` poll arm should do after its inline `health()`
+/// version read, independent of the side-effects.
+#[derive(Debug, PartialEq, Eq)]
+enum SelfUpgradeSucceededAction {
+    /// The inline version read already confirms the upgrade — finish now.
+    FinishSuccess,
+    /// The inline read was inconclusive (stale version while the postinst
+    /// restart is still swapping the binary) — re-read patiently via
+    /// reconnect-confirm instead of failing fast.
+    ReconnectConfirm,
+}
+
+/// Pure decision function: given the result of the inline `health()` version
+/// check in the `Succeeded` poll arm, determine what to do.
+///
+/// **Why `VersionUnchanged` maps to `ReconnectConfirm` and not failure:** the
+/// agent reports the self-update job `"completed"` before the postinst restart
+/// has swapped the binary, so the immediate `health()` read can return the
+/// OLD version for a few seconds. Failing fast on that read is a false
+/// negative. `reconnect_confirm_self_upgrade` waits for the agent to be
+/// reachable (via `reconnect_with_backoff`) before re-reading the version, so
+/// it sees the new version once the restart completes. A *genuine* failed
+/// upgrade is still caught — `reconnect_confirm_self_upgrade` calls
+/// `handle_host_failure` if the version stays wrong past the reconnect window.
+fn decide_self_upgrade_succeeded_action(
+    version_result: SelfUpgradeReconnectResult,
+) -> SelfUpgradeSucceededAction {
+    match version_result {
+        SelfUpgradeReconnectResult::Succeeded => SelfUpgradeSucceededAction::FinishSuccess,
+        SelfUpgradeReconnectResult::VersionUnchanged => {
+            SelfUpgradeSucceededAction::ReconnectConfirm
+        },
+    }
+}
+
 /// Decision returned by [`decide_reconnect_error_action`].
 #[derive(Debug, PartialEq, Eq)]
 enum ReconnectErrorAction {
@@ -1139,8 +1200,14 @@ fn decide_reconnect_error_action(error: &AgentClientError) -> ReconnectErrorActi
 ///    `config.worker.self_upgrade_reconnect_timeout_secs`).
 /// 2. Call `system_info()` to get the new `agent_version`.
 /// 3. If the version matches the target → mark `Succeeded`, update `hosts.agent_version`.
-/// 4. If the version is unchanged → mark `Failed` ("Agent restarted but version unchanged").
+/// 4. If the version is unchanged (still wrong after the reconnect window) → mark
+///    `Failed` ("Agent restarted but version unchanged").
 /// 5. If reconnect window expires → mark `Failed` ("Agent did not reconnect within timeout").
+///
+/// In the `Succeeded` poll arm, an inline `health()` read that returns the OLD
+/// version (the postinst restart hasn't swapped the binary yet) is NOT treated
+/// as failure — it routes to reconnect-confirm to re-check patiently. See
+/// [`decide_self_upgrade_succeeded_action`].
 async fn poll_self_upgrade_host(
     pool: &PgPool,
     config: &Arc<AppConfig>,
@@ -1192,14 +1259,21 @@ async fn poll_self_upgrade_host(
                     .flatten();
 
             let new_version = health.version.clone();
-            let result = decide_self_upgrade_reconnect_result(
+            let version_result = decide_self_upgrade_reconnect_result(
                 &new_version,
                 target_version.as_deref(),
                 old_version.as_deref(),
             );
 
-            match result {
-                SelfUpgradeReconnectResult::Succeeded => {
+            // The inline `health()` read can return the OLD version for a few
+            // seconds after the agent marks the job "completed" — the postinst
+            // restart hasn't swapped the binary yet. On an inconclusive read we
+            // re-check patiently via reconnect-confirm (which waits for the
+            // agent to be reachable before re-reading) instead of failing fast
+            // and flipping a succeeded row to pending/failed. See
+            // decide_self_upgrade_succeeded_action.
+            match decide_self_upgrade_succeeded_action(version_result) {
+                SelfUpgradeSucceededAction::FinishSuccess => {
                     tracing::info!(
                         pjh_id = %row.id,
                         new_version = %new_version,
@@ -1209,23 +1283,16 @@ async fn poll_self_upgrade_host(
                     );
                     finish_self_upgrade_success(pool, row, &new_version).await;
                 },
-                SelfUpgradeReconnectResult::VersionUnchanged => {
-                    let reason = match target_version {
-                        Some(ref t) => format!(
-                            "Agent reported success but version unchanged: expected {t}, got {new_version}"
-                        ),
-                        None => format!(
-                            "Agent reported success but version unchanged: still {new_version}"
-                        ),
-                    };
-                    tracing::warn!(
+                SelfUpgradeSucceededAction::ReconnectConfirm => {
+                    tracing::info!(
                         pjh_id = %row.id,
                         new_version = %new_version,
                         old_version = ?old_version,
                         target_version = ?target_version,
-                        "poll_self_upgrade_host: agent reported success but no version change, marking failed"
+                        "poll_self_upgrade_host: inline version read inconclusive (stale version \
+                         while postinst restart swaps the binary) — re-checking via reconnect-confirm"
                     );
-                    handle_host_failure(pool.clone(), row.id, reason).await;
+                    reconnect_confirm_self_upgrade(pool, config, row, client).await;
                 },
             }
         },
@@ -1462,13 +1529,18 @@ async fn finish_self_upgrade_success(pool: &PgPool, row: &PatchJobHostRunning, n
     }
 
     // Mark the pjh row as succeeded.
-    if let Err(e) = sqlx::query(
+    match sqlx::query(
         r#"
         UPDATE patch_job_hosts
-        SET    status       = 'succeeded',
-               completed_at = NOW(),
-               output       = $2
+        SET    status        = 'succeeded',
+               completed_at  = NOW(),
+               output        = $2,
+               retry_count   = 0,
+               retry_next_at = NULL,
+               last_error    = NULL,
+               error_message = NULL
         WHERE  id = $1
+          AND  status NOT IN ('succeeded','failed','cancelled')
         "#,
     )
     .bind(row.id)
@@ -1478,7 +1550,22 @@ async fn finish_self_upgrade_success(pool: &PgPool, row: &PatchJobHostRunning, n
     .execute(pool)
     .await
     {
-        tracing::error!(pjh_id = %row.id, error = %e, "finish_self_upgrade_success: update failed");
+        Ok(res) => {
+            // If 0 rows updated, the guard found the row already terminal (a
+            // racing writer marked it succeeded/failed/cancelled first). Don't
+            // re-sync the parent — there's no state change, and re-syncing
+            // could clobber the parent with a stale aggregate.
+            if res.rows_affected() == 0 {
+                tracing::info!(
+                    pjh_id = %row.id,
+                    "finish_self_upgrade_success: row already terminal — not re-syncing parent"
+                );
+                return;
+            }
+        },
+        Err(e) => {
+            tracing::error!(pjh_id = %row.id, error = %e, "finish_self_upgrade_success: update failed");
+        },
     }
 
     sync_job_status(pool, row.job_id).await;
@@ -1494,7 +1581,7 @@ async fn finish_self_upgrade_success(pool: &PgPool, row: &PatchJobHostRunning, n
 /// failure the entry is marked `failed` and the parent job status is synced.
 async fn handle_host_failure(pool: PgPool, pjh_id: Uuid, error_msg: String) {
     let row: Option<RetryRow> = match sqlx::query_as(
-        "SELECT job_id, retry_count FROM patch_job_hosts WHERE id = $1",
+        "SELECT job_id, retry_count, status::text AS status FROM patch_job_hosts WHERE id = $1",
     )
     .bind(pjh_id)
     .fetch_optional(&pool)
@@ -1514,6 +1601,20 @@ async fn handle_host_failure(pool: PgPool, pjh_id: Uuid, error_msg: String) {
             return;
         },
     };
+
+    // Defense-in-depth: if a racing writer already drove the row to a terminal
+    // state, do nothing — don't clobber succeeded/failed/cancelled with a retry
+    // or a duplicate failure. The UPDATEs below also carry the status guard so
+    // a TOCTOU between this SELECT and the UPDATE still can't flip a terminal
+    // row.
+    if matches!(row.status.as_str(), "succeeded" | "failed" | "cancelled") {
+        tracing::info!(
+            %pjh_id,
+            status = %row.status,
+            "handle_host_failure: row already terminal — not overwriting"
+        );
+        return;
+    }
 
     if row.retry_count < 3 {
         let new_retry_count = row.retry_count + 1;
@@ -1540,6 +1641,7 @@ async fn handle_host_failure(pool: PgPool, pjh_id: Uuid, error_msg: String) {
                    retry_next_at = $3,
                    last_error    = $4
             WHERE  id = $1
+              AND  status NOT IN ('succeeded','failed','cancelled')
             "#,
         )
         .bind(pjh_id)
@@ -1559,13 +1661,14 @@ async fn handle_host_failure(pool: PgPool, pjh_id: Uuid, error_msg: String) {
             "handle_host_failure: max retries exceeded, marking failed"
         );
 
-        if let Err(e) = sqlx::query(
+        let failed_written = match sqlx::query(
             r#"
             UPDATE patch_job_hosts
             SET    status        = 'failed',
                    error_message = $2,
                    completed_at  = NOW()
             WHERE  id = $1
+              AND  status NOT IN ('succeeded','failed','cancelled')
             "#,
         )
         .bind(pjh_id)
@@ -1573,10 +1676,19 @@ async fn handle_host_failure(pool: PgPool, pjh_id: Uuid, error_msg: String) {
         .execute(&pool)
         .await
         {
-            tracing::error!(%pjh_id, error = %e, "handle_host_failure: failed to mark pjh failed");
-        }
+            Ok(res) => res.rows_affected() > 0,
+            Err(e) => {
+                tracing::error!(%pjh_id, error = %e, "handle_host_failure: failed to mark pjh failed");
+                false
+            },
+        };
 
-        sync_job_status(&pool, row.job_id).await;
+        // Only re-sync the parent if this write actually transitioned the row.
+        // A 0-row no-op (a racing writer already drove the row terminal) must
+        // not re-sync — it could clobber the parent with a stale aggregate.
+        if failed_written {
+            sync_job_status(&pool, row.job_id).await;
+        }
     }
 }
 
@@ -1780,18 +1892,35 @@ pub async fn retry_pending_jobs(pool: PgPool, config: Arc<AppConfig>) {
     };
 
     for row in rows {
-        // Reset to queued so execute_host_job can pick it up cleanly.
-        if let Err(e) = sqlx::query(
-            "UPDATE patch_job_hosts SET status = 'queued', retry_next_at = NULL WHERE id = $1",
+        // Reset to queued so execute_host_job can pick it up cleanly. The
+        // status guard closes the TOCTOU between the SELECT above and this
+        // UPDATE: a racing writer (WS event / poll) may have driven the row to
+        // a terminal state in between — in that case the UPDATE is a no-op and
+        // we must NOT re-dispatch a fresh agent job over a row that already
+        // succeeded/failed.
+        let reset = match sqlx::query(
+            "UPDATE patch_job_hosts SET status = 'queued', retry_next_at = NULL \
+             WHERE id = $1 AND status NOT IN ('succeeded','failed','cancelled')",
         )
         .bind(row.id)
         .execute(&pool)
         .await
         {
-            tracing::error!(
+            Ok(res) => res.rows_affected() > 0,
+            Err(e) => {
+                tracing::error!(
+                    pjh_id = %row.id,
+                    error = %e,
+                    "retry_pending_jobs: failed to reset pjh to queued"
+                );
+                continue;
+            },
+        };
+
+        if !reset {
+            tracing::info!(
                 pjh_id = %row.id,
-                error = %e,
-                "retry_pending_jobs: failed to reset pjh to queued"
+                "retry_pending_jobs: row already terminal — skipping re-dispatch"
             );
             continue;
         }
@@ -1878,8 +2007,11 @@ async fn fail_timed_out_jobs(pool: PgPool, config: Arc<AppConfig>) {
 
         // Mark the pjh as failed directly (not via handle_host_failure, which
         // would schedule a retry — a timed-out job should not be retried
-        // automatically because the agent state is unknown).
-        if let Err(e) = sqlx::query(
+        // automatically because the agent state is unknown). The `status =
+        // 'running'` guard closes the TOCTOU between the SELECT above and this
+        // UPDATE: a racing writer (WS event / poll) may have already driven the
+        // row to `succeeded` in between, and we must not overwrite that.
+        let failed_written = match sqlx::query(
             r#"
             UPDATE patch_job_hosts
             SET    status        = 'failed',
@@ -1887,6 +2019,7 @@ async fn fail_timed_out_jobs(pool: PgPool, config: Arc<AppConfig>) {
                    last_error    = $2,
                    completed_at  = NOW()
             WHERE  id = $1
+              AND  status = 'running'
             "#,
         )
         .bind(row.id)
@@ -1894,10 +2027,21 @@ async fn fail_timed_out_jobs(pool: PgPool, config: Arc<AppConfig>) {
         .execute(&pool)
         .await
         {
-            tracing::error!(
+            Ok(res) => res.rows_affected() > 0,
+            Err(e) => {
+                tracing::error!(
+                    pjh_id = %row.id,
+                    error = %e,
+                    "fail_timed_out_jobs: failed to mark pjh as failed"
+                );
+                continue;
+            },
+        };
+
+        if !failed_written {
+            tracing::info!(
                 pjh_id = %row.id,
-                error = %e,
-                "fail_timed_out_jobs: failed to mark pjh as failed"
+                "fail_timed_out_jobs: row no longer running — not overwriting"
             );
             continue;
         }
@@ -2072,6 +2216,25 @@ mod tests {
     fn test_self_upgrade_reconnect_revision_only_bump_is_unchanged() {
         let result = decide_self_upgrade_reconnect_result("1.5.6-2", None, Some("1.5.6-1"));
         assert_eq!(result, SelfUpgradeReconnectResult::VersionUnchanged);
+    }
+
+    // ── decide_self_upgrade_succeeded_action tests ──────────────────────────
+
+    /// A confirmed version in the inline Succeeded-arm read finishes now.
+    #[test]
+    fn test_self_upgrade_succeeded_version_confirmed_finishes() {
+        let action = decide_self_upgrade_succeeded_action(SelfUpgradeReconnectResult::Succeeded);
+        assert_eq!(action, SelfUpgradeSucceededAction::FinishSuccess);
+    }
+
+    /// A stale/unchanged inline version read must NOT fail fast — it routes to
+    /// reconnect-confirm so the postinst restart has time to swap the binary.
+    /// This is the regression test for the succeeded→failed false negative.
+    #[test]
+    fn test_self_upgrade_succeeded_version_unchanged_reconnects() {
+        let action =
+            decide_self_upgrade_succeeded_action(SelfUpgradeReconnectResult::VersionUnchanged);
+        assert_eq!(action, SelfUpgradeSucceededAction::ReconnectConfirm);
     }
 
     // ── decide_reconnect_error_action tests ─────────────────────────────────
