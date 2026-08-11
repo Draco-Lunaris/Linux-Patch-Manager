@@ -1,3 +1,9 @@
+linux-patch-manager (1.6.10-1) unstable; urgency=low
+
+  * Release v1.6.10
+
+ -- Draco-Lunaris <noreply@users.noreply.github.com>  Tue, 11 Aug 2026 13:20:54 -0500
+
 linux-patch-manager (1.6.9-1) unstable; urgency=low
 
   * Release v1.6.9
