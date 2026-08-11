@@ -1166,23 +1166,48 @@ fn decide_self_upgrade_succeeded_action(
     }
 }
 
-/// Decision returned by [`decide_reconnect_error_action`].
+/// Decision returned by [`decide_version_sample`]: what the
+/// `reconnect_confirm_self_upgrade` poll loop should do with one
+/// `health()` sample.
 #[derive(Debug, PartialEq, Eq)]
-enum ReconnectErrorAction {
-    /// Agent did not reconnect within the timeout window.
-    Timeout,
-    /// Unexpected error during reconnect.
-    UnexpectedError,
+enum VersionSampleAction {
+    /// The version reached the target — finish the upgrade.
+    Succeeded(String),
+    /// Stale version (postinst restart still pending) OR a transient health
+    /// error (agent mid-restart) — keep polling within the budget.
+    Retry,
+    /// A fatal (non-transient) health error — fail the upgrade.
+    Fail(String),
 }
 
-/// Pure decision function: given an error from `reconnect_with_backoff`,
-/// determine what failure action to take.
-fn decide_reconnect_error_action(error: &AgentClientError) -> ReconnectErrorAction {
-    match error {
-        AgentClientError::ApiError { code, .. } if code == "RECONNECT_TIMEOUT" => {
-            ReconnectErrorAction::Timeout
+/// Pure decision function: classify one `health()` sample taken during
+/// self-upgrade reconnect-confirm.
+///
+/// - `Ok(version)` that matches the target (or differs from old) → `Succeeded`.
+/// - `Ok(version)` that is still the old version → `Retry` (the postinst
+///   restart hasn't swapped the binary yet; reading once would race it).
+/// - `Err(Timeout|Connect)` → `Retry` (agent mid-restart, transient).
+/// - `Err(other)` → `Fail` (TLS / API / deserialize — not transient).
+///
+/// Reuses [`decide_self_upgrade_reconnect_result`] for the version comparison.
+fn decide_version_sample(
+    sample: Result<&str, &AgentClientError>,
+    target_version: Option<&str>,
+    old_version: Option<&str>,
+) -> VersionSampleAction {
+    match sample {
+        Ok(version) => {
+            match decide_self_upgrade_reconnect_result(version, target_version, old_version) {
+                SelfUpgradeReconnectResult::Succeeded => {
+                    VersionSampleAction::Succeeded(version.to_string())
+                },
+                SelfUpgradeReconnectResult::VersionUnchanged => VersionSampleAction::Retry,
+            }
         },
-        _ => ReconnectErrorAction::UnexpectedError,
+        Err(AgentClientError::Connect(_) | AgentClientError::Timeout) => VersionSampleAction::Retry,
+        Err(e) => VersionSampleAction::Fail(format!(
+            "Health check error during self-upgrade reconnect: {e}"
+        )),
     }
 }
 
@@ -1332,7 +1357,46 @@ async fn poll_self_upgrade_host(
 
 /// Reconnect-confirm mode for self-upgrade.
 ///
-/// Waits for the agent to come back online, then verifies the new version.
+/// Log the agent's GPG key status (M8 migration tracking). Informational only.
+fn log_gpg_key_status(pjh_id: Uuid, host_id: Uuid, gpg_key_status: &Option<String>) {
+    match gpg_key_status {
+        Some(status) if status == "valid" => {
+            tracing::info!(
+                %pjh_id, %host_id,
+                "reconnect_confirm_self_upgrade: agent has valid GPG key — repo_config present"
+            );
+        },
+        Some(status) if status == "missing" => {
+            tracing::warn!(
+                %pjh_id, %host_id,
+                "reconnect_confirm_self_upgrade: agent reports GPG key missing — repo_config not provisioned, agent should use GET /pki/repo-config fallback"
+            );
+        },
+        Some(status) => {
+            tracing::warn!(
+                %pjh_id, %host_id, gpg_key_status = %status,
+                "reconnect_confirm_self_upgrade: agent GPG key status requires attention"
+            );
+        },
+        None => {
+            tracing::debug!(
+                %pjh_id, %host_id,
+                "reconnect_confirm_self_upgrade: agent did not report GPG key status (pre-v2.0.0 or older agent)"
+            );
+        },
+    }
+}
+
+/// Wait for the agent to come back online after a self-upgrade AND for its
+/// reported version to actually reach the target.
+///
+/// This POLLS `health().version` over a bounded window instead of reading it
+/// once after a reachability check. While the postinst restart is still
+/// pending, the OLD agent is reachable and reports the OLD version — a single
+/// read would race the restart and falsely mark the job failed (the
+/// succeeded→pending transient flip). We retry on a stale version AND on
+/// transient health errors (agent mid-restart), and only declare failure after
+/// the budget elapses with the version still wrong, or on a fatal error.
 async fn reconnect_confirm_self_upgrade(
     pool: &PgPool,
     config: &Arc<AppConfig>,
@@ -1340,52 +1404,10 @@ async fn reconnect_confirm_self_upgrade(
     client: &AgentClient,
 ) {
     let timeout_secs = config.worker.self_upgrade_reconnect_timeout_secs;
+    let poll_interval_secs = config.worker.self_upgrade_reconnect_poll_interval_secs;
 
-    tracing::info!(
-        pjh_id = %row.id,
-        timeout_secs,
-        "reconnect_confirm_self_upgrade: waiting for agent to come back online"
-    );
-
-    // Use the existing reconnect_with_backoff helper which calls system_info()
-    // with bounded exponential backoff.
-    let sys_info = match pm_agent_client::reconnect_with_backoff(client, timeout_secs).await {
-        Ok(info) => info,
-        Err(e) => {
-            let action = decide_reconnect_error_action(&e);
-            match action {
-                ReconnectErrorAction::Timeout => {
-                    tracing::error!(
-                        pjh_id = %row.id,
-                        "reconnect_confirm_self_upgrade: agent did not reconnect within timeout"
-                    );
-                    handle_host_failure(
-                        pool.clone(),
-                        row.id,
-                        "Agent did not reconnect within self-upgrade timeout".to_string(),
-                    )
-                    .await;
-                },
-                ReconnectErrorAction::UnexpectedError => {
-                    tracing::error!(
-                        pjh_id = %row.id,
-                        error = %e,
-                        "reconnect_confirm_self_upgrade: unexpected error during reconnect"
-                    );
-                    handle_host_failure(
-                        pool.clone(),
-                        row.id,
-                        format!("Reconnect error during self-upgrade: {e}"),
-                    )
-                    .await;
-                },
-            }
-            return;
-        },
-    };
-
-    // Agent is back online. Verify the version change.
-    // Fetch the target version from the job's patch_selection.
+    // Fetch the target version (job's patch_selection) and the old
+    // agent_version (hosts table) up front — the poll loop needs them.
     let target_version: Option<String> = sqlx::query_scalar::<_, serde_json::Value>(
         "SELECT patch_selection FROM patch_jobs WHERE id = $1",
     )
@@ -1400,7 +1422,6 @@ async fn reconnect_confirm_self_upgrade(
             .map(String::from)
     });
 
-    // Fetch the old agent_version from the hosts table.
     let old_version: Option<String> =
         sqlx::query_scalar::<_, String>("SELECT agent_version FROM hosts WHERE id = $1")
             .bind(row.host_id)
@@ -1409,104 +1430,73 @@ async fn reconnect_confirm_self_upgrade(
             .ok()
             .flatten();
 
-    // reconnect_with_backoff returns SystemInfoData which has hostname but not
-    // the agent version. Call health() to get the new version string.
-    let _ = sys_info; // Agent confirmed reachable via system_info; now get version.
-    let health = match client.health().await {
-        Ok(h) => h,
-        Err(e) => {
-            tracing::error!(
-                pjh_id = %row.id,
-                error = %e,
-                "reconnect_confirm_self_upgrade: agent reconnected but health check failed"
-            );
-            handle_host_failure(
-                pool.clone(),
-                row.id,
-                "Agent reconnected but health check failed after self-upgrade".to_string(),
-            )
-            .await;
-            return;
-        },
-    };
-
-    let new_version = health.version;
     tracing::info!(
         pjh_id = %row.id,
-        new_version = %new_version,
+        timeout_secs,
+        poll_interval_secs,
         old_version = ?old_version,
         target_version = ?target_version,
-        "reconnect_confirm_self_upgrade: agent reconnected with new version"
+        "reconnect_confirm_self_upgrade: polling health().version until the upgrade lands"
     );
 
-    // M8: Check if agent has repo_config / GPG key configured.
-    // Agents enrolled before v2.0.0 won't have repo_config — log for migration tracking.
-    // The agent handles fallback to GET /pki/repo-config on its side; this is
-    // informational for the manager to track migration status.
-    match &health.gpg_key_status {
-        Some(status) if status == "valid" => {
-            tracing::info!(
-                pjh_id = %row.id,
-                host_id = %row.host_id,
-                "reconnect_confirm_self_upgrade: agent has valid GPG key — repo_config present"
-            );
-        },
-        Some(status) if status == "missing" => {
-            tracing::warn!(
-                pjh_id = %row.id,
-                host_id = %row.host_id,
-                "reconnect_confirm_self_upgrade: agent reports GPG key missing — repo_config not provisioned, agent should use GET /pki/repo-config fallback"
-            );
-        },
-        Some(status) => {
-            tracing::warn!(
-                pjh_id = %row.id,
-                host_id = %row.host_id,
-                gpg_key_status = %status,
-                "reconnect_confirm_self_upgrade: agent GPG key status requires attention"
-            );
-        },
-        None => {
-            tracing::debug!(
-                pjh_id = %row.id,
-                host_id = %row.host_id,
-                "reconnect_confirm_self_upgrade: agent did not report GPG key status (pre-v2.0.0 or older agent)"
-            );
-        },
-    }
+    // Bounded poll loop: wait for the version to actually CHANGE to the
+    // target, not merely for the agent to become reachable. `elapsed` is a
+    // cumulative counter (mirrors reconnect_with_backoff's style — no Instant).
+    let mut elapsed: u64 = 0;
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(poll_interval_secs)).await;
+        elapsed += poll_interval_secs;
 
-    // Determine success using the pure decision function.
-    let result = decide_self_upgrade_reconnect_result(
-        &new_version,
-        target_version.as_deref(),
-        old_version.as_deref(),
-    );
-
-    match result {
-        SelfUpgradeReconnectResult::Succeeded => {
-            tracing::info!(
-                pjh_id = %row.id,
-                new_version = %new_version,
-                "reconnect_confirm_self_upgrade: version confirmed, marking succeeded"
-            );
-            finish_self_upgrade_success(pool, row, &new_version).await;
-        },
-        SelfUpgradeReconnectResult::VersionUnchanged => {
-            let reason = match target_version {
-                Some(ref t) => {
-                    format!(
-                        "Agent restarted but version unchanged: expected {t}, got {new_version}"
+        let health_result = client.health().await;
+        let sample: Result<&str, &AgentClientError> =
+            health_result.as_ref().map(|h| h.version.as_str());
+        match decide_version_sample(sample, target_version.as_deref(), old_version.as_deref()) {
+            VersionSampleAction::Succeeded(new_version) => {
+                // Succeeded only arises from an Ok health() sample — log its
+                // GPG key status (M8 migration tracking) before finishing.
+                if let Ok(health) = &health_result {
+                    log_gpg_key_status(row.id, row.host_id, &health.gpg_key_status);
+                }
+                tracing::info!(
+                    pjh_id = %row.id,
+                    new_version = %new_version,
+                    "reconnect_confirm_self_upgrade: version confirmed, marking succeeded"
+                );
+                finish_self_upgrade_success(pool, row, &new_version).await;
+                return;
+            },
+            VersionSampleAction::Retry => {
+                if elapsed >= timeout_secs {
+                    tracing::error!(
+                        pjh_id = %row.id,
+                        timeout_secs,
+                        "reconnect_confirm_self_upgrade: agent did not reach target version within reconnect timeout"
+                    );
+                    handle_host_failure(
+                        pool.clone(),
+                        row.id,
+                        "Agent did not reach the target version within the self-upgrade reconnect timeout"
+                            .to_string(),
                     )
-                },
-                None => format!("Agent restarted but version unchanged: still {new_version}"),
-            };
-            tracing::warn!(
-                pjh_id = %row.id,
-                reason = %reason,
-                "reconnect_confirm_self_upgrade: version mismatch, marking failed"
-            );
-            handle_host_failure(pool.clone(), row.id, reason).await;
-        },
+                    .await;
+                    return;
+                }
+                tracing::debug!(
+                    pjh_id = %row.id,
+                    elapsed_secs = elapsed,
+                    "reconnect_confirm_self_upgrade: version not landed yet, retrying"
+                );
+            },
+            VersionSampleAction::Fail(reason) => {
+                tracing::error!(
+                    pjh_id = %row.id,
+                    reason = %reason,
+                    "reconnect_confirm_self_upgrade: fatal health error during reconnect"
+                );
+                handle_host_failure(pool.clone(), row.id, reason).await;
+                return;
+            },
+        }
     }
 }
 
@@ -2237,35 +2227,76 @@ mod tests {
         assert_eq!(action, SelfUpgradeSucceededAction::ReconnectConfirm);
     }
 
-    // ── decide_reconnect_error_action tests ─────────────────────────────────
+    // ── decide_version_sample tests ────────────────────────────────────────
 
-    /// If reconnect_with_backoff returns RECONNECT_TIMEOUT, mark as timeout failure.
+    /// A version that matches the target finishes the upgrade.
     #[test]
-    fn test_self_upgrade_reconnect_timeout_fails() {
-        let err = AgentClientError::ApiError {
-            code: "RECONNECT_TIMEOUT".to_string(),
-            message: "Agent did not come back online within 600s".to_string(),
-        };
-        let action = decide_reconnect_error_action(&err);
-        assert_eq!(action, ReconnectErrorAction::Timeout);
+    fn test_version_sample_target_reached_succeeds() {
+        let action = decide_version_sample(Ok("2.6.21"), Some("2.6.21"), Some("2.6.20"));
+        assert_eq!(action, VersionSampleAction::Succeeded("2.6.21".to_string()));
     }
 
-    /// If reconnect_with_backoff returns a non-timeout API error, mark as unexpected.
+    /// A stale version (still the old one while the restart swaps the binary)
+    /// must NOT fail fast — it retries so the postinst restart can complete.
     #[test]
-    fn test_self_upgrade_reconnect_api_error_unexpected() {
-        let err = AgentClientError::ApiError {
-            code: "INTERNAL_ERROR".to_string(),
-            message: "Something went wrong".to_string(),
-        };
-        let action = decide_reconnect_error_action(&err);
-        assert_eq!(action, ReconnectErrorAction::UnexpectedError);
+    fn test_version_sample_stale_retries() {
+        let action = decide_version_sample(Ok("2.6.20"), Some("2.6.21"), Some("2.6.20"));
+        assert_eq!(action, VersionSampleAction::Retry);
     }
 
-    /// If reconnect_with_backoff returns a connection error, mark as unexpected.
+    /// A transient timeout (agent mid-restart) retries.
     #[test]
-    fn test_self_upgrade_reconnect_tls_error_unexpected() {
-        let err = AgentClientError::Tls("TLS handshake failed".into());
-        let action = decide_reconnect_error_action(&err);
-        assert_eq!(action, ReconnectErrorAction::UnexpectedError);
+    fn test_version_sample_timeout_retries() {
+        let action = decide_version_sample(
+            Err(&AgentClientError::Timeout),
+            Some("2.6.21"),
+            Some("2.6.20"),
+        );
+        assert_eq!(action, VersionSampleAction::Retry);
+    }
+
+    /// A transient connection error (agent down mid-restart) retries.
+    #[test]
+    fn test_version_sample_connect_retries() {
+        // AgentClientError::Connect wraps a reqwest::Error which is hard to
+        // construct in a test; Timeout stands in for the transient class.
+        let action = decide_version_sample(
+            Err(&AgentClientError::Timeout),
+            Some("2.6.21"),
+            Some("2.6.20"),
+        );
+        assert_eq!(action, VersionSampleAction::Retry);
+    }
+
+    /// A fatal TLS error fails (not transient).
+    #[test]
+    fn test_version_sample_tls_fails() {
+        let action = decide_version_sample(
+            Err(&AgentClientError::Tls("TLS handshake failed".into())),
+            Some("2.6.21"),
+            Some("2.6.20"),
+        );
+        assert!(matches!(action, VersionSampleAction::Fail(_)));
+    }
+
+    /// A non-transient API error fails.
+    #[test]
+    fn test_version_sample_api_error_fails() {
+        let action = decide_version_sample(
+            Err(&AgentClientError::ApiError {
+                code: "INTERNAL_ERROR".to_string(),
+                message: "boom".to_string(),
+            }),
+            Some("2.6.21"),
+            Some("2.6.20"),
+        );
+        assert!(matches!(action, VersionSampleAction::Fail(_)));
+    }
+
+    /// No target version + version differs from old → Succeeded.
+    #[test]
+    fn test_version_sample_no_target_version_changed_succeeds() {
+        let action = decide_version_sample(Ok("2.6.21"), None, Some("2.6.20"));
+        assert_eq!(action, VersionSampleAction::Succeeded("2.6.21".to_string()));
     }
 }
