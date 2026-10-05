@@ -58,11 +58,30 @@ This project is a security tool — we hold ourselves to a high standard:
 
 ### Release Signing Key
 
-<!-- Replace once the release signing key is generated — see docs/release-signing.md -->
+`SHA256SUMS.asc` is signed with this key:
 
-> **Not yet published.** Releases currently carry `SHA256SUMS` and a build-provenance
-> attestation; the detached GPG signature begins with the first release built after the
-> signing key is configured. Until then, verify with the checksum and the attestation.
+```
+pub   ed25519 2026-10-05 [SC] [expires: 2028-10-04]
+      0D5D 7A60 4EB5 CAE5 C02C  0F80 1000 E3EB E9DC 3B74
+uid   Linux Patch Manager Release Signing <331325+Draco-Lunaris@users.noreply.github.com>
+```
+
+The public key is attached to each release as `release-signing-key.asc`. **Compare its
+fingerprint against the value above before trusting it** — a key downloaded from the
+same release as the artifact it vouches for proves nothing on its own.
+
+```bash
+gpg --import release-signing-key.asc
+gpg --fingerprint 0D5D7A604EB5CAE5C02C0F801000E3EBE9DC3B74
+```
+
+This key signs release artifacts only. It is unrelated to the per-instance GPG key each
+manager generates to sign the packages it serves to agents — see
+[docs/gpg-key-rotation.md](docs/gpg-key-rotation.md) for that one, and
+[docs/release-signing.md](docs/release-signing.md) for this one.
+
+Releases published before 2026-10-05 predate this key and carry `SHA256SUMS` plus a
+build-provenance attestation, but no detached signature.
 
 ## Enrollment PKI Design Decisions
 
