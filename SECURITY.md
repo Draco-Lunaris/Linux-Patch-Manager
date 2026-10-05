@@ -40,6 +40,15 @@ This project is a security tool — we hold ourselves to a high standard:
 - **Signed commits**: All commits must be signed (SSH signing)
 - **CI enforcement**: All PRs require passing CI checks (fmt, clippy, test, audit, build)
 - **Dependency auditing**: `cargo audit` runs in CI to catch known vulnerabilities
+- **Secret scanning**: Gitleaks runs over full history on every CI run
+- **Verifiable releases**: every release ships `SHA256SUMS` and a signed
+  [build-provenance attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds).
+  Verify before installing:
+
+  ```bash
+  sha256sum --check --ignore-missing SHA256SUMS
+  gh attestation verify linux-patch-manager_*_amd64.deb --repo Draco-Lunaris/Linux-Patch-Manager
+  ```
 
 ## Enrollment PKI Design Decisions
 

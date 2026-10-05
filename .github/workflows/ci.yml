@@ -147,6 +147,10 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [fmt, clippy, test, audit, gitleaks, frontend-lint, frontend-typecheck, version-check]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write      # upload release assets
+      id-token: write      # sign the provenance attestation
+      attestations: write  # record it against this repo
     steps:
       - uses: actions/checkout@v7
         with:
@@ -168,6 +172,21 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: just deps-deb
       - run: just pkg-deb
+
+      # The .deb installs as root and gains mTLS authority over the managed
+      # fleet, so ship it with both an integrity checksum and a provenance
+      # attestation. The checksum catches a corrupted download; the attestation
+      # is what lets an operator prove the artifact came from this workflow.
+      - name: Generate SHA256SUMS
+        run: |
+          sha256sum linux-patch-manager_*.deb > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: linux-patch-manager_*.deb
+
       - name: Generate release notes
         id: release_notes
         run: |
@@ -184,7 +203,9 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           body: ${{ steps.release_notes.outputs.notes }}
-          files: linux-patch-manager_*.deb
+          files: |
+            linux-patch-manager_*.deb
+            SHA256SUMS
 
   docker:
     name: Docker Build & Push
