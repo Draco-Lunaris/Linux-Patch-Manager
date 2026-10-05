@@ -187,6 +187,53 @@ jobs:
         with:
           subject-path: linux-patch-manager_*.deb
 
+      # Detached GPG signature over SHA256SUMS. The attestation above already
+      # proves the artifact came from this workflow; this signature is the
+      # offline, GitHub-independent second path — it needs only gpg to check
+      # and keeps verifying if this repo moves or the transparency log is
+      # unreachable. Signing the checksum list rather than the .deb means one
+      # signature covers every artifact listed in it.
+      #
+      # Skips with a warning when the key is not configured, so a missing
+      # secret cannot block a release. See docs/release-signing.md.
+      - name: Sign SHA256SUMS
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GPG_PRIVATE_KEY:-}" ]; then
+            echo "::warning title=Release not GPG-signed::RELEASE_GPG_PRIVATE_KEY is not configured, so SHA256SUMS.asc will not be published. SHA256SUMS and the build-provenance attestation are unaffected. See docs/release-signing.md."
+            exit 0
+          fi
+
+          GNUPGHOME="$(mktemp -d)"
+          export GNUPGHOME
+          chmod 700 "$GNUPGHOME"
+          trap 'rm -rf "$GNUPGHOME"' EXIT
+
+          printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --quiet --import
+          KEY_ID="$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr:/ {print $10; exit}')"
+          if [ -z "$KEY_ID" ]; then
+            echo "::error title=Release signing failed::RELEASE_GPG_PRIVATE_KEY is set but no secret key could be imported."
+            exit 1
+          fi
+
+          gpg --batch --yes --pinentry-mode loopback \
+              --passphrase "${GPG_PASSPHRASE:-}" \
+              --local-user "$KEY_ID" \
+              --armor --detach-sign --output SHA256SUMS.asc SHA256SUMS
+
+          # Verify what we just produced rather than assuming it is good.
+          gpg --batch --verify SHA256SUMS.asc SHA256SUMS
+
+          # Publish the matching public key so the release is self-contained.
+          # It cannot drift from the signing key because it is derived from it.
+          gpg --armor --export "$KEY_ID" > release-signing-key.asc
+
+          echo "SHA256SUMS signed with ${KEY_ID}"
+          echo "::notice title=Release signed::SHA256SUMS.asc signed with ${KEY_ID}"
+
       - name: Generate release notes
         id: release_notes
         run: |
@@ -203,9 +250,14 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           body: ${{ steps.release_notes.outputs.notes }}
+          # SHA256SUMS.asc is absent until the signing key is configured;
+          # an unmatched entry must not fail the release.
+          fail_on_unmatched_files: false
           files: |
             linux-patch-manager_*.deb
             SHA256SUMS
+            SHA256SUMS.asc
+            release-signing-key.asc
 
   docker:
     name: Docker Build & Push

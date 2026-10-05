@@ -65,7 +65,7 @@ The manager consists of two services:
 | **Agent enrollment** | Self-enrollment requires explicit admin approval before a PKI bundle is issued. Bundles are single-retrieval, held in memory only, and expire after 10 minutes. Polling tokens are stored as SHA-256 hashes, never in plaintext. |
 | **Manager → Package repo** | Packages are GPG-signed; agents verify signatures before installing. Repo metadata integrity does not depend on TLS. GPG key expiry is monitored and surfaced in the UI. |
 | **Within the manager** | Role-based access control with three roles (Admin / Operator / Reporter). All privileged actions are recorded in a tamper-evident audit log chained by SHA-256 hashes; a background verifier checks chain integrity continuously. |
-| **Supply chain** | Every release is gated in CI on `cargo audit`, Gitleaks secret scanning over full history, clippy, and the full test suite, plus a guard that refuses to build a tag whose version does not match `Cargo.toml`. Release artifacts ship with SHA-256 checksums and a signed build-provenance attestation. |
+| **Supply chain** | Every release is gated in CI on `cargo audit`, Gitleaks secret scanning over full history, clippy, and the full test suite, plus a guard that refuses to build a tag whose version does not match `Cargo.toml`. Release artifacts ship with SHA-256 checksums, a detached GPG signature, and a signed build-provenance attestation ([docs/release-signing.md](docs/release-signing.md)). |
 
 ### Residual Risks
 
@@ -97,14 +97,16 @@ Full detail lives in [ARCHITECTURE.md § 7 — Security Architecture](ARCHITECTU
 
 #### 1. Download the Package
 
-Download the latest release assets — the `.deb` plus its `SHA256SUMS` — from
+Download the latest release assets — the `.deb`, its `SHA256SUMS`, and the detached
+signature — from
 [GitHub Releases](https://github.com/Draco-Lunaris/Linux-Patch-Manager/releases/latest).
 
 With the [GitHub CLI](https://cli.github.com/):
 
 ```bash
 gh release download --repo Draco-Lunaris/Linux-Patch-Manager \
-  --pattern '*_amd64.deb' --pattern 'SHA256SUMS'
+  --pattern '*_amd64.deb' --pattern 'SHA256SUMS*' \
+  --pattern 'release-signing-key.asc'
 ```
 
 Or with `curl` alone (resolves the latest tag, so there is no version to edit):
@@ -113,34 +115,48 @@ Or with `curl` alone (resolves the latest tag, so there is no version to edit):
 REPO=Draco-Lunaris/Linux-Patch-Manager
 TAG=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
   | grep -m1 '"tag_name"' | cut -d'"' -f4)
-curl -fsSLO "https://github.com/$REPO/releases/download/$TAG/linux-patch-manager_${TAG#v}-1_amd64.deb"
-curl -fsSLO "https://github.com/$REPO/releases/download/$TAG/SHA256SUMS"
+for f in "linux-patch-manager_${TAG#v}-1_amd64.deb" SHA256SUMS SHA256SUMS.asc; do
+  curl -fsSLO "https://github.com/$REPO/releases/download/$TAG/$f"
+done
 ```
 
 #### 2. Verify the Package
 
-This package installs as root and gains mTLS authority over your fleet. Verify it
-before installing.
+This package installs as root, creates the internal CA, and from then on holds mTLS
+authority over every host you manage. Verify it before installing.
 
 ```bash
-# Integrity: checksum must match the published SHA256SUMS
+# 1. Authenticity — was the checksum list signed by the project's key?
+gpg --import release-signing-key.asc
+gpg --verify SHA256SUMS.asc SHA256SUMS
+
+# 2. Integrity — does the .deb match the list you just verified?
 sha256sum --check --ignore-missing SHA256SUMS
-```
 
-```bash
-# Provenance: confirm the artifact was built by this repo's release workflow
+# 3. Provenance — was this binary built by this repo's release workflow?
 gh attestation verify linux-patch-manager_*_amd64.deb \
   --repo Draco-Lunaris/Linux-Patch-Manager
 ```
 
-The checksum proves the download is intact; the attestation proves it came from a
-tagged CI build of this repository rather than from a third party. Only the
-attestation defends against a tampered release — verify both.
+Run them in that order. `SHA256SUMS` is published in the same release as the `.deb`, so
+on its own it proves only that the two files agree with each other — anyone able to
+replace the package could replace the checksum list with it. The signature and the
+attestation are what make the checksum meaningful: the signature proves the list came
+from a key the project controls, and the attestation proves the binary came out of a
+tagged CI run in this repository.
 
-> **Note:** `SHA256SUMS` and build-provenance attestations are published for releases
-> built by the current workflow. On an older release these assets are absent and both
-> commands report nothing to check — prefer the latest release, or compare the digest
-> shown on the release page by hand.
+Expect `Good signature from ...` in step 1. An accompanying `WARNING: This key is not
+certified with a trusted signature` is normal — it means you have not signed the key
+yourself, not that the check failed. `BAD signature` is a hard stop.
+
+Verify the key's fingerprint against the one recorded in [SECURITY.md](SECURITY.md)
+rather than trusting it just because it came from the same release.
+[docs/release-signing.md](docs/release-signing.md) covers what each artifact does and
+does not prove.
+
+> **Note:** these assets are published by the current release workflow. On an older
+> release they are absent and the commands report nothing to check — prefer the latest
+> release, or compare the digest shown on the release page by hand.
 
 #### 3. Install the Package
 
@@ -411,7 +427,8 @@ are forward-only — a rollback needs a database restore, so take the backup fir
 | [INTERFACE_CONTRACT.md](INTERFACE_CONTRACT.md) | Manager-agent API interface contract |
 | [docs/REST_API.md](docs/REST_API.md) | Complete REST API reference |
 | [docs/security-review.md](docs/security-review.md) | Security audit findings |
-| [docs/gpg-key-rotation.md](docs/gpg-key-rotation.md) | GPG signing key rotation procedure |
+| [docs/release-signing.md](docs/release-signing.md) | Release artifact signing, verification, and key setup |
+| [docs/gpg-key-rotation.md](docs/gpg-key-rotation.md) | Package-repository GPG key rotation procedure |
 | [docs/runbooks/restore.md](docs/runbooks/restore.md) | Disaster recovery procedures |
 | [docs/runbooks/key-management.md](docs/runbooks/key-management.md) | Key management runbook |
 | [docs/runbooks/reverse-proxy-deployment.md](docs/runbooks/reverse-proxy-deployment.md) | Reverse proxy deployment guide |
