@@ -1,8 +1,9 @@
 # Linux-Patch-Manager task runner — single source of truth for local + CI.
 # Local:   just check           (dev loop; warm cache on the dev box)
-# Release: just release patch    (verify -> bump -> commit -> tag -> push)
-#          CI builds the official .deb + Docker image from the tag and
-#          publishes the GitHub Release. Never run `gh release create`.
+# Release: just release patch    (opens a release PR; never touches master)
+#          then, once merged: just release-tag
+#          CI builds the .deb + Docker image from the tag and creates the
+#          GitHub Release itself. Nobody creates one by hand.
 
 default:
     @just --list
@@ -59,11 +60,18 @@ pkg-deb: frontend-deps
     bash scripts/build-package.sh
 
 # --- release (CI remains the official builder) ---
-# Refuses to tag a dirty tree, a non-master branch, a branch out of sync with
-# origin, a version already tagged, or a tree that fails cargo audit.
+# Step 1: cut release/vX.Y.Z, bump, commit, push the branch, open the PR.
+# Never commits to master, never pushes a tag. Refuses a dirty tree, a
+# non-master branch, a master out of sync with origin, an existing tag or
+# branch, or a tree that fails cargo audit.
 release KIND:
     ./scripts/release.sh "{{KIND}}"
 
-# bump every version source without committing or tagging (release.sh calls this)
+# Step 3 (after the release PR is merged): tag master so CI builds and publishes.
+# Verifies origin/master really carries that version before the tag exists.
+release-tag:
+    ./scripts/release.sh tag
+
+# bump every version source without committing, branching or tagging
 bump VERSION:
     ./scripts/bump-version.sh "{{VERSION}}"

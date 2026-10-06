@@ -82,21 +82,42 @@ feat: add patch scheduling to manager dashboard
 
 ## Releasing
 
-Releases are built by CI from a pushed tag. Maintainers cut one with:
+Releases are built by CI from a pushed tag, and **CI creates the GitHub Release
+itself** — every release is authored by `github-actions[bot]`. Nobody creates one
+by hand.
+
+The version bump goes through a pull request like any other change:
 
 ```bash
-just check                # run the slow gates first; release.sh does not
+# 1. from a clean master, cut the release branch and open the PR
+just check                # the slow CI gates; release.sh does not run them
 just release patch        # or minor / major
+
+# 2. a maintainer reviews and merges that PR
+
+# 3. tag the merged master to trigger the build
+git checkout master && git pull
+just release-tag
 ```
 
-`scripts/release.sh` refuses to proceed unless the working tree is clean, you
-are on `master`, `master` matches `origin/master`, the target tag does not
-already exist locally or on origin, and `cargo audit` passes. It then bumps
-every version source, commits, tags, and pushes the commit **before** the tag.
+`scripts/release.sh <patch|minor|major>` creates `release/vX.Y.Z`, bumps every
+version source, commits, pushes the branch and opens the PR. **It never commits
+to master and never pushes a tag.**
 
-`scripts/bump-version.sh` owns the version. Every file that records one is
-updated together and then verified to agree; the script exits non-zero rather
-than leave the tree half-bumped:
+`scripts/release.sh tag` reads the version from the merged `origin/master`,
+confirms no such tag exists, and pushes it. This is the step that prevents the
+one failure mode that matters: tagging a commit whose `Cargo.toml` does not
+match the tag. `ci.yml`'s `version-check` job refuses such a build, so the tag
+publishes nothing and the tag has to be deleted before retrying.
+
+Before cutting a release, `release.sh` runs `cargo audit`, because a new
+advisory against an unchanged dependency is the gate most likely to have gone
+red since the last release. Patch any advisories on their own PR first.
+
+### Which files record a version
+
+`scripts/bump-version.sh` owns all of them and verifies they agree, exiting
+non-zero rather than leaving the tree half-bumped:
 
 | File | Written by |
 |------|-----------|
@@ -109,17 +130,6 @@ than leave the tree half-bumped:
 
 `scripts/build-package.sh` needs no bump — it derives the version from
 `Cargo.toml`.
-
-### Never run `gh release create`
-
-CI publishes the GitHub Release itself, with the `.deb`, `SHA256SUMS`, a
-detached GPG signature and a build-provenance attestation. See
-[docs/release-signing.md](docs/release-signing.md).
-
-Creating a release by hand tags whatever `master` currently points at. If the
-release commit has not been pushed yet, the result is an empty public release
-and a build that fails the `version-check` gate, because the tag and
-`Cargo.toml` disagree.
 
 ## Reporting Issues
 
