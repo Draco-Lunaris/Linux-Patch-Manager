@@ -140,10 +140,15 @@ fi
 # applied to grep's own output.
 echo ""
 echo "=== stale references to $CUR ==="
-STALE="$(grep -rIn "$CUR" \
+# -F is required: "$CUR" is a literal version, but as a regex its dots match
+# any character, so 1.6.13 matches "...1f6d13..." inside a hex checksum.
+# Cargo.lock checksum lines are excluded as well — they are content hashes and
+# can never be a meaningful version reference.
+STALE="$(grep -rIFn "$CUR" \
             --include='*.toml' --include='*.lock' --include='*.json' \
             --include='*.sh' --include='control' . 2>/dev/null \
          | grep -vE '(^|/)(target|\.git|node_modules)/' \
+         | grep -vE ':[0-9]+:[[:space:]]*checksum[[:space:]]*=' \
          | grep -v 'scripts/bump-version.sh' \
          | grep -v 'debian/changelog' || true)"
 if [[ -n "$STALE" ]]; then echo "$STALE" | sed 's/^/  /'; FAIL=1
